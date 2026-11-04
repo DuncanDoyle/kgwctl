@@ -26,7 +26,8 @@ none
 
 ## Program
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
-- Waiting on: E2 (Phase 1), E8 (Phase 2), E1 (Phase 3), E3 (Phase 4), E7 (Phase 5)
+- Waiting on: E2 (Phase 1), E8 (Phase 2), E3 (Phase 4), E7 (Phase 5)
+- Available: E1 — krp `v0.1.0` tagged 2026-11-04 (DuncanDoyle/kgwctl#1); used from Phase 3
 - Consumers: none
 
 ## Carry-over (deferred to later phases)
