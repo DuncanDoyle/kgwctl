@@ -2,14 +2,14 @@
 
 ## Phase
 Phase: 1 — Foundation and resource inspection
-Base: n/a (no commits yet; record at phase start)
+Base: 779c421e8d8ed8a4a71847c5cc29bc61ffedbd09
 Docs: docs/phases/phase-1/
-Status: not started; roadmap drafted 2026-11-04, awaiting owner review
+Status: in progress — design (started 2026-11-04)
 
 ### Queue
-- [ ] Q1 Owner reviews roadmap and decisions D-001–D-007 ← CURRENT
-- [ ] Q2 Confirm program edge E2 (one-shot use of kgateway-ui `pkg/cache` + `pkg/engine`) with the kgateway-ui session
-- [ ] Q3 Phase 1 design (`design.md`), incl. the maintainer proposal draft (program P-005)
+- [x] Q1 Owner reviews roadmap and decisions D-001–D-008 — approved 2026-11-04
+- [x] Q2 Confirm program edge E2 (one-shot use of kgateway-ui `pkg/cache` + `pkg/engine`) with the kgateway-ui session — confirmed in program file 2026-11-04; tag requested in DuncanDoyle/kgateway-ui#16
+- [ ] Q3 Phase 1 design (`design.md`), incl. the maintainer proposal draft (program P-005) ← CURRENT
 - [ ] Q4 Phase 1 implementation plan (`implementation-plan.md`)
 - [ ] Q5 Cross-model review of design + plan, triage, owner approval
 
@@ -26,7 +26,7 @@ none
 
 ## Program
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
-- Waiting on: E2 (Phase 1), E8 (Phase 2), E3 (Phase 4), E7 (Phase 5)
+- Waiting on: E2 (Phase 1; kgateway-ui module tag, DuncanDoyle/kgateway-ui#16, needed before implementation), E8 (Phase 2), E3 (Phase 4), E7 (Phase 5)
 - Available: E1 — krp `v0.1.0` tagged 2026-11-04 (DuncanDoyle/kgwctl#1); used from Phase 3
 - Consumers: none
 
