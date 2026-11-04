@@ -37,3 +37,9 @@ Append-only. Newest at the bottom. Supersede, don't edit.
 **Decision:** Use `kgwctl` as the working name. The project moves into kgateway-dev/kgateway (roadmap Phase 5); maintainers decide the final name.
 **Alternatives:** n/a.
 **Consequences:** Keep the name in one place (root command, module path) so a rename is cheap.
+
+## D-007 — `check` comes early, as its own phase (2026-11-04, phase 0)
+**Context:** Users need a `check` command for CI gates and support triage, in the shape of earlier gateway CLIs: one-shot, scriptable, with exit codes. The roadmap had it in Phase 3, behind the data-plane work and the UI analyzer. The prior art's JSON mode exits 0 even when checks fail.
+**Decision:** Phase 2 delivers a `check` MVP on the UI's existing health checks (edge E8): process health, failing status conditions (which include unresolved references), routes not attached, xDS rejections. Exit codes are identical across output formats. The full ranked analysis and `analyze -f` move to Phase 4.
+**Alternatives:** Keep `check` in Phase 3 — rejected: blocks a stated requirement on unrelated work.
+**Consequences:** Phases renumber: data plane 3, full analysis 4, policies 5, upstream move 6. Program edges E1, E3 and E7 move to the new phase numbers.

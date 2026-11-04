@@ -18,35 +18,47 @@ A command-line tool for operators to inspect and troubleshoot kgateway installat
 - Output: table, `-o yaml`, `-o json`.
 - Before design approval: a short design proposal for kgateway maintainers (program P-005), filed only with the owner's go-ahead.
 
-### Phase 2 — Data plane
+### Phase 2 — `check`
 **Status:** Not started
 **Docs:** `docs/phases/phase-2/`
+**Waits on:** program edge E8 (kgateway-ui health checks callable one-shot)
+
+One-shot install and config health, for CI gates after install or upgrade and as the first step in support triage.
+- Controller and proxy Deployments and Pods ready; Gateway API and kgateway resources with failing or missing status conditions (including `ResolvedRefs`); routes not attached; xDS rejections from the controller's metrics.
+- Documented exit codes, the same in every output format: 0 clean, 1 problems found, 2 could not check.
+- `-o json` keyed by finding code and finding ID, both stable; severity is data on each finding.
+- `--exclude` / `--only` by check name or code, `--fail-on <severity>`, `--timeout`.
+- Read-only by default: no port-forward unless a flag allows it. Signals that need two samples or a time window are reported as pending, not failing.
+
+### Phase 3 — Data plane
+**Status:** Not started
+**Docs:** `docs/phases/phase-3/`
 **Waits on:** program edge E1 (krp `pkg/envoy` `v0.1.0`)
 
 - `proxy routes`: the Envoy listeners, filter chains, routes and HTTP filters for a Gateway, optionally narrowed to one HTTPRoute and rule.
 - Sources: port-forward to the proxy admin port, or a config dump file.
 - Output: tree view (from krp's renderer or an equivalent), `-o json`.
 
-### Phase 3 — Health and analysis
-**Status:** Not started
-**Docs:** `docs/phases/phase-3/`
-**Waits on:** program edge E3 (kgateway-ui analyzer package)
-
-- `check`: controller health, Gateway and route problems, xDS rejections, ranked like the UI's findings.
-- `analyze -f <file>`: validate manifests before applying, reporting new, fixed and unchanged problems against the live cluster.
-
-### Phase 4 — Topology and policies
+### Phase 4 — Full analysis
 **Status:** Not started
 **Docs:** `docs/phases/phase-4/`
+**Waits on:** program edge E3 (kgateway-ui analyzer package)
+
+- `check` grows to the full ranked analysis of the UI analyzer (references, conflicts, rollouts, CRD and version skew, backends without endpoints).
+- `analyze -f <file>`: validate manifests before applying, reporting new, fixed and unchanged problems against the live cluster.
+
+### Phase 5 — Topology and policies
+**Status:** Not started
+**Docs:** `docs/phases/phase-5/`
 **Waits on:** kgateway-ui Phase 5 (direct, inherited and effective policy) — new program edge E7
 
 - `describe` shows attached and effective policies with provenance.
 - `get -o graph`: Gateway → route → backend topology as DOT or Mermaid text, written without a graphics library.
 - Envoy-side mapping back to Gateway API refs in `proxy routes` (program edge E5).
 
-### Phase 5 — Upstream move
+### Phase 6 — Upstream move
 **Status:** Not started
-**Docs:** `docs/phases/phase-5/`
+**Docs:** `docs/phases/phase-6/`
 
 - Move into kgateway-dev/kgateway per the agreed proposal: module layout, build isolation from the controller, CI, release artifacts, docs.
 - Libraries it depends on are license-clean and vendor-neutral (program edge E6).

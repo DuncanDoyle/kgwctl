@@ -7,7 +7,7 @@ Docs: docs/phases/phase-1/
 Status: not started; roadmap drafted 2026-11-04, awaiting owner review
 
 ### Queue
-- [ ] Q1 Owner reviews roadmap and decisions D-001–D-006 ← CURRENT
+- [ ] Q1 Owner reviews roadmap and decisions D-001–D-007 ← CURRENT
 - [ ] Q2 Confirm program edge E2 (one-shot use of kgateway-ui `pkg/cache` + `pkg/engine`) with the kgateway-ui session
 - [ ] Q3 Phase 1 design (`design.md`), incl. the maintainer proposal draft (program P-005)
 - [ ] Q4 Phase 1 implementation plan (`implementation-plan.md`)
@@ -26,7 +26,7 @@ none
 
 ## Program
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
-- Waiting on: E2 (Phase 1), E1 (Phase 2), E3 (Phase 3), E7 (Phase 4)
+- Waiting on: E2 (Phase 1), E8 (Phase 2), E1 (Phase 3), E3 (Phase 4), E7 (Phase 5)
 - Consumers: none
 
 ## Carry-over (deferred to later phases)
