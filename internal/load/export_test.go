@@ -11,3 +11,6 @@ func SetDeadlineHook(f func()) func() {
 	onDeadline = f
 	return func() { onDeadline = nil }
 }
+
+// ThrottleDefaults exposes withThrottleDefaults.
+var ThrottleDefaults = withThrottleDefaults
