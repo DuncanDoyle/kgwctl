@@ -37,6 +37,8 @@ type Filter struct {
 	hide bool
 	// known is false when an ownership input is down (design §6.3).
 	known bool
+	// indexDown names the index inputs that are not ok (design §6.3).
+	indexDown string
 	// selected is the --install install's index in r.Model.Installs, or -1.
 	selected int
 	ours     map[string]bool
@@ -62,6 +64,7 @@ func NewFilter(r *load.Result, s Scope) (*Filter, []string) {
 	installs := r.Model.Installs
 	down := unavailable(r, ownershipInputs(r.Served))
 	f.known = down == ""
+	f.indexDown = unavailable(r, indexInputs(r.Served))
 	pinned, err := install.ParsePinned(s.Install)
 	if err != nil {
 		warn("%v", err)
@@ -217,15 +220,23 @@ func (f *Filter) Visible(k kinds.Served, obj *unstructured.Unstructured) bool {
 // InstallOf returns the install owning obj: the --install one when it is an
 // owner, else the first. It is false when no install owns obj or ownership is unknown.
 func (f *Filter) InstallOf(obj *unstructured.Unstructured) (install.Resolved, bool) {
-	o := f.owners[objects.RefOf(obj)]
-	if !f.known || len(o) == 0 {
+	i, ok := f.installOfRef(objects.RefOf(obj))
+	if !ok {
 		return install.Resolved{}, false
 	}
-	i := o[0]
-	if slices.Contains(o, f.selected) {
-		i = f.selected
-	}
 	return f.r.Model.Installs[i].Resolved, true
+}
+
+// installOfRef is InstallOf by reference, as an index into r.Model.Installs.
+func (f *Filter) installOfRef(ref objects.Ref) (int, bool) {
+	o := f.owners[ref]
+	if !f.known || len(o) == 0 {
+		return 0, false
+	}
+	if slices.Contains(o, f.selected) {
+		return f.selected, true
+	}
+	return o[0], true
 }
 
 // Ours reports whether controllerName is a controller of a detected install,

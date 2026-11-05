@@ -29,6 +29,8 @@ const (
 	orphansFixture      = "../testenv/testdata/orphans.yaml"
 	listenerSetsFixture = "../testenv/testdata/listenersets.yaml"
 	twoInstallsFixture  = "../testenv/testdata/two-installs.yaml"
+	mixedFixture        = "../testenv/testdata/mixed-parents.yaml"
+	twoCtrlFixture      = "../testenv/testdata/two-controllers.yaml"
 	xListenerSetCRDs    = "../testenv/testdata/crds/xlistenerset"
 )
 
@@ -38,6 +40,12 @@ var all = view.Scope{AllNamespaces: true}
 // loadEnv starts an Env with opts, lets rules install faults, and loads it.
 // Every Env has the XListenerSet CRD, so served kinds never depend on test order.
 func loadEnv(t *testing.T, opts testenv.Options, rules func(*testenv.Proxy)) *load.Result {
+	t.Helper()
+	return loadEnvWith(t, extension.New(), opts, rules)
+}
+
+// loadEnvWith is loadEnv with the registry reg.
+func loadEnvWith(t *testing.T, reg *extension.Registry, opts testenv.Options, rules func(*testenv.Proxy)) *load.Result {
 	t.Helper()
 	opts.CRDDirs = append(opts.CRDDirs, xListenerSetCRDs)
 	env := testenv.New(t, opts)
@@ -54,7 +62,7 @@ func loadEnv(t *testing.T, opts testenv.Options, rules func(*testenv.Proxy)) *lo
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := load.Load(ctx, c, extension.New(), load.Needs{})
+	r, err := load.Load(ctx, c, reg, load.Needs{})
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
