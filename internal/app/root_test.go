@@ -1,0 +1,152 @@
+package app_test
+
+import (
+	"bytes"
+	"errors"
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/DuncanDoyle/kgateway-ui/pkg/extension"
+	"github.com/spf13/cobra"
+	"k8s.io/client-go/tools/clientcmd"
+
+	"github.com/DuncanDoyle/kgwctl/internal/app"
+	"github.com/DuncanDoyle/kgwctl/internal/load"
+	"github.com/DuncanDoyle/kgwctl/internal/testenv"
+)
+
+func TestMain(m *testing.M) { os.Exit(testenv.Run(m)) }
+
+// loadCmd is a test-only command that loads the cluster the global flags select.
+func loadCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:  "load",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			f := app.FlagsFrom(cmd)
+			cfg, _, err := f.RESTConfig()
+			if err != nil {
+				return err
+			}
+			ctx, cancel := f.Context(cmd.Context())
+			defer cancel()
+			c, err := load.NewClients(ctx, cfg)
+			if err != nil {
+				return err
+			}
+			_, err = load.Load(ctx, c, extension.New(), load.Needs{})
+			return err
+		},
+	}
+}
+
+func run(root *cobra.Command, args ...string) int {
+	root.SetArgs(args)
+	return app.Execute(root)
+}
+
+func TestContextFlagWins(t *testing.T) {
+	env := testenv.New(t, testenv.Options{Contexts: 2})
+	var out, errb bytes.Buffer
+	root := app.NewRoot(app.Config{Commands: []*cobra.Command{loadCmd()}, Out: &out, Err: &errb})
+	code := run(root, "--kubeconfig", env.Kubeconfig, "--context", testenv.ContextName(1), "load")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr: %s", code, errb.String())
+	}
+	if n := len(env.Proxies[0].Requests()); n != 0 {
+		t.Errorf("current-context proxy got %d requests, want 0: %v", n, env.Proxies[0].Requests())
+	}
+	reqs := env.Proxies[1].Requests()
+	disc := false
+	for _, r := range reqs {
+		if strings.HasPrefix(r, "GET /apis/") || strings.HasPrefix(r, "GET /api/v1") {
+			disc = true
+		}
+	}
+	if len(reqs) == 0 || !disc {
+		t.Errorf("selected-context proxy requests = %v, want discovery and loads", reqs)
+	}
+}
+
+func TestNamespaceDefaultsToContext(t *testing.T) {
+	env := testenv.New(t, testenv.Options{Contexts: 2})
+	kc, err := clientcmd.LoadFromFile(env.Kubeconfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kc.Contexts[testenv.ContextName(1)].Namespace = "team-a"
+	path := t.TempDir() + "/kubeconfig"
+	if err := clientcmd.WriteToFile(*kc, path); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name string
+		f    app.Flags
+		want string
+	}{
+		{"context namespace", app.Flags{Kubeconfig: path, ContextName: testenv.ContextName(1)}, "team-a"},
+		{"-n overrides", app.Flags{Kubeconfig: path, ContextName: testenv.ContextName(1), Namespace: "x"}, "x"},
+		{"-A selects all", app.Flags{Kubeconfig: path, ContextName: testenv.ContextName(1), AllNamespaces: true}, ""},
+		{"default namespace", app.Flags{Kubeconfig: path, ContextName: testenv.ContextName(0)}, "default"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, ns, err := tc.f.RESTConfig()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ns != tc.want {
+				t.Errorf("namespace = %q, want %q", ns, tc.want)
+			}
+		})
+	}
+}
+
+func TestFlagsParse(t *testing.T) {
+	var got *app.Flags
+	// A fresh command per root: a command keeps the flag values it parsed.
+	probe := func() *cobra.Command {
+		return &cobra.Command{Use: "probe", RunE: func(cmd *cobra.Command, _ []string) error {
+			got = app.FlagsFrom(cmd)
+			return nil
+		}}
+	}
+	root := app.NewRoot(app.Config{Commands: []*cobra.Command{probe()}})
+	if code := run(root, "-A", "-n", "ns", "--request-timeout", "5s", "--install", "a/b", "--all-controllers", "probe"); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	if !got.AllNamespaces || got.Namespace != "ns" || got.RequestTimeout.Seconds() != 5 || got.Install != "a/b" || !got.AllControllers {
+		t.Errorf("flags = %+v", got)
+	}
+	root = app.NewRoot(app.Config{Commands: []*cobra.Command{probe()}})
+	if code := run(root, "probe"); code != 0 || got.RequestTimeout.Seconds() != 30 {
+		t.Errorf("default request timeout = %v, want 30s", got.RequestTimeout)
+	}
+}
+
+func TestExecuteExitCodes(t *testing.T) {
+	var out, errb bytes.Buffer
+	boom := &cobra.Command{Use: "boom", RunE: func(*cobra.Command, []string) error { return errors.New("boom") }}
+	root := app.NewRoot(app.Config{Commands: []*cobra.Command{boom}, Out: &out, Err: &errb})
+	if code := run(root, "boom"); code != 1 {
+		t.Errorf("exit = %d, want 1", code)
+	}
+	if got := errb.String(); got != "Error: boom\n" {
+		t.Errorf("stderr = %q, want %q", got, "Error: boom\n")
+	}
+	if out.Len() != 0 {
+		t.Errorf("stdout = %q, want empty", out.String())
+	}
+}
+
+func TestExecuteUnknownFlagIsError(t *testing.T) {
+	var out, errb bytes.Buffer
+	root := app.NewRoot(app.Config{Out: &out, Err: &errb})
+	if code := run(root, "--nope"); code != 1 {
+		t.Errorf("exit = %d, want 1", code)
+	}
+	if !strings.HasPrefix(errb.String(), "Error: ") || strings.Contains(errb.String(), "Usage:") || out.Len() != 0 {
+		t.Errorf("stderr = %q, stdout = %q", errb.String(), out.String())
+	}
+}
