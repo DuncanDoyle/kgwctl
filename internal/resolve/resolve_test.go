@@ -68,6 +68,8 @@ func TestResolve(t *testing.T) {
 		{arg: "httproutes.gateway.networking.k8s.io", want: []target{{"HTTPRoute", []string{"HTTPRoute"}}}},
 		{arg: "HTTPRoute.gateway.networking.k8s.io", want: []target{{"HTTPRoute", []string{"HTTPRoute"}}}},
 		{arg: "gateways,hr", want: []target{{"Gateway", []string{"Gateway"}}, {"HTTPRoute", []string{"HTTPRoute"}}}},
+		{arg: "gw,", want: []target{{"Gateway", []string{"Gateway"}}}},
+		{arg: " , gw", want: []target{{"Gateway", []string{"Gateway"}}}},
 		{arg: "gateways,gw", want: []target{{"Gateway", []string{"Gateway"}}}},
 		{arg: "tr,tlsr,tp,lp,bcp,be,gwp,btlsp,gr", want: []target{
 			{"TCPRoute", []string{"TCPRoute"}}, {"TLSRoute", []string{"TLSRoute"}}, {"TrafficPolicy", []string{"TrafficPolicy"}},
@@ -123,6 +125,14 @@ func TestResolveDownstreamKind(t *testing.T) {
 		got, err := resolve.Kinds(served, modelled, arg)
 		if err != nil || len(got) != 1 || got[0].Label != "WidgetPolicy" {
 			t.Errorf("Kinds(%q) = %v, %v; want one WidgetPolicy target", arg, flatten(got), err)
+		}
+	}
+}
+
+func TestResolveEmpty(t *testing.T) {
+	for _, arg := range []string{"", " ", ","} {
+		if _, err := resolve.Kinds(servedAll(), kinds.Upstream(), arg); err == nil || err.Error() != "no kind given" {
+			t.Errorf("Kinds(%q) err = %v, want no kind given", arg, err)
 		}
 	}
 }

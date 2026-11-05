@@ -36,8 +36,10 @@ const (
 var all = view.Scope{AllNamespaces: true}
 
 // loadEnv starts an Env with opts, lets rules install faults, and loads it.
+// Every Env has the XListenerSet CRD, so served kinds never depend on test order.
 func loadEnv(t *testing.T, opts testenv.Options, rules func(*testenv.Proxy)) *load.Result {
 	t.Helper()
+	opts.CRDDirs = append(opts.CRDDirs, xListenerSetCRDs)
 	env := testenv.New(t, opts)
 	if rules != nil {
 		rules(env.Proxies[0])
@@ -113,6 +115,11 @@ func TestFilterHidesOtherController(t *testing.T) {
 		{"HTTPRoute", "default", "example"}:          true,
 		{"HTTPRoute", "other", "retargeted-ours"}:    true,
 		{"HTTPRoute", "other", "retargeted-missing"}: true,
+		// Every parent must be hidden, and every ancestor foreign.
+		{"HTTPRoute", "other", "edge-and-missing"}:  true,
+		{"HTTPRoute", "other", "edge-and-ours"}:     true,
+		{"HTTPRoute", "other", "child-of-edge"}:     false,
+		{"TrafficPolicy", "other", "shared-policy"}: true,
 	}
 	checkVisible(t, r, f, foreign)
 
@@ -166,7 +173,7 @@ func TestFilterRetargetedRoute(t *testing.T) {
 }
 
 func TestFilterListenerSets(t *testing.T) {
-	r := loadEnv(t, testenv.Options{Fixtures: []string{healthyFixture, listenerSetsFixture}, CRDDirs: []string{xListenerSetCRDs}}, nil)
+	r := loadEnv(t, testenv.Options{Fixtures: []string{healthyFixture, listenerSetsFixture}}, nil)
 	ts, err := resolve.Kinds(r.Served, extension.New().Kinds, "ls")
 	if err != nil || len(ts) != 1 || len(ts[0].Kinds) != 2 {
 		t.Fatalf("resolve ls = %+v, %v; want one target with ListenerSet and XListenerSet", ts, err)
@@ -205,6 +212,7 @@ func TestFilterOwnershipInputDown(t *testing.T) {
 		{"deployments", testenv.Match{Kind: testenv.KindAcquire, Resource: "deployments.apps"}, "deployments: denied"},
 		{"namespaces", testenv.Match{Kind: testenv.KindAcquire, Resource: "namespaces"}, "namespaces: denied"},
 		{"gatewayclasses", testenv.Match{Kind: testenv.KindAcquire, Resource: "gatewayclasses.gateway.networking.k8s.io"}, "gatewayclasses: denied"},
+		{"listenersets", testenv.Match{Kind: testenv.KindAcquire, Resource: "listenersets.gateway.networking.k8s.io"}, "listenersets: denied"},
 		{"gateways", testenv.Match{Kind: testenv.KindAcquire, Resource: "gateways.gateway.networking.k8s.io"}, "gateways: denied"},
 		{"controller pods", testenv.Match{Kind: testenv.KindAcquire, Resource: "pods", LabelSelector: ctrlPods}, "pods: denied"},
 	}

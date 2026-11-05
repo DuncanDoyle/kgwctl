@@ -3,6 +3,7 @@
 package resolve
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -66,14 +67,12 @@ func isAlias(name string) bool {
 	return name == "listenersets" || name == "listenerset" || name == "ls"
 }
 
-// Kinds resolves arg, a comma-separated list of kind names, to one Target
-// per name, in order and without duplicates. A name is a plural, singular,
-// kind or short name, optionally qualified as "<name>.<group>", matched
-// case-insensitively against modelled. "all" is every served kind except
-// GatewayClass. A modelled kind the cluster does not serve is a NotServedError.
+// Kinds resolves arg, comma-separated kind names as design §3 defines them,
+// to one Target per name, in order and without duplicates.
 func Kinds(served []kinds.Served, modelled []kinds.Descriptor, arg string) ([]Target, error) {
 	modelled = kinds.Dedupe(modelled)
 	var out []Target
+	named := false
 	add := func(t Target) {
 		if !slices.ContainsFunc(out, func(o Target) bool { return o.Label == t.Label && sameKinds(o.Kinds, t.Kinds) }) {
 			out = append(out, t)
@@ -81,6 +80,11 @@ func Kinds(served []kinds.Served, modelled []kinds.Descriptor, arg string) ([]Ta
 	}
 	for _, name := range strings.Split(arg, ",") {
 		name = strings.ToLower(strings.TrimSpace(name))
+		switch name {
+		case "":
+			continue
+		}
+		named = true
 		if name == "all" {
 			for _, t := range all(served) {
 				add(t)
@@ -104,6 +108,9 @@ func Kinds(served []kinds.Served, modelled []kinds.Descriptor, arg string) ([]Ta
 			return nil, &NotServedError{Name: name}
 		}
 		add(t)
+	}
+	if !named {
+		return nil, errors.New("no kind given")
 	}
 	return out, nil
 }

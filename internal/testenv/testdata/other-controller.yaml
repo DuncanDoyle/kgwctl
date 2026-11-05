@@ -2,6 +2,8 @@
 # own GatewayClass, Gateway other/edge, a ListenerSet on it, routes only to
 # them and a policy only it reports on. Two routes in namespace other were
 # retargeted away from other/edge and still carry only its controller's status.
+# Mixed cases: routes to other/edge plus a missing or our Gateway, a child of
+# other/edge-route, and a policy both controllers report on.
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: GatewayClass
@@ -156,6 +158,89 @@ status:
         name: edge
         namespace: other
       controllerName: example.com/other
+      conditions:
+        - type: Accepted
+          status: "True"
+          reason: Accepted
+          message: ""
+          observedGeneration: 1
+          lastTransitionTime: "2026-01-01T00:00:00Z"
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: edge-and-missing
+  namespace: other
+spec:
+  parentRefs:
+    - name: edge
+    - name: gone
+  rules:
+    - backendRefs:
+        - name: edge
+          port: 8080
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: edge-and-ours
+  namespace: other
+spec:
+  parentRefs:
+    - name: edge
+    - name: http
+      namespace: kgateway-system
+  rules:
+    - backendRefs:
+        - name: edge
+          port: 8080
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: child-of-edge
+  namespace: other
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: edge-route
+  rules:
+    - backendRefs:
+        - name: edge
+          port: 8080
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: shared-policy
+  namespace: other
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: edge-and-ours
+status:
+  ancestors:
+    - ancestorRef:
+        group: gateway.networking.k8s.io
+        kind: Gateway
+        name: edge
+        namespace: other
+      controllerName: example.com/other
+      conditions:
+        - type: Accepted
+          status: "True"
+          reason: Accepted
+          message: ""
+          observedGeneration: 1
+          lastTransitionTime: "2026-01-01T00:00:00Z"
+    - ancestorRef:
+        group: gateway.networking.k8s.io
+        kind: Gateway
+        name: http
+        namespace: kgateway-system
+      controllerName: kgateway.dev/kgateway
       conditions:
         - type: Accepted
           status: "True"
