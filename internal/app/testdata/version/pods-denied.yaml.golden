@@ -1,0 +1,26 @@
+item:
+  client:
+    commit: a1b2c3d
+    goVersion: go1.26.0
+    name: kgwctl
+    version: v0.1.0
+  gatewayAPICRDs:
+    bundleVersion: v1.7.0
+    channel: standard
+  incomplete:
+  - input: proxy pods
+    reason: pods is forbidden (injected by testenv)
+    state: denied
+  installs:
+  - controller: 2.5.0
+    display: kgateway-system/kgateway
+    id: kgateway-system.kgateway
+    proxies:
+    - gateway: kgateway-system/http
+      unknown: 'proxy pods: denied'
+    - gateway: team-a/edge
+      unknown: 'proxy pods: denied'
+    ready: 1
+    replicas: 1
+kind: Version
+schemaVersion: kgwctl.kgateway.dev/v1alpha1

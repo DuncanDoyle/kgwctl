@@ -1,0 +1,29 @@
+item:
+  client:
+    commit: a1b2c3d
+    goVersion: go1.26.0
+    name: kgwctl
+    version: v0.1.0
+  gatewayAPICRDs:
+    unknown: denied
+  incomplete:
+  - input: customresourcedefinitions.apiextensions.k8s.io
+    reason: customresourcedefinitions.apiextensions.k8s.io is forbidden (injected
+      by testenv)
+    state: denied
+  installs:
+  - controller: 2.5.0
+    display: kgateway-system/kgateway
+    id: kgateway-system.kgateway
+    proxies:
+    - gateway: kgateway-system/http
+      pods: 2
+      version: 2.5.0
+    - differsFromController: true
+      gateway: team-a/edge
+      pods: 2
+      version: 2.2.4
+    ready: 1
+    replicas: 1
+kind: Version
+schemaVersion: kgwctl.kgateway.dev/v1alpha1

@@ -5,6 +5,8 @@
 package load
 
 import (
+	"log/slog"
+
 	"github.com/DuncanDoyle/kgateway-ui/pkg/cache"
 	"github.com/DuncanDoyle/kgateway-ui/pkg/ctrlmetrics"
 	"github.com/DuncanDoyle/kgateway-ui/pkg/engine"
@@ -32,8 +34,12 @@ func cacheConfig(c Clients, reg *extension.Registry, served []kinds.Served, need
 }
 
 // engineConfig builds the engine config as pkg/app does, over one fixed
-// snapshot, with static metrics and none of the Run loop's fields.
-func engineConfig(reg *extension.Registry, served []kinds.Served, snap *cache.Snapshot) engine.Config {
+// snapshot, with static metrics and none of the Run loop's fields. A nil log
+// discards the engine's logs.
+func engineConfig(reg *extension.Registry, served []kinds.Served, snap *cache.Snapshot, log *slog.Logger) engine.Config {
+	if log == nil {
+		log = slog.New(slog.DiscardHandler)
+	}
 	verifier := reg.Verifier
 	if verifier == nil {
 		// Metrics are never present, so the persistence window is never reached.
@@ -41,7 +47,7 @@ func engineConfig(reg *extension.Registry, served []kinds.Served, snap *cache.Sn
 	}
 	return engine.Config{Snapshots: fixedSnapshot{snap}, Served: served, Detectors: reg.Detectors, Scope: reg.Scope, Verifier: verifier,
 		Metrics: noMetrics{}, Checks: reg.Checks, Platform: platform.Kubernetes(), ProxyMode: reg.ProxyMode,
-		RulesFor: reg.RulesFor, Process: reg.Process}
+		RulesFor: reg.RulesFor, Process: reg.Process, Logger: log}
 }
 
 // noMetrics is a static ctrlmetrics.Source with no data for any install.

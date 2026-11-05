@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"time"
@@ -23,6 +24,8 @@ type Needs struct {
 	Requested []schema.GroupVersionResource
 	// ProxyPods and CRDs start those optional watches and wait for them.
 	ProxyPods, CRDs bool
+	// Logger receives the engine's logs; nil discards them.
+	Logger *slog.Logger
 }
 
 // State is an input's state after the readiness wait (design §6.3).
@@ -38,12 +41,13 @@ const (
 
 // Input is one cache input and its state.
 type Input struct {
-	// Resource names the input, as "httproutes.gateway.networking.k8s.io" or "pods".
-	Resource string
-	GVR      schema.GroupVersionResource
-	State    State
+	// Resource names the input, as "httproutes.gateway.networking.k8s.io",
+	// "pods" or "proxy pods".
+	Resource string                      `json:"input"`
+	GVR      schema.GroupVersionResource `json:"-"`
+	State    State                       `json:"state"`
 	// Reason is the access error of a denied or failed input.
-	Reason string
+	Reason string `json:"reason,omitempty"`
 }
 
 // Result is one load: the model computed once, the served kinds and every input's state.
@@ -137,7 +141,7 @@ func Load(ctx context.Context, c Clients, reg *extension.Registry, needs Needs) 
 		return nil, &TimeoutError{Stage: StageLoading, Pending: late, cause: context.Cause(ctx)}
 	}
 	// Compute does no I/O in this wiring, so it runs on what loaded even past the deadline (§4.4).
-	m := engine.New(engineConfig(reg, served, snap)).Compute()
+	m := engine.New(engineConfig(reg, served, snap, needs.Logger)).Compute()
 	return &Result{Model: m, Served: served, Inputs: inputs}, nil
 }
 
@@ -228,8 +232,12 @@ func classify(acc map[schema.GroupVersionResource]cache.Access, pending map[sche
 	return out
 }
 
-// resourceName is "<resource>.<group>", or the resource alone for the core group.
+// resourceName is "<resource>.<group>", the resource alone for the core
+// group, and "proxy pods" for the proxy Pod watch.
 func resourceName(gvr schema.GroupVersionResource) string {
+	if gvr == cache.ProxyPodsGVR {
+		return "proxy pods"
+	}
 	if gvr.Group == "" {
 		return gvr.Resource
 	}

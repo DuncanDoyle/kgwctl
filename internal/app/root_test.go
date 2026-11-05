@@ -8,42 +8,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DuncanDoyle/kgateway-ui/pkg/extension"
 	"github.com/spf13/cobra"
 	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/DuncanDoyle/kgwctl/internal/app"
-	"github.com/DuncanDoyle/kgwctl/internal/load"
 	"github.com/DuncanDoyle/kgwctl/internal/testenv"
 )
 
 func TestMain(m *testing.M) { os.Exit(testenv.Run(m)) }
-
-// loadCmd is a test-only command that loads the cluster the global flags select.
-func loadCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:  "load",
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			f, err := app.FlagsFrom(cmd)
-			if err != nil {
-				return err
-			}
-			cfg, _, err := f.RESTConfig()
-			if err != nil {
-				return err
-			}
-			ctx, cancel := f.Context(cmd.Context())
-			defer cancel()
-			c, err := load.NewClients(ctx, cfg)
-			if err != nil {
-				return err
-			}
-			_, err = load.Load(ctx, c, extension.New(), load.Needs{})
-			return err
-		},
-	}
-}
 
 func run(root *cobra.Command, args ...string) int {
 	root.SetArgs(args)
@@ -53,8 +25,8 @@ func run(root *cobra.Command, args ...string) int {
 func TestContextFlagWins(t *testing.T) {
 	env := testenv.New(t, testenv.Options{Contexts: 2})
 	var out, errb bytes.Buffer
-	root := app.NewRoot(app.Config{Commands: []*cobra.Command{loadCmd()}, Out: &out, Err: &errb})
-	code := run(root, "--kubeconfig", env.Kubeconfig, "--context", testenv.ContextName(1), "load")
+	root := app.NewRoot(app.Config{Out: &out, Err: &errb})
+	code := run(root, "--kubeconfig", env.Kubeconfig, "--context", testenv.ContextName(1), "version")
 	if code != 0 {
 		t.Fatalf("exit %d, stderr: %s", code, errb.String())
 	}

@@ -1,0 +1,34 @@
+{
+  "schemaVersion": "kgwctl.kgateway.dev/v1alpha1",
+  "kind": "Version",
+  "item": {
+    "client": {
+      "name": "kgwctl",
+      "version": "v0.1.0",
+      "commit": "a1b2c3d",
+      "goVersion": "go1.26.0"
+    },
+    "installs": [
+      {
+        "id": "kgateway-system.kgateway",
+        "display": "kgateway-system/kgateway",
+        "controller": "2.5.0",
+        "replicas": 1,
+        "ready": 1,
+        "proxies": null,
+        "proxiesUnknown": "gateways: denied"
+      }
+    ],
+    "gatewayAPICRDs": {
+      "bundleVersion": "v1.7.0",
+      "channel": "standard"
+    },
+    "incomplete": [
+      {
+        "input": "gateways.gateway.networking.k8s.io",
+        "state": "denied",
+        "reason": "gateways.gateway.networking.k8s.io is forbidden (injected by testenv)"
+      }
+    ]
+  }
+}

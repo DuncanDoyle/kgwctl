@@ -11,10 +11,12 @@ import (
 	"time"
 
 	"github.com/DuncanDoyle/kgateway-ui/pkg/extension"
+	"github.com/go-logr/logr"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/klog/v2"
 
 	"github.com/DuncanDoyle/kgwctl/internal/view"
 )
@@ -141,8 +143,8 @@ func (f *Flags) Context(parent context.Context) (context.Context, context.Cancel
 	return context.WithTimeout(parent, f.RequestTimeout)
 }
 
-// NewRoot builds the root command with the global flags, completion and
-// cfg.Commands.
+// NewRoot builds the root command with the global flags, version,
+// completion and cfg.Commands.
 func NewRoot(cfg Config) *cobra.Command {
 	if cfg.Name == "" {
 		cfg.Name = "kgwctl"
@@ -153,6 +155,12 @@ func NewRoot(cfg Config) *cobra.Command {
 	if cfg.Err == nil {
 		cfg.Err = os.Stderr
 	}
+	if cfg.Registry == nil {
+		cfg.Registry = extension.New()
+	}
+	if cfg.Build.Name == "" {
+		cfg.Build.Name = cfg.Name
+	}
 	root := &cobra.Command{
 		Use:           cfg.Name,
 		Short:         "Inspect kgateway installs and the Gateway API objects they serve",
@@ -162,13 +170,16 @@ func NewRoot(cfg Config) *cobra.Command {
 	root.SetOut(cfg.Out)
 	root.SetErr(cfg.Err)
 	(&Flags{}).Bind(root.PersistentFlags())
+	root.AddCommand(newVersionCmd(cfg.Registry, cfg.Build))
 	root.AddCommand(cfg.Commands...)
 	return root
 }
 
 // Execute runs root until it returns or the process is interrupted. An error
-// prints as "Error: <msg>" on stderr and gives 1; success gives 0.
+// prints as "Error: <msg>" on stderr and gives 1; success gives 0. It
+// silences client-go's klog output: commands report inputs as warnings.
 func Execute(root *cobra.Command) int {
+	klog.SetLogger(logr.Discard())
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	if err := root.ExecuteContext(ctx); err != nil {

@@ -1,0 +1,38 @@
+{
+  "schemaVersion": "kgwctl.kgateway.dev/v1alpha1",
+  "kind": "Version",
+  "item": {
+    "client": {
+      "name": "kgwctl",
+      "version": "v0.1.0",
+      "commit": "a1b2c3d",
+      "goVersion": "go1.26.0"
+    },
+    "installs": [
+      {
+        "id": "kgateway-system.kgateway",
+        "display": "kgateway-system/kgateway",
+        "controller": "2.5.0",
+        "replicas": 1,
+        "ready": 1,
+        "proxies": [
+          {
+            "gateway": "kgateway-system/http",
+            "version": "2.5.0",
+            "pods": 2
+          },
+          {
+            "gateway": "team-a/edge",
+            "version": "2.2.4",
+            "pods": 2,
+            "differsFromController": true
+          }
+        ]
+      }
+    ],
+    "gatewayAPICRDs": {
+      "bundleVersion": "v1.7.0",
+      "channel": "standard"
+    }
+  }
+}
