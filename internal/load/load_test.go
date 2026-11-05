@@ -116,8 +116,16 @@ func TestLoadWatchDenied(t *testing.T) {
 		env := testenv.New(t, testenv.Options{Fixtures: []string{healthy}})
 		env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindWatch, Resource: "httproutes.gateway.networking.k8s.io"}, testenv.Action{Status: http.StatusForbidden})
 		r := mustLoad(t, env, 10*time.Second, load.Needs{Requested: []schema.GroupVersionResource{httpRoutesGVR}})
-		if in := input(t, r, httpRoutesGVR); in.State == load.StateOK {
-			t.Fatalf("httproutes = %+v, want not ok", in)
+		// The LIST may win the race with the 403 (design §6.3): ok is allowed only with complete data.
+		switch in := input(t, r, httpRoutesGVR); in.State {
+		case load.StateDenied:
+		case load.StateOK:
+			objs := r.Model.Snapshot.Objects[httpRoutesGVR]
+			if len(objs) != 1 || objs[0].GetNamespace() != "default" || objs[0].GetName() != "example" {
+				t.Fatalf("httproutes ok with %d objects, want the fixture's default/example", len(objs))
+			}
+		default:
+			t.Fatalf("httproutes = %+v, want denied, or ok with complete data", in)
 		}
 	})
 	t.Run("default gates", func(t *testing.T) {
@@ -171,11 +179,45 @@ func TestLoadDeadlineErrorIsLoading(t *testing.T) {
 	env := testenv.New(t, testenv.Options{Fixtures: []string{healthy}})
 	sel := testenv.ProxyPodSelector(extension.New())
 	env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindAcquire, Resource: "pods", LabelSelector: sel}, testenv.Action{Delay: 2 * time.Second})
-	t.Cleanup(load.SetDeadlineHook(func() { time.Sleep(200 * time.Millisecond) }))
+	t.Cleanup(load.SetDeadlineHook(func(cache.Snapshotter) { time.Sleep(200 * time.Millisecond) }))
 	r := mustLoad(t, env, 500*time.Millisecond, load.Needs{ProxyPods: true})
 
 	if in := input(t, r, cache.ProxyPodsGVR); in.State != load.StateLoading {
 		t.Fatalf("proxy pods = %+v, want loading", in)
+	}
+}
+
+// TestLoadPostDeadlineFailure fails the settled Pod watch only after the
+// deadline: the engine must still see Pods as ok, as Inputs reports them.
+func TestLoadPostDeadlineFailure(t *testing.T) {
+	testenv.ClassicWatch(t)
+	env := testenv.New(t, testenv.Options{Fixtures: []string{healthy}})
+	sel := testenv.ProxyPodSelector(extension.New())
+	env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindAcquire, Resource: "pods", LabelSelector: sel}, testenv.Action{Delay: time.Hour})
+	release := make(chan struct{})
+	env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindWatch, Resource: "pods"}, testenv.Action{Until: release, Status: http.StatusInternalServerError})
+	t.Cleanup(load.SetDeadlineHook(func(s cache.Snapshotter) {
+		close(release)
+		// No later Pod watch can succeed, so the failure stays recorded.
+		for end := time.Now().Add(5 * time.Second); s.Snapshot().Access[cache.PodsGVR].Err == ""; time.Sleep(10 * time.Millisecond) {
+			if time.Now().After(end) {
+				t.Error("the Pod watch failure was never recorded")
+				return
+			}
+		}
+	}))
+	r := mustLoad(t, env, time.Second, load.Needs{ProxyPods: true})
+
+	if in := input(t, r, cache.PodsGVR); in.State != load.StateOK {
+		t.Fatalf("pods = %+v, want ok (settled before the deadline)", in)
+	}
+	for gvr, in := range r.Inputs {
+		if a := r.Model.Snapshot.Access[gvr]; a.OK != (in.State == load.StateOK) {
+			t.Errorf("%v: engine access %+v, output state %s", gvr, a, in.State)
+		}
+	}
+	if len(r.Model.Installs) != 1 || r.Model.Installs[0].Process == nil || !r.Model.Installs[0].Process.Controller.Observed {
+		t.Error("controller Pods not observed by the engine, though pods is ok")
 	}
 }
 

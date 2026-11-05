@@ -1,5 +1,7 @@
 package load
 
+import "github.com/DuncanDoyle/kgateway-ui/pkg/cache"
+
 // SetCoreSettledHook sets the core-settled hook and returns a func that clears it.
 func SetCoreSettledHook(f func()) func() {
 	onCoreSettled = f
@@ -7,7 +9,7 @@ func SetCoreSettledHook(f func()) func() {
 }
 
 // SetDeadlineHook sets the hook run when the wait sees ctx end and returns a func that clears it.
-func SetDeadlineHook(f func()) func() {
+func SetDeadlineHook(f func(cache.Snapshotter)) func() {
 	onDeadline = f
 	return func() { onDeadline = nil }
 }

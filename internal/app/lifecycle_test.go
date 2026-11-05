@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DuncanDoyle/kgateway-ui/pkg/install"
+
 	"github.com/DuncanDoyle/kgwctl/internal/testenv"
 )
 
@@ -39,10 +41,13 @@ func TestCancelOnEveryExit(t *testing.T) {
 		classic bool
 		// bounded means Execute must return within 2s of the 1s deadline.
 		bounded bool
+		// setup adds rules beyond rule; warn is a substring stderr must contain.
+		setup func(t *testing.T, p *testenv.Proxy)
+		warn  string
 	}{
 		{name: "success", wantCode: 0},
 		// A watch fails after the LIST succeeded: version warns and exits 0.
-		{name: "failure-after-watches-open", classic: true, rule: &testenv.Match{Kind: testenv.KindWatch, Resource: "deployments.apps"}, action: testenv.Action{HoldWatchThenStatus: http.StatusInternalServerError}, wantCode: 0},
+		{name: "failure-after-watches-open", classic: true, setup: failControllerPodWatch, warn: "Warning: pods: failed", wantCode: 0},
 		{name: "error", noWatches: true, rule: &testenv.Match{Kind: testenv.KindDiscovery, Resource: "*"}, action: testenv.Action{Status: http.StatusInternalServerError}, wantCode: 1},
 		{name: "timeout-discovery", noWatches: true, bounded: true, rule: &testenv.Match{Kind: testenv.KindDiscovery, Resource: "*"}, action: testenv.Action{Delay: time.Hour},
 			args: []string{"--request-timeout", "1s"}, wantCode: 1},
@@ -59,9 +64,15 @@ func TestCancelOnEveryExit(t *testing.T) {
 			if tc.rule != nil {
 				env.Proxies[0].Rule(*tc.rule, tc.action)
 			}
+			if tc.setup != nil {
+				tc.setup(t, env.Proxies[0])
+			}
 			r := runCmd(t, env, append([]string{"version"}, tc.args...)...)
 			if r.code != tc.wantCode {
 				t.Fatalf("exit %d, want %d; stderr: %s", r.code, tc.wantCode, r.stderr)
+			}
+			if tc.warn != "" && !strings.Contains(r.stderr, tc.warn) {
+				t.Fatalf("stderr = %q, want it to contain %q", r.stderr, tc.warn)
 			}
 			if tc.bounded && r.took > 2*time.Second {
 				t.Errorf("returned after %v, want within 2s of start", r.took)
@@ -75,6 +86,27 @@ func TestCancelOnEveryExit(t *testing.T) {
 			waitNoWatches(t, env.Proxies[0])
 		})
 	}
+}
+
+// failControllerPodWatch answers the controller Pod watch with a 500 after
+// its LIST, and holds HTTPRoutes until the Pod relist shows the 500 was handled.
+func failControllerPodWatch(t *testing.T, p *testenv.Proxy) {
+	sel := install.UpstreamDetector{}.ControllerPodSelector().String()
+	p.Rule(testenv.Match{Kind: testenv.KindWatch, Resource: "pods", LabelSelector: sel}, testenv.Action{HoldWatchThenStatus: http.StatusInternalServerError})
+	lists := p.Rule(testenv.Match{Kind: testenv.KindAcquire, Resource: "pods", LabelSelector: sel}, testenv.Action{})
+	release := make(chan struct{})
+	p.Rule(testenv.Match{Kind: testenv.KindAcquire, Resource: "httproutes.gateway.networking.k8s.io"}, testenv.Action{Until: release})
+	go func() {
+		defer close(release)
+		// The reflector relists only after its failed watch call recorded the error.
+		for lists.N() < 2 {
+			select {
+			case <-t.Context().Done():
+				return
+			case <-time.After(10 * time.Millisecond):
+			}
+		}
+	}()
 }
 
 // TestReturnAtDeadline holds a request open for an hour; Execute must return

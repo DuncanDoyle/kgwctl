@@ -47,10 +47,12 @@ type Match struct {
 	LabelSelector string
 }
 
-// Action is the fault applied to a matching request. Delay runs first; then
-// Status, if set, answers instead of envtest.
+// Action is the fault applied to a matching request. Delay runs first, then
+// Until; then Status, if set, answers instead of envtest.
 type Action struct {
-	Delay      time.Duration
+	Delay time.Duration
+	// Until, if set, holds the request until the channel is closed.
+	Until      <-chan struct{}
 	Status     int
 	RetryAfter int // seconds, sent with Status
 	// HoldWatchThenStatus keeps a plain watch open until the matching LIST has
@@ -227,6 +229,13 @@ func (p *Proxy) apply(w http.ResponseWriter, r *http.Request, req request, a Act
 		defer t.Stop()
 		select {
 		case <-t.C:
+		case <-r.Context().Done():
+			return false
+		}
+	}
+	if a.Until != nil {
+		select {
+		case <-a.Until:
 		case <-r.Context().Done():
 			return false
 		}
