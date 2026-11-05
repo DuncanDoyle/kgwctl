@@ -4,7 +4,7 @@
 Phase: 1 — Foundation and resource inspection
 Base: 779c421e8d8ed8a4a71847c5cc29bc61ffedbd09
 Docs: docs/phases/phase-1/
-Status: design approved 2026-11-05 (D-010); 1.1 complete; next sub-phase 1.2
+Status: design approved 2026-11-05 (D-010); 1.1 complete; implementation sub-phase 1.2
 
 ### Queue
 - [x] Q1 Owner reviews roadmap and decisions D-001–D-008 — approved 2026-11-04
@@ -14,7 +14,7 @@ Status: design approved 2026-11-05 (D-010); 1.1 complete; next sub-phase 1.2
 - [x] Q5 Cross-model review of design + plan, triage, owner approval — 4 Codex rounds; approved 2026-11-05 (D-010)
 - [x] Q6 File R1–R4 cross-repo issues in kgateway-ui (design §11) — DuncanDoyle/kgateway-ui#17–#20
 - [x] Q7 Sub-phase 1.1 — foundation — phase-1.1-complete.md; kgateway-ui v0.3.0
-- [ ] Q8 Sub-phase 1.2 — `get`
+- [ ] Q8 Sub-phase 1.2 — `get` ← CURRENT — branch duncandoyle/phase1Get
 - [ ] Q9 Sub-phase 1.3 — `describe`
 - [ ] Q10 Sub-phase 1.4 — live check, scale, docs
 - [x] Q11 Maintainer proposal (P-005): not filed, deferred by the owner (D-011)
@@ -28,7 +28,16 @@ Status: design approved 2026-11-05 (D-010); 1.1 complete; next sub-phase 1.2
 - [ ] phase-1-complete.md written, roadmap updated, tracked items closed
 
 ## Sub-phase
-n/a
+Sub-phase: 1.2 — `get`
+Kind: planned
+Base: a66aa1d56de9bd44e203c350503a184b0f341d7b
+Brief: docs/phases/phase-1/phase-1.2-brief.md
+
+### Allowed work
+Features within the approved design (plan Tasks 1.2.1–1.2.4), the `pkg/setup` swap (Task 1.2.0) and the 1.1 carry-over.
+
+### Not allowed
+Design changes without a decisions.md entry and owner approval.
 
 ## Program
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
