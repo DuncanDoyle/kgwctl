@@ -1,0 +1,41 @@
+# A vendor controller Deployment the example detector selects, and one
+# ExamplePolicy that attaches to no target (no ancestors).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: vendor-system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vendor-controller
+  namespace: vendor-system
+  labels:
+    app: vendor-controller
+    app.kubernetes.io/version: 1.2.3
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vendor-controller
+  template:
+    metadata:
+      labels:
+        app: vendor-controller
+    spec:
+      containers:
+        - name: controller
+          image: registry.example.com/vendor-controller:v1.2.3
+status:
+  observedGeneration: 1
+  replicas: 1
+  updatedReplicas: 1
+  readyReplicas: 1
+  availableReplicas: 1
+---
+apiVersion: policy.example.com/v1
+kind: ExamplePolicy
+metadata:
+  name: lonely
+  namespace: default
+spec: {}

@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      # Builds against kgateway-ui at the commit the local go.work uses. That
+      # commit is not pushed yet, so this job cannot pass until kgateway-ui
+      # publishes it. Drop these two steps once go.mod points at a kgateway-ui tag.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: DuncanDoyle/kgateway-ui
+          ref: 5737a1411813ee5e332f66222484a79d297c1fd7
+          path: .deps/kgateway-ui
+      - name: Create go.work
+        run: |
+          go work init . ./.deps/kgateway-ui
+
+      - name: Vet
+        run: go vet ./...
+      - name: Format
+        run: |
+          out="$(gofmt -l .)"
+          if [ -n "$out" ]; then echo "gofmt needed:"; echo "$out"; exit 1; fi
+      - name: Test
+        run: |
+          go mod download sigs.k8s.io/controller-runtime/tools/setup-envtest@v0.24.1
+          export KUBEBUILDER_ASSETS="$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@v0.24.1 use 1.36.x -p path)"
+          go test -race ./...
+      - name: Build
+        run: go build ./cmd/... ./examples/...
