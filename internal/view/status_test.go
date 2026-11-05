@@ -190,6 +190,7 @@ func TestRouteParentsTwoOfOurs(t *testing.T) {
 func TestRouteParentsUnwatched(t *testing.T) {
 	r := loadEnv(t, testenv.Options{Fixtures: []string{twoInstallsFixture}}, nil)
 	f, _ := view.NewFilter(r, all)
+	// The index decides even with a foreign entry: no entry is from ours.
 	ps := routeParents(t, r, f, "team-c", "stray", "Accepted")
 	checkStates(t, ps, view.StateUnwatched)
 	if got, want := view.Summarize(ps), "0/1 (1 unwatched)"; got != want {
@@ -200,13 +201,13 @@ func TestRouteParentsUnwatched(t *testing.T) {
 	}
 }
 
-// With an index input down, unwatched degrades to no status and the Filter names the input.
+// With an index input down, the stray route falls back to its foreign entry and the Filter names the input.
 func TestRouteParentsIndexInputDown(t *testing.T) {
 	r := loadEnv(t, testenv.Options{Fixtures: []string{twoInstallsFixture}}, func(p *testenv.Proxy) {
 		p.Rule(testenv.Match{Kind: testenv.KindAcquire, Resource: "grpcroutes.gateway.networking.k8s.io"}, testenv.Action{Status: http.StatusForbidden})
 	})
 	f, _ := view.NewFilter(r, all)
-	checkStates(t, routeParents(t, r, f, "team-c", "stray", "Accepted"), view.StateNoStatus)
+	checkStates(t, routeParents(t, r, f, "team-c", "stray", "Accepted"), view.StateOther)
 	if w := f.IndexUnavailable(); !strings.Contains(w, "grpcroutes: denied") {
 		t.Errorf("IndexUnavailable = %q, want it to name grpcroutes: denied", w)
 	}

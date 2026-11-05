@@ -2,7 +2,8 @@
 # KGW_DISCOVERY_NAMESPACE_SELECTORS: kgw-a owns team-a/web, kgw-b owns team-b/api.
 # kgw-b wants 2 replicas and has 1 ready. Each Gateway has one HTTPRoute;
 # team-b/api also has a TrafficPolicy kgw-b accepted. team-c/stray names
-# team-a/web from a namespace neither install watches.
+# team-a/web from a namespace neither install watches; its only status entry
+# is from another controller.
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: GatewayClass
@@ -375,3 +376,18 @@ spec:
     - backendRefs:
         - name: stray
           port: 8080
+status:
+  parents:
+    - parentRef:
+        group: gateway.networking.k8s.io
+        kind: Gateway
+        name: web
+        namespace: team-a
+      controllerName: example.com/other
+      conditions:
+        - type: Accepted
+          status: "True"
+          reason: Accepted
+          message: ""
+          observedGeneration: 1
+          lastTransitionTime: "2026-01-01T00:00:00Z"

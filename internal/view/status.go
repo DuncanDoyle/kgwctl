@@ -22,8 +22,7 @@ const (
 )
 
 // ObjectCondition renders obj's condType condition as True, "False (<Reason>)",
-// "Unknown (<Reason>)", <no status> when absent, or <stale> when the condition
-// is behind metadata.generation (design §3.1).
+// "Unknown (<Reason>)", <no status> or <stale> (design §3.1).
 func ObjectCondition(obj *unstructured.Unstructured, condType string) string {
 	c := objects.FindCondition(objects.Conditions(obj), condType)
 	switch {
@@ -73,9 +72,7 @@ type entry struct {
 }
 
 // RouteParents returns the state of each distinct spec parentRef of route for
-// condType (Accepted or ResolvedRefs), in spec order (design §3.1). Unwatched
-// and declared need the index inputs; without them such a parent is no status
-// and IndexUnavailable names the inputs.
+// condType, in spec order (design §3.1).
 func RouteParents(r *load.Result, f *Filter, route *unstructured.Unstructured, condType string) []ParentSummary {
 	status := objects.RouteParents(route)
 	var out []ParentSummary
@@ -208,9 +205,8 @@ func (f *Filter) indexState(r *load.Result, route objects.Ref, p objects.ParentR
 	return "", false
 }
 
-// IndexUnavailable names the index inputs that are not ok, as
-// "httproutes: denied", or is empty when all are. While it is not empty,
-// unwatched and declared parents show as no status (design §6.3).
+// IndexUnavailable names the index inputs that are not ok, as "httproutes: denied".
+// While it is not empty, RouteParents never returns unwatched or declared (design §6.3).
 func (f *Filter) IndexUnavailable() string { return f.indexDown }
 
 // indexInputs are the inputs of the explore index (design §6.3).
@@ -222,9 +218,8 @@ func indexInputs(served []kinds.Served) []schema.GroupVersionResource {
 	return out
 }
 
-// Summarize renders ps as one cell: True when every entry is accepted, else
-// "<accepted>/<total>" and the non-zero counts in a fixed order (design §3.1).
-// A single rejected entry adds its reason. An empty ps is <no status>.
+// Summarize renders ps as one cell: True when all are accepted, else
+// "<accepted>/<total> (<counts>)" in the design §3.1 order.
 func Summarize(ps []ParentSummary) string {
 	if len(ps) == 0 {
 		return cellNoStatus
