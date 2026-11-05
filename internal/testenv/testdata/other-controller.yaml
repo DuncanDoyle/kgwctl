@@ -1,0 +1,165 @@
+# Applied after healthy.yaml: another controller (example.com/other) with its
+# own GatewayClass, Gateway other/edge, a ListenerSet on it, routes only to
+# them and a policy only it reports on. Two routes in namespace other were
+# retargeted away from other/edge and still carry only its controller's status.
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: other
+spec:
+  controllerName: example.com/other
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: edge
+  namespace: other
+spec:
+  gatewayClassName: other
+  allowedListeners:
+    namespaces:
+      from: Same
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 8080
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: ListenerSet
+metadata:
+  name: edge-extra
+  namespace: other
+spec:
+  parentRef:
+    name: edge
+  listeners:
+    - name: extra
+      protocol: HTTP
+      port: 8081
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: edge-route
+  namespace: other
+spec:
+  parentRefs:
+    - name: edge
+  rules:
+    - backendRefs:
+        - name: edge
+          port: 8080
+status:
+  parents:
+    - parentRef:
+        group: gateway.networking.k8s.io
+        kind: Gateway
+        name: edge
+        namespace: other
+      controllerName: example.com/other
+      conditions:
+        - type: Accepted
+          status: "True"
+          reason: Accepted
+          message: ""
+          observedGeneration: 1
+          lastTransitionTime: "2026-01-01T00:00:00Z"
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: via-listenerset
+  namespace: other
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: ListenerSet
+      name: edge-extra
+  rules:
+    - backendRefs:
+        - name: edge
+          port: 8080
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: edge-policy
+  namespace: other
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: edge
+status:
+  ancestors:
+    - ancestorRef:
+        group: gateway.networking.k8s.io
+        kind: Gateway
+        name: edge
+        namespace: other
+      controllerName: example.com/other
+      conditions:
+        - type: Accepted
+          status: "True"
+          reason: Accepted
+          message: ""
+          observedGeneration: 1
+          lastTransitionTime: "2026-01-01T00:00:00Z"
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: retargeted-ours
+  namespace: other
+spec:
+  parentRefs:
+    - name: http
+      namespace: kgateway-system
+  rules:
+    - backendRefs:
+        - name: edge
+          port: 8080
+status:
+  parents:
+    - parentRef:
+        group: gateway.networking.k8s.io
+        kind: Gateway
+        name: edge
+        namespace: other
+      controllerName: example.com/other
+      conditions:
+        - type: Accepted
+          status: "True"
+          reason: Accepted
+          message: ""
+          observedGeneration: 1
+          lastTransitionTime: "2026-01-01T00:00:00Z"
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: retargeted-missing
+  namespace: other
+spec:
+  parentRefs:
+    - name: gone
+  rules:
+    - backendRefs:
+        - name: edge
+          port: 8080
+status:
+  parents:
+    - parentRef:
+        group: gateway.networking.k8s.io
+        kind: Gateway
+        name: edge
+        namespace: other
+      controllerName: example.com/other
+      conditions:
+        - type: Accepted
+          status: "True"
+          reason: Accepted
+          message: ""
+          observedGeneration: 1
+          lastTransitionTime: "2026-01-01T00:00:00Z"
