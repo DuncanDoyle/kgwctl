@@ -13,7 +13,7 @@ Status: design approved 2026-11-05 (D-010); implementation sub-phase 1.1
 - [x] Q4 Phase 1 implementation plan (`implementation-plan.md`) — r3, sub-phases 1.1–1.4
 - [x] Q5 Cross-model review of design + plan, triage, owner approval — 4 Codex rounds; approved 2026-11-05 (D-010)
 - [x] Q6 File R1–R4 cross-repo issues in kgateway-ui (design §11) — DuncanDoyle/kgateway-ui#17–#20
-- [ ] Q7 Sub-phase 1.1 — foundation (plan §1.1) ← CURRENT
+- [ ] Q7 Sub-phase 1.1 — foundation (plan §1.1) ← CURRENT — implemented on branch duncandoyle/phase1Foundation (87ab28e..dac5a0c); review reviews/1.1-codex.md; close blocked (Notes)
 - [ ] Q8 Sub-phase 1.2 — `get`
 - [ ] Q9 Sub-phase 1.3 — `describe`
 - [ ] Q10 Sub-phase 1.4 — live check, scale, docs
@@ -43,6 +43,7 @@ Design changes without a decisions.md entry and owner approval.
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
 - Waiting on: E2 (Phase 1; kgateway-ui module tag, DuncanDoyle/kgateway-ui#16 — pseudo-version until then), E8 (Phase 2), E3 (Phase 5), E7 (Phase 6)
 - Available: E1 — krp `v0.1.0` tagged 2026-11-04 (DuncanDoyle/kgwctl#1); used from Phase 3
+- Available: E5 — krp `v0.2.0` origin mapping (DuncanDoyle/kgwctl#2); used from Phase 3/6
 - Consumers: none
 
 ## Carry-over (deferred to later phases)
@@ -50,3 +51,4 @@ Design changes without a decisions.md entry and owner approval.
 
 ## Notes
 - GitHub repo: https://github.com/DuncanDoyle/kgwctl (`kgwctl` remains a working name, D-006).
+- 2026-11-05 Close blocked (1.1): (a) go.mod pins kgateway-ui 9f44baa, which lacks APIs 1.1 uses; build and CI need a go.work to 5737a14 (unpushed) until kgateway-ui publishes and tags it (#16); (b) under Go 1.26, TestNoAccumulation fails on a goroutine leak in kgateway-ui pkg/cache (watch.Filter in instrument), reported to the kgateway-ui session.
