@@ -28,7 +28,8 @@ func ObjectCondition(obj *unstructured.Unstructured, condType string) string {
 	switch {
 	case c == nil:
 		return cellNoStatus
-	case objects.IsStale(obj, *c):
+	// Ruling R25: Unknown never observed is a pending default, not stale status.
+	case objects.IsStale(obj, *c) && (c.Status != metav1.ConditionUnknown || c.ObservedGeneration != 0):
 		return cellStale
 	case c.Status == metav1.ConditionTrue, c.Reason == "":
 		return string(c.Status)

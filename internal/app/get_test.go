@@ -195,26 +195,33 @@ func TestGetErrors(t *testing.T) {
 	}
 }
 
-// TestGetWatchDeniedHeld checks the §6.3 invariant: a watch denied after the
-// LIST synced gives either the full table or a denied error, never a partial table.
+// TestGetWatchDeniedHeld checks the §6.3 invariant when the httproutes watch is
+// denied after its LIST synced. Deployments are held for 1s, so Load is still
+// waiting on core inputs when the 403 lands 200ms after the LIST: every run must
+// take the denied branch, never print a partial table.
 func TestGetWatchDeniedHeld(t *testing.T) {
 	testenv.ClassicWatch(t)
 	env := newEnv(t, testenv.Options{Fixtures: []string{healthyFixture}})
-	env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindWatch, Resource: httpRoutes}, testenv.Action{HoldWatchThenStatus: http.StatusForbidden})
+	p := env.Proxies[0]
+	held := p.Rule(testenv.Match{Kind: testenv.KindWatch, Resource: httpRoutes}, testenv.Action{HoldWatchThenStatus: http.StatusForbidden})
+	slow := p.Rule(testenv.Match{Kind: testenv.KindAcquire, Resource: "deployments.apps"}, testenv.Action{Delay: time.Second})
 	want := readGolden(t, "get", "healthy.table")
-	var ok, denied int
-	for i := range 10 {
+	const runs = 3
+	for i := range runs {
+		before := held.N()
 		r := runCmd(t, env, "get", "gwc,all", "-A")
 		switch {
+		case r.code == 1 && r.stdout == "" && strings.Contains(r.stderr, "cannot read "+httpRoutes+": denied"):
 		case r.code == 0 && r.stdout == want:
-			ok++
-		case r.code == 1 && r.stdout == "" && strings.Contains(r.stderr, "denied"):
-			denied++
+			t.Errorf("run %d: exit 0 with the full table; the 403 did not land before the snapshot", i)
 		default:
-			t.Errorf("run %d: exit %d, stderr %q, stdout:\n%s", i, r.code, r.stderr, r.stdout)
+			t.Errorf("run %d: breaks the invariant: exit %d, stderr %q, stdout:\n%s", i, r.code, r.stderr, r.stdout)
+		}
+		if held.N() == before {
+			t.Errorf("run %d: the held watch rule never applied", i)
 		}
 	}
-	t.Logf("%d runs ok, %d denied", ok, denied)
+	t.Logf("held watch hits %d, delayed deployments hits %d over %d runs", held.N(), slow.N(), runs)
 }
 
 // TestGetIndexInputDown: with Namespaces denied, Gateways still list and ROUTES says why it is unknown.
@@ -233,8 +240,13 @@ func TestGetIndexInputDown(t *testing.T) {
 		t.Errorf("ROUTES and LISTENERSETS are not both unknown: %q", lines[1])
 	}
 	onlyWarnings(t, r.stderr)
-	if !strings.Contains(r.stderr, "namespaces: denied") {
-		t.Errorf("stderr = %q, want a warning naming namespaces: denied", r.stderr)
+	if !strings.Contains(r.stderr, "Warning: relations unknown (namespaces: denied)") {
+		t.Errorf("stderr = %q, want the relations warning", r.stderr)
+	}
+	// GatewayClasses have no index-derived cell, so no relations warning.
+	r = runCmd(t, env, "get", "gwc")
+	if r.code != 0 || strings.Contains(r.stderr, "relations unknown") {
+		t.Errorf("get gwc: exit %d, stderr %q, want no relations warning", r.code, r.stderr)
 	}
 }
 

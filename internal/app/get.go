@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"io"
+	"slices"
 	"time"
 
 	"github.com/DuncanDoyle/kgateway-ui/pkg/extension"
@@ -60,7 +61,7 @@ func newGetCmd(reg *extension.Registry, now func() time.Time) *cobra.Command {
 			if output == print.FormatYAML || output == print.FormatJSON {
 				return print.RawList(cmd.OutOrStdout(), output, objs)
 			}
-			if down := filter.IndexUnavailable(); down != "" {
+			if down := filter.IndexUnavailable(); down != "" && indexed(tables) {
 				fmt.Fprintf(stderr, "Warning: relations unknown (%s)\n", down)
 			}
 			wrote, err := print.Tables(cmd.OutOrStdout(), tables)
@@ -107,4 +108,9 @@ func loadGet(cmd *cobra.Command, f *Flags, reg *extension.Registry, kindArg stri
 		return nil, nil, "", err
 	}
 	return res, targets, ns, nil
+}
+
+// indexed reports whether a table with rows shows cells derived from the explore index.
+func indexed(ts []view.Table) bool {
+	return slices.ContainsFunc(ts, func(t view.Table) bool { return t.Indexed && len(t.Rows) > 0 })
 }

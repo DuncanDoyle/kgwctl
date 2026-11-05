@@ -258,6 +258,9 @@ func TestObjectCondition(t *testing.T) {
 		// Stale is per condition: Accepted is current, Programmed is not.
 		{"stale", obj(3, cond("Accepted", "True", "Accepted", 3), cond("Programmed", "True", "Programmed", 2)), "<stale>"},
 		{"stale without observedGeneration", obj(1, cond("Programmed", "False", "Invalid", 0)), "<stale>"},
+		// R25: Unknown never observed is pending, not stale; behind a generation it is stale.
+		{"unknown never observed", obj(1, cond("Programmed", "Unknown", "Pending", 0)), "Unknown (Pending)"},
+		{"unknown behind", obj(3, cond("Programmed", "Unknown", "Pending", 2)), "<stale>"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

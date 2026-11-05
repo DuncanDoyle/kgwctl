@@ -23,6 +23,8 @@ type Table struct {
 	Title   string
 	Headers []string
 	Rows    [][]string
+	// Indexed is set when a cell depends on the explore index inputs (design §6.3).
+	Indexed bool
 }
 
 // Cells with no value to show.
@@ -52,7 +54,8 @@ func GetTables(r *load.Result, f *Filter, targets []resolve.Target, wide bool, n
 		if err != nil {
 			return nil, nil, err
 		}
-		tb := Table{Title: t.Label, Headers: g.headers(t)}
+		c := category(t)
+		tb := Table{Title: t.Label, Headers: g.headers(t), Indexed: c == kinds.CategoryGateway || c == kinds.CategoryRoute}
 		for _, row := range rows {
 			tb.Rows = append(tb.Rows, g.cells(t, row))
 			objs = append(objs, row.u)
@@ -177,7 +180,11 @@ func (g getter) cells(t resolve.Target, rw row) []string {
 		c = append(c, u.GetNamespace())
 	}
 	n := u.GetName()
-	if g.multi {
+	switch {
+	// The GROUP column carries the group, so the prefix needs only the kind.
+	case g.multi && len(t.Kinds) > 1:
+		n = strings.ToLower(rw.k.Kind) + "/" + n
+	case g.multi:
 		n = strings.ToLower(rw.k.Kind) + "." + rw.k.Group + "/" + n
 	}
 	c = append(c, n)
@@ -222,16 +229,17 @@ func (g getter) cells(t resolve.Target, rw row) []string {
 	return c
 }
 
-// installCell is the owning install, "" without an owner, unknown while ownership is (R17).
+// installCell lists the owning installs, sorted; "" without an owner, unknown while ownership is (R17).
 func (g getter) installCell(u *unstructured.Unstructured) string {
 	if !g.f.known {
 		return "unknown"
 	}
-	in, ok := g.f.InstallOf(u)
-	if !ok {
-		return ""
+	var out []string
+	for _, i := range g.f.owners[objects.RefOf(u)] {
+		out = append(out, g.r.Model.Installs[i].Resolved.Display())
 	}
-	return in.Display()
+	slices.Sort(out)
+	return strings.Join(out, ",")
 }
 
 // index finds ref's row in the owning install's explore index, else in the first index that has it.

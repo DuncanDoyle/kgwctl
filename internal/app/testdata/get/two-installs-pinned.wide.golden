@@ -1,8 +1,8 @@
-NAME                                              CONTROLLER              ACCEPTED   AGE   PARAMETERS   INSTALL
-gatewayclass.gateway.networking.k8s.io/kgateway   kgateway.dev/kgateway   <stale>    10d   <none>       kgw-a/kgateway
+NAME                                              CONTROLLER              ACCEPTED            AGE   PARAMETERS   INSTALL
+gatewayclass.gateway.networking.k8s.io/kgateway   kgateway.dev/kgateway   Unknown (Pending)   10d   <none>       kgw-a/kgateway,kgw-b/kgateway
 
-NAMESPACE   NAME                                    CLASS      ADDRESS   PROGRAMMED   LISTENERS   ROUTES   AGE   LISTENERSETS   INSTALL
-team-a      gateway.gateway.networking.k8s.io/web   kgateway   <none>    <stale>      1           3        10d   0              kgw-a/kgateway
+NAMESPACE   NAME                                    CLASS      ADDRESS   PROGRAMMED          LISTENERS   ROUTES   AGE   LISTENERSETS   INSTALL
+team-a      gateway.gateway.networking.k8s.io/web   kgateway   <none>    Unknown (Pending)   1           3        10d   0              kgw-a/kgateway
 
 NAMESPACE   NAME                                             HOSTNAMES   PARENTS      ACCEPTED            RESOLVED            AGE   BACKENDS   DELEGATION   INSTALL
 team-a      httproute.gateway.networking.k8s.io/web          *           web          0/1 (1 no status)   0/1 (1 no status)   10d   web        <none>       kgw-a/kgateway
