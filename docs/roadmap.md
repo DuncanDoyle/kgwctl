@@ -16,7 +16,6 @@ A command-line tool for operators to inspect and troubleshoot kgateway installat
 - Cobra scaffold, kubeconfig and `--context` flags, `version` (client and controller).
 - `get` and `describe` for GatewayClass, Gateway, ListenerSet, HTTPRoute and kgateway kinds, with status conditions shown.
 - Output: table, `-o yaml`, `-o json`.
-- Before design approval: a short design proposal for kgateway maintainers (program P-005), filed only with the owner's go-ahead.
 
 ### Phase 2 — `check`
 **Status:** Not started

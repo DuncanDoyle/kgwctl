@@ -17,7 +17,7 @@ Status: design approved 2026-11-05 (D-010); implementation sub-phase 1.1
 - [ ] Q8 Sub-phase 1.2 — `get`
 - [ ] Q9 Sub-phase 1.3 — `describe`
 - [ ] Q10 Sub-phase 1.4 — live check, scale, docs
-- [ ] Q11 Maintainer proposal (P-005): file only with the owner's go-ahead
+- [x] Q11 Maintainer proposal (P-005): not filed, deferred by the owner (D-011)
 
 ### Exit gates
 - [ ] tests/vet pass (observed)
