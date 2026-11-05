@@ -55,3 +55,9 @@ Append-only. Newest at the bottom. Supersede, don't edit.
 **Decision:** Phase 1 exports `pkg/cli` (`NewRootCommand(opts...)`, `Execute`) with options for name, kgateway-ui extension registry, extra commands and build info. Everything else is `internal/`. `examples/downstream` is built in CI.
 **Alternatives:** PATH plugins (`kgwctl-<name>`) — rejected as primary: plugins can't see the shared model, so vendor kinds would be missing from `get`/`describe`. Fork per vendor — rejected: permanent rebase cost.
 **Consequences:** Supersedes the "Phase 4 design defines the hook" consequence of D-004. `pkg/cli` is a semver contract from `v0.1.0`. Later phases extend the registry, not the CLI options, where possible.
+
+## D-010 — Phase 1 design approved; support bundle phase (2026-11-05, phase 1)
+**Context:** Phase 1 design r4 and plan r3 passed four Codex review rounds. Research ranked a support bundle the second most frequent support ask, and "Accepted, but rejected by Envoy" the costliest theme.
+**Decision:** The owner approved the design, the plan, every *(our call)* item in the design, D-009, and envtest as a test-only dependency. The roadmap gains Phase 4 "Support bundle" (secrets redacted by default). Phase 2 builds the xDS-rejection check first and adds version skew.
+**Alternatives:** Bundle at the end of the roadmap — rejected: its demand is higher than analysis or policies.
+**Consequences:** Phases renumber: full analysis 5, topology and policies 6, upstream move 7. Program edges E3 and E7 move to CLI Phases 5 and 6. D-009 is accepted.

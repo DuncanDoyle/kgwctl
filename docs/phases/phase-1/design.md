@@ -1,6 +1,6 @@
 # Phase 1 — Foundation and resource inspection: Design
 
-**Status:** draft r4 (Codex rounds 1–3 triaged: reviews/design-codex.md, design-r2-codex.md, design-r3-codex.md), awaiting owner approval
+**Status:** approved 2026-11-05 (D-010). r4; Codex rounds 1–4 in reviews/
 **Base:** `779c421`
 **Roadmap:** [Phase 1](../../roadmap.md#phase-1--foundation-and-resource-inspection)
 **Program edges:** E2 (kgateway-ui `pkg/cache` + `pkg/engine`, one-shot)
