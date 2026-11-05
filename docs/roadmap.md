@@ -9,9 +9,9 @@ A command-line tool for operators to inspect and troubleshoot kgateway installat
 ## Phases
 
 ### Phase 1 — Foundation and resource inspection
-**Status:** In progress — design approved 2026-11-05
+**Status:** In progress — design approved 2026-11-05; 1.1 (foundation, `version`) complete 2026-11-05
 **Docs:** `docs/phases/phase-1/`
-**Waits on:** program edge E2 (kgateway-ui `pkg/cache` + `pkg/engine`, one-shot use)
+**Waits on:** none — E2 delivered in kgateway-ui v0.3.0
 
 - Cobra scaffold, kubeconfig and `--context` flags, `version` (client and controller).
 - `get` and `describe` for GatewayClass, Gateway, ListenerSet, HTTPRoute and kgateway kinds, with status conditions shown.
