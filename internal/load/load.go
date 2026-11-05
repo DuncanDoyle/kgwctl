@@ -122,10 +122,10 @@ func Load(ctx context.Context, c Clients, reg *extension.Registry, needs Needs) 
 	defer cancel()
 	ca := cache.New(cacheConfig(c, reg, served, needs))
 	ca.Start(cctx)
-	snap, pending := wait(ctx, ca, optional(needs))
+	snap, acc, pending := wait(ctx, ca, optional(needs))
 	cancel()
 
-	inputs := classify(snap.Access, pending)
+	inputs := classify(acc, pending)
 	var late []string
 	for _, gvr := range needs.Requested {
 		if in, ok := inputs[gvr]; ok && in.State == StateLoading {
@@ -157,9 +157,10 @@ func optional(needs Needs) []schema.GroupVersionResource {
 func settled(a cache.Access) bool { return a.OK || a.Err != "" }
 
 // wait polls ca until the core inputs and opt have settled, or ctx ends. It
-// returns the snapshot to compute on and, when ctx ended, the inputs still
-// pending in the last snapshot taken before it ended (nil: every input).
-func wait(ctx context.Context, ca *cache.Cache, opt []schema.GroupVersionResource) (*cache.Snapshot, map[schema.GroupVersionResource]bool) {
+// returns the snapshot to compute on and the access states to classify. When
+// ctx ended, inputs settled in the last snapshot taken before it keep that
+// state; the others are pending and read from a fresh snapshot.
+func wait(ctx context.Context, ca *cache.Cache, opt []schema.GroupVersionResource) (*cache.Snapshot, map[schema.GroupVersionResource]cache.Access, map[schema.GroupVersionResource]bool) {
 	t := time.NewTicker(pollEvery)
 	defer t.Stop()
 	var last *cache.Snapshot
@@ -171,17 +172,18 @@ func wait(ctx context.Context, ca *cache.Cache, opt []schema.GroupVersionResourc
 			break
 		}
 		last = s
-		if !core && ca.Settled() {
+		// Synced is computed in the same pass as s.Access, so the two agree.
+		if s.Synced && !core {
 			core = true
 			if onCoreSettled != nil {
 				onCoreSettled()
 			}
 		}
-		if core && !slices.ContainsFunc(opt, func(g schema.GroupVersionResource) bool {
+		if s.Synced && !slices.ContainsFunc(opt, func(g schema.GroupVersionResource) bool {
 			a, running := s.Access[g]
 			return running && !settled(a)
 		}) {
-			return s, nil
+			return s, s.Access, nil
 		}
 		select {
 		case <-ctx.Done():
@@ -191,14 +193,18 @@ func wait(ctx context.Context, ca *cache.Cache, opt []schema.GroupVersionResourc
 	if onDeadline != nil {
 		onDeadline()
 	}
-	pending := map[schema.GroupVersionResource]bool{}
 	final := ca.Snapshot()
-	for gvr := range final.Access {
-		if last == nil || !settled(last.Access[gvr]) {
-			pending[gvr] = true
+	acc := make(map[schema.GroupVersionResource]cache.Access, len(final.Access))
+	pending := map[schema.GroupVersionResource]bool{}
+	for gvr, a := range final.Access {
+		if last != nil && settled(last.Access[gvr]) {
+			// A watch re-opened after ctx ended can record a cancellation error on it.
+			acc[gvr] = last.Access[gvr]
+			continue
 		}
+		acc[gvr], pending[gvr] = a, true
 	}
-	return final, pending
+	return final, acc, pending
 }
 
 // classify maps each Access entry to an Input; pending inputs that are not
