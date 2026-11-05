@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"sync"
 	"time"
 
 	"github.com/DuncanDoyle/kgateway-ui/pkg/extension"
@@ -175,11 +176,14 @@ func NewRoot(cfg Config) *cobra.Command {
 	return root
 }
 
+// silenceKlog sets klog's logger once: watch goroutines of earlier runs still read it (§4.3).
+var silenceKlog sync.Once
+
 // Execute runs root until it returns or the process is interrupted. An error
 // prints as "Error: <msg>" on stderr and gives 1; success gives 0. It
-// silences client-go's klog output: commands report inputs as warnings.
+// silences client-go's klog output once per process: commands report inputs as warnings.
 func Execute(root *cobra.Command) int {
-	klog.SetLogger(logr.Discard())
+	silenceKlog.Do(func() { klog.SetLogger(logr.Discard()) })
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	if err := root.ExecuteContext(ctx); err != nil {
