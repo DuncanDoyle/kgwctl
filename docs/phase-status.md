@@ -41,9 +41,10 @@ Design changes without a decisions.md entry and owner approval.
 
 ## Program
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
-- Waiting on: E2 (Phase 1; kgateway-ui module tag, DuncanDoyle/kgateway-ui#16 — pseudo-version until then), E8 (Phase 2), E3 (Phase 5), E7 (Phase 6)
+- Waiting on: E2 (Phase 1; kgateway-ui module tag, DuncanDoyle/kgateway-ui#16 — pseudo-version until then), E3 (Phase 5), E7 (Phase 6)
 - Available: E1 — krp `v0.1.0` tagged 2026-11-04 (DuncanDoyle/kgwctl#1); used from Phase 3
 - Available: E5 — krp `v0.2.0` origin mapping (DuncanDoyle/kgwctl#2); used from Phase 3/6
+- Built, not published: E8 — kgateway-ui `pkg/setup` and `ctrlmetrics.Static` on phase3Seams (local, 2026-11-05); ships with the #16 tag. Phase 2 must recompute at `m.Next.At` so grace periods and holds mature; the Phase 1 loader already polls `Synced` and waits for the optional watches. Phase 1.2 may swap `internal/load/wiring.go` for `pkg/setup`.
 - Consumers: none
 
 ## Carry-over (deferred to later phases)
