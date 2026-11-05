@@ -15,6 +15,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/DuncanDoyle/kgateway-ui/pkg/extension"
+	"github.com/DuncanDoyle/kgateway-ui/pkg/install"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 )
@@ -360,4 +362,16 @@ func reasonFor(code int) metav1.StatusReason {
 		return metav1.StatusReasonTimeout
 	}
 	return metav1.StatusReasonUnknown
+}
+
+// ProxyPodSelector returns the label selector the cache sends on its proxy
+// Pod requests: that of the first registered detector that selects proxy
+// Pods, or "" when none does. Use it as Match.LabelSelector.
+func ProxyPodSelector(reg *extension.Registry) string {
+	for _, d := range reg.Detectors {
+		if pd, ok := d.(install.ProxyPodDetector); ok {
+			return pd.ProxyPodSelector().String()
+		}
+	}
+	return ""
 }

@@ -10,6 +10,7 @@ build:
 	go build ./...
 
 test:
+	go mod download sigs.k8s.io/controller-runtime/tools/setup-envtest@$(ENVTEST_VERSION)
 	KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION) -p path)" go test ./...
 
 vet:

@@ -11,6 +11,7 @@ import (
 
 	"github.com/DuncanDoyle/kgateway-ui/pkg/cache"
 	"github.com/DuncanDoyle/kgateway-ui/pkg/extension"
+	"github.com/DuncanDoyle/kgateway-ui/pkg/install"
 	"github.com/DuncanDoyle/kgateway-ui/pkg/kinds"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -54,12 +55,16 @@ func startCache(t *testing.T, env *testenv.Env) *cache.Cache {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var podSel, depSel []labels.Selector
+	var podSel, depSel, proxySel []labels.Selector
 	for _, d := range reg.Detectors {
 		podSel = append(podSel, d.ControllerPodSelector())
 		depSel = append(depSel, d.ControllerSelector(), d.ProxySelector())
+		if pd, ok := d.(install.ProxyPodDetector); ok {
+			proxySel = append(proxySel, pd.ProxyPodSelector())
+		}
 	}
-	ca := cache.New(cache.Config{Dynamic: c.Dynamic, Kube: c.Kube, Served: served, PodSelectors: podSel, DeploymentSelectors: depSel})
+	ca := cache.New(cache.Config{Dynamic: c.Dynamic, Kube: c.Kube, Served: served, PodSelectors: podSel,
+		DeploymentSelectors: depSel, ProxyPodSelectors: proxySel})
 	ca.Start(t.Context())
 	return ca
 }
@@ -88,6 +93,39 @@ func TestEnvServesFixture(t *testing.T) {
 	}
 	if v := crd.Annotations["gateway.networking.k8s.io/bundle-version"]; v != "v1.7.0" {
 		t.Fatalf("bundle-version = %q, want v1.7.0", v)
+	}
+}
+
+func TestProxyDelaysOnlyMatchingSelector(t *testing.T) {
+	env := testenv.New(t, testenv.Options{})
+	sel := testenv.ProxyPodSelector(extension.New())
+	if sel == "" {
+		t.Fatal("ProxyPodSelector returned no selector for the upstream registry")
+	}
+	hits := env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindAcquire, Resource: "pods", LabelSelector: sel}, testenv.Action{Delay: time.Second})
+	start := time.Now()
+	ca := startCache(t, env)
+
+	// Record when each Pod input first reports OK.
+	var podsAt, proxyAt time.Duration
+	for (podsAt == 0 || proxyAt == 0) && time.Since(start) < 10*time.Second {
+		acc := ca.Snapshot().Access
+		if podsAt == 0 && acc[cache.PodsGVR].OK {
+			podsAt = time.Since(start)
+		}
+		if proxyAt == 0 && acc[cache.ProxyPodsGVR].OK {
+			proxyAt = time.Since(start)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if podsAt == 0 || podsAt >= 300*time.Millisecond {
+		t.Fatalf("controller Pods settled after %v, want < 300ms", podsAt)
+	}
+	if proxyAt < time.Second {
+		t.Fatalf("proxy Pods settled after %v, want >= 1s", proxyAt)
+	}
+	if hits.N() == 0 {
+		t.Fatal("delay rule never matched")
 	}
 }
 
