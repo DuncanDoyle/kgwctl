@@ -16,6 +16,8 @@ type Target struct {
 	// Label is the table title: the kind, or "ListenerSet" for the alias.
 	Label string
 	Kinds []kinds.Served
+	// Alias marks the ListenerSet alias table, however many of its kinds are served.
+	Alias bool
 }
 
 // UnknownKindError reports a name that matches no modelled kind.
@@ -68,16 +70,13 @@ func isAlias(name string) bool {
 }
 
 // Kinds resolves arg, comma-separated kind names as design §3 defines them,
-// to one Target per name, in order and without duplicates.
+// to one Target per name, in order. A kind is in at most one Target: names
+// that overlap merge into the first, which takes the alias label if either is the alias.
 func Kinds(served []kinds.Served, modelled []kinds.Descriptor, arg string) ([]Target, error) {
 	modelled = kinds.Dedupe(modelled)
 	var out []Target
 	named := false
-	add := func(t Target) {
-		if !slices.ContainsFunc(out, func(o Target) bool { return o.Label == t.Label && sameKinds(o.Kinds, t.Kinds) }) {
-			out = append(out, t)
-		}
-	}
+	add := func(t Target) { out = merge(out, served, t) }
 	for _, name := range strings.Split(arg, ",") {
 		name = strings.ToLower(strings.TrimSpace(name))
 		switch name {
@@ -97,7 +96,7 @@ func Kinds(served []kinds.Served, modelled []kinds.Descriptor, arg string) ([]Ta
 		}
 		t := Target{Label: descs[0].Kind}
 		if isAlias(name) {
-			t.Label = aliasLabel
+			t.Label, t.Alias = aliasLabel, true
 		}
 		for _, s := range served {
 			if slices.ContainsFunc(descs, func(d kinds.Descriptor) bool { return d.Group == s.Group && d.Kind == s.Kind }) {
@@ -126,7 +125,7 @@ func all(served []kinds.Served) []Target {
 		case slices.Contains(listenerSets, groupKind{s.Group, s.Kind}):
 			if alias < 0 {
 				alias = len(out)
-				out = append(out, Target{Label: aliasLabel})
+				out = append(out, Target{Label: aliasLabel, Alias: true})
 			}
 			out[alias].Kinds = append(out[alias].Kinds, s)
 		default:
@@ -166,6 +165,43 @@ func names(d kinds.Descriptor, name string) bool {
 	return false
 }
 
-func sameKinds(a, b []kinds.Served) bool {
-	return slices.EqualFunc(a, b, func(x, y kinds.Served) bool { return x.Group == y.Group && x.Kind == y.Kind })
+// merge adds t to ts, folding every target that shares a kind with t into the
+// first of them; merged kinds keep served order.
+func merge(ts []Target, served []kinds.Served, t Target) []Target {
+	first := -1
+	for i := 0; i < len(ts); i++ {
+		if !slices.ContainsFunc(ts[i].Kinds, func(k kinds.Served) bool { return hasKind(t.Kinds, k) }) {
+			continue
+		}
+		if first < 0 {
+			first = i
+			continue
+		}
+		t = union(served, t, ts[i])
+		ts = slices.Delete(ts, i, i+1)
+		i--
+	}
+	if first < 0 {
+		return append(ts, t)
+	}
+	ts[first] = union(served, ts[first], t)
+	return ts
+}
+
+// union is a and b in one target, labelled as the alias if either is.
+func union(served []kinds.Served, a, b Target) Target {
+	u := Target{Label: a.Label, Alias: a.Alias || b.Alias}
+	if u.Alias {
+		u.Label = aliasLabel
+	}
+	for _, s := range served {
+		if hasKind(a.Kinds, s) || hasKind(b.Kinds, s) {
+			u.Kinds = append(u.Kinds, s)
+		}
+	}
+	return u
+}
+
+func hasKind(ks []kinds.Served, k kinds.Served) bool {
+	return slices.ContainsFunc(ks, func(x kinds.Served) bool { return x.Group == k.Group && x.Kind == k.Kind })
 }

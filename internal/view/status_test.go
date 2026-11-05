@@ -228,6 +228,52 @@ func TestPolicyAncestors(t *testing.T) {
 	}
 }
 
+// TestPolicyAncestorShared: one ancestorRef written by ours and another
+// controller counts once (R21), and our entry decides its state.
+func TestPolicyAncestorShared(t *testing.T) {
+	r := loadEnv(t, testenv.Options{Fixtures: []string{healthyFixture}}, nil)
+	f, _ := view.NewFilter(r, all)
+	entry := func(controller, status, reason string) map[string]any {
+		return map[string]any{
+			"ancestorRef":    map[string]any{"group": "gateway.networking.k8s.io", "kind": "Gateway", "name": "http", "namespace": "kgateway-system"},
+			"controllerName": controller,
+			"conditions": []any{map[string]any{"type": "Accepted", "status": status, "reason": reason, "message": "",
+				"observedGeneration": int64(1), "lastTransitionTime": "2026-01-01T00:00:00Z"}},
+		}
+	}
+	policy := func(es ...any) *unstructured.Unstructured {
+		return &unstructured.Unstructured{Object: map[string]any{
+			"apiVersion": "gateway.kgateway.dev/v1alpha1", "kind": "TrafficPolicy",
+			"metadata": map[string]any{"name": "p", "namespace": "default", "generation": int64(1)},
+			"status":   map[string]any{"ancestors": es},
+		}}
+	}
+	tests := []struct {
+		name string
+		u    *unstructured.Unstructured
+		want view.ParentState
+		cell string
+	}{
+		{"ours accepts", policy(entry("example.com/other", "False", "Invalid"), entry("kgateway.dev/kgateway", "True", "Accepted")), view.StateAccepted, "True"},
+		{"ours rejects", policy(entry("kgateway.dev/kgateway", "False", "Invalid"), entry("example.com/other", "True", "Accepted")), view.StateRejected, "0/1 (1 rejected: Invalid)"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ps := view.PolicyAncestors(f, tc.u, "Accepted")
+			checkStates(t, ps, tc.want)
+			if len(ps) != 1 {
+				return
+			}
+			if ps[0].Controller != "kgateway.dev/kgateway" {
+				t.Errorf("deciding controller = %q, want ours", ps[0].Controller)
+			}
+			if got := view.Summarize(ps); got != tc.cell {
+				t.Errorf("cell = %q, want %q", got, tc.cell)
+			}
+		})
+	}
+}
+
 func TestObjectCondition(t *testing.T) {
 	obj := func(gen int64, conds ...map[string]any) *unstructured.Unstructured {
 		cs := make([]any, 0, len(conds))

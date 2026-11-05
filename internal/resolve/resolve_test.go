@@ -78,6 +78,13 @@ func TestResolve(t *testing.T) {
 			{"BackendTLSPolicy", []string{"BackendTLSPolicy"}}, {"GRPCRoute", []string{"GRPCRoute"}},
 		}},
 		{arg: "all", want: allButClass},
+		// Overlapping names merge: a kind is in one target, and the alias table wins.
+		{arg: "ls,xlistenersets", want: []target{{"ListenerSet", []string{"ListenerSet", "XListenerSet"}}}},
+		{arg: "xlistenersets,ls", want: []target{{"ListenerSet", []string{"ListenerSet", "XListenerSet"}}}},
+		{arg: "hr,xlistenersets,listenersets,ls", want: []target{{"HTTPRoute", []string{"HTTPRoute"}}, {"ListenerSet", []string{"ListenerSet", "XListenerSet"}}}},
+		{arg: "all,xlistenersets", want: allButClass},
+		// The merged table stays where the first overlapping name put it.
+		{arg: "xlistenersets,all", want: append([]target{allButClass[1], allButClass[0]}, allButClass[2:]...)},
 		{arg: "directresponses", unknown: "directresponses"},
 		{arg: "gw,bogus", unknown: "bogus"},
 		{arg: "httproutes.example.com", unknown: "httproutes.example.com"},
@@ -134,5 +141,31 @@ func TestResolveEmpty(t *testing.T) {
 		if _, err := resolve.Kinds(servedAll(), kinds.Upstream(), arg); err == nil || err.Error() != "no kind given" {
 			t.Errorf("Kinds(%q) err = %v, want no kind given", arg, err)
 		}
+	}
+}
+
+// TestResolveAlias: the alias is marked whatever its served kinds, so get shows GROUP.
+func TestResolveAlias(t *testing.T) {
+	tests := []struct {
+		arg    string
+		served []kinds.Served
+		alias  bool
+	}{
+		{"ls", servedAll(), true},
+		{"ls", servedAll("XListenerSet"), true},
+		{"ls", servedAll("ListenerSet"), true},
+		{"xlistenersets", servedAll(), false},
+		{"listenersets.gateway.networking.k8s.io", servedAll(), false},
+		{"xlistenersets,ls", servedAll(), true},
+	}
+	for _, tc := range tests {
+		got, err := resolve.Kinds(tc.served, kinds.Upstream(), tc.arg)
+		if err != nil || len(got) != 1 || got[0].Alias != tc.alias {
+			t.Errorf("Kinds(%q) = %+v, %v; want one target with Alias %v", tc.arg, got, err, tc.alias)
+		}
+	}
+	got, err := resolve.Kinds(servedAll("XListenerSet"), kinds.Upstream(), "all")
+	if err != nil || !slices.ContainsFunc(got, func(t resolve.Target) bool { return t.Alias && t.Label == "ListenerSet" }) {
+		t.Errorf("Kinds(all) = %+v, %v; want the ListenerSet target marked as the alias", got, err)
 	}
 }

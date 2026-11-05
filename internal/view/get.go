@@ -119,10 +119,10 @@ func unreadable(in load.Input, k kinds.Served) error {
 
 // resourceOf names a target in errors: its kind's plural, "listenersets" for the alias.
 func resourceOf(t resolve.Target) string {
-	if len(t.Kinds) == 1 {
-		return t.Kinds[0].Resource
+	if t.Alias {
+		return strings.ToLower(t.Label) + "s"
 	}
-	return strings.ToLower(t.Label) + "s"
+	return t.Kinds[0].Resource
 }
 
 // category is the column set of t: its kinds share one, the alias included.
@@ -144,7 +144,7 @@ func (g getter) headers(t resolve.Target) []string {
 		h = append(h, "NAMESPACE")
 	}
 	h = append(h, "NAME")
-	if len(t.Kinds) > 1 {
+	if t.Alias {
 		h = append(h, "GROUP")
 	}
 	var mid, wide []string
@@ -182,13 +182,13 @@ func (g getter) cells(t resolve.Target, rw row) []string {
 	n := u.GetName()
 	switch {
 	// The GROUP column carries the group, so the prefix needs only the kind.
-	case g.multi && len(t.Kinds) > 1:
+	case g.multi && t.Alias:
 		n = strings.ToLower(rw.k.Kind) + "/" + n
 	case g.multi:
 		n = strings.ToLower(rw.k.Kind) + "." + rw.k.Group + "/" + n
 	}
 	c = append(c, n)
-	if len(t.Kinds) > 1 {
+	if t.Alias {
 		c = append(c, rw.k.Group)
 	}
 	var mid, wide []string

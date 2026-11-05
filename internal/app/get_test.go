@@ -63,8 +63,11 @@ func TestGet(t *testing.T) {
 		name     string
 		fixtures []string
 		args     []string
+		rules    func(p *testenv.Proxy)
 		// warn is a substring stderr must contain; "" means stderr must be empty.
 		warn string
+		// group means the table output must have a GROUP column.
+		group bool
 	}{
 		{name: "healthy", fixtures: []string{healthyFixture}, args: everything},
 		{name: "healthy-gateways", fixtures: []string{healthyFixture}, args: []string{"get", "gw", "-n", "kgateway-system"}},
@@ -77,6 +80,16 @@ func TestGet(t *testing.T) {
 		{name: "other-controller", fixtures: []string{healthyFixture, otherFixture}, args: everything},
 		{name: "other-controller-all", fixtures: []string{healthyFixture, otherFixture}, args: append(everything, "--all-controllers")},
 		{name: "listenersets", fixtures: []string{healthyFixture, listenerSetsFixture}, args: []string{"get", "ls,hr", "-n", "kgateway-system"}},
+		// Overlapping names list each object once, in the alias table.
+		{name: "listenersets-overlap", fixtures: []string{healthyFixture, listenerSetsFixture}, args: []string{"get", "ls,xlistenersets", "-n", "kgateway-system"}, group: true},
+		{name: "all-overlap", fixtures: []string{healthyFixture, listenerSetsFixture}, args: []string{"get", "all,xlistenersets", "-n", "kgateway-system"}, group: true},
+		// Only ListenerSet served: the alias table still has GROUP. The CRD stays installed (R18); discovery hides it.
+		{name: "listenersets-one-api", fixtures: []string{healthyFixture, listenerSetsFixture}, args: []string{"get", "ls", "-n", "kgateway-system"}, group: true,
+			rules: func(p *testenv.Proxy) {
+				p.Rule(testenv.Match{Kind: testenv.KindDiscovery, Resource: "gateway.networking.x-k8s.io/v1alpha1"}, testenv.Action{Status: http.StatusNotFound})
+			}},
+		// R24: a name selects an object the hiding rule hides.
+		{name: "other-controller-named", fixtures: []string{healthyFixture, otherFixture}, args: []string{"get", "gw", "edge", "-n", "other"}},
 		{name: "xlistenersets", fixtures: []string{healthyFixture, listenerSetsFixture}, args: []string{"get", "xlistenersets", "-n", "kgateway-system"}},
 		{name: "parameters-and-backends", fixtures: []string{healthyFixture, paramsFixture}, args: everything},
 		{name: "delegation", fixtures: []string{healthyFixture, delegationFixture}, args: []string{"get", "hr", "-n", "default"}},
@@ -84,6 +97,9 @@ func TestGet(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			env := newEnv(t, testenv.Options{Fixtures: tc.fixtures})
+			if tc.rules != nil {
+				tc.rules(env.Proxies[0])
+			}
 			for _, format := range getFormats {
 				t.Run(format, func(t *testing.T) {
 					r := runCmd(t, env, append(tc.args, "-o", format)...)
@@ -98,10 +114,10 @@ func TestGet(t *testing.T) {
 					}
 					onlyWarnings(t, r.stderr)
 					if format == "json" {
-						var l struct{ APIVersion, Kind string }
-						if err := json.Unmarshal([]byte(r.stdout), &l); err != nil || l.APIVersion != "v1" || l.Kind != "List" {
-							t.Errorf("stdout is not a v1 List (%v): %+v", err, l)
-						}
+						checkList(t, r.stdout)
+					}
+					if tc.group && format == "table" && !strings.Contains(r.stdout, " GROUP ") {
+						t.Errorf("header has no GROUP column:\n%s", r.stdout)
 					}
 					if strings.Contains(r.stdout, "managedFields") {
 						t.Error("stdout carries managedFields")
@@ -110,6 +126,29 @@ func TestGet(t *testing.T) {
 				})
 			}
 		})
+	}
+}
+
+// checkList fails unless stdout is a v1 List naming each object once.
+func checkList(t *testing.T, stdout string) {
+	t.Helper()
+	var l struct {
+		APIVersion, Kind string
+		Items            []struct {
+			APIVersion, Kind string
+			Metadata         struct{ Namespace, Name string }
+		}
+	}
+	if err := json.Unmarshal([]byte(stdout), &l); err != nil || l.APIVersion != "v1" || l.Kind != "List" {
+		t.Fatalf("stdout is not a v1 List (%v): %s", err, stdout)
+	}
+	seen := map[string]bool{}
+	for _, it := range l.Items {
+		id := it.APIVersion + " " + it.Kind + " " + it.Metadata.Namespace + "/" + it.Metadata.Name
+		if seen[id] {
+			t.Errorf("List has %s twice", id)
+		}
+		seen[id] = true
 	}
 }
 
@@ -158,6 +197,8 @@ func TestGetErrors(t *testing.T) {
 		{name: "unserved-kind", rules: func(p *testenv.Proxy) {
 			p.Rule(testenv.Match{Kind: testenv.KindDiscovery, Resource: "gateway.networking.x-k8s.io/v1alpha1"}, testenv.Action{Status: http.StatusNotFound})
 		}, args: []string{"get", "xlistenersets"}, stderr: `kind "xlistenersets" is not served by this cluster`},
+		// R28: a name one kind has and another lacks fails the whole get.
+		{name: "named-in-one-kind", args: []string{"get", "hr,gw", "example", "-n", "default"}, stderr: `gateways "example" not found`},
 		{name: "not-found", args: []string{"get", "gw", "missing", "-n", "kgateway-system"}, stderr: `gateways "missing" not found`},
 		{name: "timeout", rules: func(p *testenv.Proxy) {
 			p.Rule(testenv.Match{Kind: testenv.KindAcquire, Resource: httpRoutes}, testenv.Action{Delay: 5 * time.Second})
@@ -179,7 +220,7 @@ func TestGetErrors(t *testing.T) {
 			if tc.rules != nil {
 				tc.rules(env.Proxies[0])
 			}
-			for _, format := range []string{"table", "json"} {
+			for _, format := range getFormats {
 				r := runCmd(t, env, append(tc.args, "-o", format)...)
 				if r.code != 1 {
 					t.Errorf("%s: exit %d, want 1; stderr %q", format, r.code, r.stderr)
@@ -195,11 +236,33 @@ func TestGetErrors(t *testing.T) {
 	}
 }
 
-// TestGetWatchDeniedHeld checks the §6.3 invariant when the httproutes watch is
-// denied after its LIST synced. Deployments are held for 1s, so Load is still
-// waiting on core inputs when the 403 lands 200ms after the LIST: every run must
-// take the denied branch, never print a partial table.
+// TestGetWatchDeniedHeld checks the §6.3 invariant as the plan states it: with
+// the httproutes watch denied after LIST sync, each run either prints the full
+// table with exit 0 or fails denied with empty stdout. No timing aid.
 func TestGetWatchDeniedHeld(t *testing.T) {
+	testenv.ClassicWatch(t)
+	env := newEnv(t, testenv.Options{Fixtures: []string{healthyFixture}})
+	env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindWatch, Resource: httpRoutes}, testenv.Action{HoldWatchThenStatus: http.StatusForbidden})
+	want := readGolden(t, "get", "healthy.table")
+	var ok, denied int
+	for i := range 10 {
+		r := runCmd(t, env, "get", "gwc,all", "-A")
+		switch {
+		case r.code == 0 && r.stdout == want:
+			ok++
+		case r.code == 1 && r.stdout == "" && strings.Contains(r.stderr, "denied"):
+			denied++
+		default:
+			t.Errorf("run %d breaks the invariant: exit %d, stderr %q, stdout:\n%s", i, r.code, r.stderr, r.stdout)
+		}
+	}
+	t.Logf("%d runs ok, %d denied", ok, denied)
+}
+
+// TestGetWatchDeniedAfterSync forces the post-sync 403 into the snapshot:
+// Deployments are held for 1s, so Load is still waiting on core inputs when
+// the 403 lands 200ms after the httproutes LIST. Every run must fail denied.
+func TestGetWatchDeniedAfterSync(t *testing.T) {
 	testenv.ClassicWatch(t)
 	env := newEnv(t, testenv.Options{Fixtures: []string{healthyFixture}})
 	p := env.Proxies[0]
