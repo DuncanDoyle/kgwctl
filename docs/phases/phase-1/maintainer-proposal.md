@@ -1,6 +1,6 @@
 # Draft: kgwctl proposal for kgateway maintainers (program P-005)
 
-**Status:** draft. Not filed. Filing needs the owner's go-ahead.
+**Status:** draft, not filed. Deferred by the owner (D-011); kept for when the project goes public.
 **Target:** a GitHub issue (or discussion) in kgateway-dev/kgateway, using the repo's feature-request template headings when filed.
 
 ---

@@ -1,0 +1,8 @@
+item:
+  client:
+    commit: a1b2c3d
+    goVersion: go1.26.0
+    name: kgwctl
+    version: v0.1.0
+kind: Version
+schemaVersion: kgwctl.kgateway.dev/v1alpha1

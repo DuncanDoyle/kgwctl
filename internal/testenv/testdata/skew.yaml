@@ -1,0 +1,172 @@
+# Applied after healthy.yaml: proxies for kgateway-system/http at the
+# controller's version and a second Gateway, team-a/edge, whose proxies run v2.2.4.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: http
+  namespace: kgateway-system
+  labels:
+    app.kubernetes.io/managed-by: kgateway
+    app.kubernetes.io/component: proxy
+    app.kubernetes.io/name: http
+    app.kubernetes.io/instance: http
+    gateway.networking.k8s.io/gateway-name: http
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: http
+      app.kubernetes.io/instance: http
+      gateway.networking.k8s.io/gateway-name: http
+  template:
+    metadata:
+      labels:
+        kgateway: kube-gateway
+        app.kubernetes.io/component: proxy
+        app.kubernetes.io/name: http
+        app.kubernetes.io/instance: http
+        gateway.networking.k8s.io/gateway-name: http
+    spec:
+      containers:
+        - name: kgateway-proxy
+          image: cr.kgateway.dev/kgateway-dev/envoy-wrapper:v2.5.0
+status:
+  observedGeneration: 1
+  replicas: 2
+  updatedReplicas: 2
+  readyReplicas: 2
+  availableReplicas: 2
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: http-6f7c9d8b4-ax0
+  namespace: kgateway-system
+  labels:
+    kgateway: kube-gateway
+    app.kubernetes.io/component: proxy
+    app.kubernetes.io/name: http
+    app.kubernetes.io/instance: http
+    gateway.networking.k8s.io/gateway-name: http
+spec:
+  containers:
+    - name: kgateway-proxy
+      image: cr.kgateway.dev/kgateway-dev/envoy-wrapper:v2.5.0
+status:
+  phase: Running
+  conditions:
+    - type: Ready
+      status: "True"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: http-6f7c9d8b4-bx1
+  namespace: kgateway-system
+  labels:
+    kgateway: kube-gateway
+    app.kubernetes.io/component: proxy
+    app.kubernetes.io/name: http
+    app.kubernetes.io/instance: http
+    gateway.networking.k8s.io/gateway-name: http
+spec:
+  containers:
+    - name: kgateway-proxy
+      image: cr.kgateway.dev/kgateway-dev/envoy-wrapper:v2.5.0
+status:
+  phase: Running
+  conditions:
+    - type: Ready
+      status: "True"
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: edge
+  namespace: team-a
+spec:
+  gatewayClassName: kgateway
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: edge
+  namespace: team-a
+  labels:
+    app.kubernetes.io/managed-by: kgateway
+    app.kubernetes.io/component: proxy
+    app.kubernetes.io/name: edge
+    app.kubernetes.io/instance: edge
+    gateway.networking.k8s.io/gateway-name: edge
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: edge
+      app.kubernetes.io/instance: edge
+      gateway.networking.k8s.io/gateway-name: edge
+  template:
+    metadata:
+      labels:
+        kgateway: kube-gateway
+        app.kubernetes.io/component: proxy
+        app.kubernetes.io/name: edge
+        app.kubernetes.io/instance: edge
+        gateway.networking.k8s.io/gateway-name: edge
+    spec:
+      containers:
+        - name: kgateway-proxy
+          image: cr.kgateway.dev/kgateway-dev/envoy-wrapper:v2.2.4
+status:
+  observedGeneration: 1
+  replicas: 2
+  updatedReplicas: 2
+  readyReplicas: 2
+  availableReplicas: 2
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: edge-6f7c9d8b4-ax0
+  namespace: team-a
+  labels:
+    kgateway: kube-gateway
+    app.kubernetes.io/component: proxy
+    app.kubernetes.io/name: edge
+    app.kubernetes.io/instance: edge
+    gateway.networking.k8s.io/gateway-name: edge
+spec:
+  containers:
+    - name: kgateway-proxy
+      image: cr.kgateway.dev/kgateway-dev/envoy-wrapper:v2.2.4
+status:
+  phase: Running
+  conditions:
+    - type: Ready
+      status: "True"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: edge-6f7c9d8b4-bx1
+  namespace: team-a
+  labels:
+    kgateway: kube-gateway
+    app.kubernetes.io/component: proxy
+    app.kubernetes.io/name: edge
+    app.kubernetes.io/instance: edge
+    gateway.networking.k8s.io/gateway-name: edge
+spec:
+  containers:
+    - name: kgateway-proxy
+      image: cr.kgateway.dev/kgateway-dev/envoy-wrapper:v2.2.4
+status:
+  phase: Running
+  conditions:
+    - type: Ready
+      status: "True"

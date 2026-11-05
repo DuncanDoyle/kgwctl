@@ -16,7 +16,7 @@ In scope:
 2. `get` and `describe` for every kind the kgateway-ui library models (§5), with status conditions.
 3. Output: table, `-o wide`, `-o yaml`, `-o json`.
 4. The extension API: a downstream `main` builds a vendor binary from this module (§7).
-5. A short design proposal for kgateway maintainers (program P-005), drafted in [`maintainer-proposal.md`](maintainer-proposal.md). Filing it needs the owner's go-ahead.
+5. ~~A short design proposal for kgateway maintainers (program P-005)~~ — deferred by the owner (D-011); the draft stays in [`maintainer-proposal.md`](maintainer-proposal.md).
 
 Out of scope: `check` (Phase 2), Envoy views (Phase 3), analysis and `analyze -f` (Phase 4), attached and effective policy (Phase 5), support bundle (§12), any write to the cluster, port-forwarding.
 
@@ -483,4 +483,4 @@ The research points at gaps in the roadmap. None of them changes Phase 1.
 2. Approval of D-009 (extension API defined in Phase 1, not Phase 4).
 3. Approval of the test-only envtest dependency (§9, §10). It replaces client-go fakes, which can't model the faults this design depends on.
 4. The roadmap proposals in §12.
-5. Go-ahead to file the maintainer proposal (P-005).
+5. ~~Go-ahead to file the maintainer proposal (P-005)~~ — deferred (D-011).

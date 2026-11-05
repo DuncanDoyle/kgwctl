@@ -61,3 +61,9 @@ Append-only. Newest at the bottom. Supersede, don't edit.
 **Decision:** The owner approved the design, the plan, every *(our call)* item in the design, D-009, and envtest as a test-only dependency. The roadmap gains Phase 4 "Support bundle" (secrets redacted by default). Phase 2 builds the xDS-rejection check first and adds version skew.
 **Alternatives:** Bundle at the end of the roadmap — rejected: its demand is higher than analysis or policies.
 **Consequences:** Phases renumber: full analysis 5, topology and policies 6, upstream move 7. Program edges E3 and E7 move to CLI Phases 5 and 6. D-009 is accepted.
+
+## D-011 — No maintainer proposal for now (2026-11-05, phase 1)
+**Context:** Program P-005 asked for early maintainer buy-in through a short proposal. The owner leads both the vendor product and most of the kgateway maintainers, so direction is already aligned, and the project is not ready to be announced.
+**Decision:** Don't file the proposal. The draft (`docs/phases/phase-1/maintainer-proposal.md`) stays as a reference for when the project goes public.
+**Alternatives:** File now — rejected by the owner.
+**Consequences:** P-005 is deferred in the program file. Phase 1 has no proposal step; the question returns at Phase 7 (upstream move) at the latest.

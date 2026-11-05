@@ -1,0 +1,179 @@
+# A healthy kgateway install: controller Deployment and Pod, one
+# GatewayClass, one Gateway and one HTTPRoute, all accepted.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kgateway-system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kgateway
+  namespace: kgateway-system
+  labels:
+    kgateway: kgateway
+    app.kubernetes.io/name: kgateway
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/version: 2.5.0
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      kgateway: kgateway
+  template:
+    metadata:
+      labels:
+        kgateway: kgateway
+        app.kubernetes.io/name: kgateway
+        app.kubernetes.io/component: controller
+        app.kubernetes.io/version: 2.5.0
+    spec:
+      containers:
+        - name: kgateway
+          image: cr.kgateway.dev/kgateway-dev/kgateway:v2.5.0
+          ports:
+            - name: metrics
+              containerPort: 9092
+status:
+  observedGeneration: 1
+  replicas: 1
+  updatedReplicas: 1
+  readyReplicas: 1
+  availableReplicas: 1
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kgateway-7d9f8b6c5-abcde
+  namespace: kgateway-system
+  labels:
+    kgateway: kgateway
+    app.kubernetes.io/name: kgateway
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/version: 2.5.0
+spec:
+  containers:
+    - name: kgateway
+      image: cr.kgateway.dev/kgateway-dev/kgateway:v2.5.0
+      ports:
+        - name: metrics
+          containerPort: 9092
+status:
+  phase: Running
+  conditions:
+    - type: Ready
+      status: "True"
+  containerStatuses:
+    - name: kgateway
+      image: cr.kgateway.dev/kgateway-dev/kgateway:v2.5.0
+      imageID: ""
+      ready: true
+      restartCount: 0
+      started: true
+      state:
+        running:
+          startedAt: "2026-01-01T00:00:00Z"
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: kgateway
+spec:
+  controllerName: kgateway.dev/kgateway
+status:
+  conditions:
+    - type: Accepted
+      status: "True"
+      reason: Accepted
+      message: ""
+      observedGeneration: 1
+      lastTransitionTime: "2026-01-01T00:00:00Z"
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: http
+  namespace: kgateway-system
+spec:
+  gatewayClassName: kgateway
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 8080
+      allowedRoutes:
+        namespaces:
+          from: All
+status:
+  conditions:
+    - type: Accepted
+      status: "True"
+      reason: Accepted
+      message: ""
+      observedGeneration: 1
+      lastTransitionTime: "2026-01-01T00:00:00Z"
+    - type: Programmed
+      status: "True"
+      reason: Programmed
+      message: ""
+      observedGeneration: 1
+      lastTransitionTime: "2026-01-01T00:00:00Z"
+  listeners:
+    - name: http
+      attachedRoutes: 1
+      supportedKinds:
+        - group: gateway.networking.k8s.io
+          kind: HTTPRoute
+      conditions:
+        - type: Accepted
+          status: "True"
+          reason: Accepted
+          message: ""
+          observedGeneration: 1
+          lastTransitionTime: "2026-01-01T00:00:00Z"
+        - type: Programmed
+          status: "True"
+          reason: Programmed
+          message: ""
+          observedGeneration: 1
+          lastTransitionTime: "2026-01-01T00:00:00Z"
+        - type: ResolvedRefs
+          status: "True"
+          reason: ResolvedRefs
+          message: ""
+          observedGeneration: 1
+          lastTransitionTime: "2026-01-01T00:00:00Z"
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: example
+  namespace: default
+spec:
+  parentRefs:
+    - name: http
+      namespace: kgateway-system
+  rules:
+    - backendRefs:
+        - name: example
+          port: 8080
+status:
+  parents:
+    - parentRef:
+        group: gateway.networking.k8s.io
+        kind: Gateway
+        name: http
+        namespace: kgateway-system
+      controllerName: kgateway.dev/kgateway
+      conditions:
+        - type: Accepted
+          status: "True"
+          reason: Accepted
+          message: ""
+          observedGeneration: 1
+          lastTransitionTime: "2026-01-01T00:00:00Z"
+        - type: ResolvedRefs
+          status: "True"
+          reason: ResolvedRefs
+          message: ""
+          observedGeneration: 1
+          lastTransitionTime: "2026-01-01T00:00:00Z"

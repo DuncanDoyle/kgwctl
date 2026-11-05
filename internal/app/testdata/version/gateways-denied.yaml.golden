@@ -1,0 +1,23 @@
+item:
+  client:
+    commit: a1b2c3d
+    goVersion: go1.26.0
+    name: kgwctl
+    version: v0.1.0
+  gatewayAPICRDs:
+    bundleVersion: v1.7.0
+    channel: standard
+  incomplete:
+  - input: gateways.gateway.networking.k8s.io
+    reason: gateways.gateway.networking.k8s.io is forbidden (injected by testenv)
+    state: denied
+  installs:
+  - controller: 2.5.0
+    display: kgateway-system/kgateway
+    id: kgateway-system.kgateway
+    proxies: null
+    proxiesUnknown: 'gateways: denied'
+    ready: 1
+    replicas: 1
+kind: Version
+schemaVersion: kgwctl.kgateway.dev/v1alpha1
