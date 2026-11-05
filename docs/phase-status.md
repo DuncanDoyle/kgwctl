@@ -52,3 +52,4 @@ Design changes without a decisions.md entry and owner approval.
 ## Notes
 - GitHub repo: https://github.com/DuncanDoyle/kgwctl (`kgwctl` remains a working name, D-006).
 - 2026-11-05 Close blocked (1.1): (a) go.mod pins kgateway-ui 9f44baa, which lacks APIs 1.1 uses; build and CI need a go.work to 5737a14 (unpushed) until kgateway-ui publishes and tags it (#16); (b) under Go 1.26, TestNoAccumulation fails on a goroutine leak in kgateway-ui pkg/cache (watch.Filter in instrument), reported to the kgateway-ui session.
+- 2026-11-05 Blocker (b) fixed upstream: kgateway-ui 2df2d02 (local, phase3Seams, in review) replaces watch.Filter. Against it, `go test -race -count=1 ./...` exits 0 on Go 1.27.3 and Go 1.26.0. Only (a) remains: publish + tag kgateway-ui, then pin go.mod, drop CI's workspace step (its checkout SHA moves to the tag).
