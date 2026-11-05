@@ -1,0 +1,11 @@
+NAMESPACE   NAME                                   CLASS      ADDRESS   PROGRAMMED   LISTENERS   ROUTES               AGE
+mixed       gateway.gateway.networking.k8s.io/a    kgateway   <none>    <stale>      1           2                    10d
+mixed       gateway.gateway.networking.k8s.io/b    kgateway   <none>    <stale>      1           1                    10d
+mixed       gateway.gateway.networking.k8s.io/c    kgateway   <none>    <stale>      1           1                    10d
+mixed       gateway.gateway.networking.k8s.io/d    other      <none>    <stale>      1           -                    10d
+mixed       gateway.gateway.networking.k8s.io/gw   kgateway   <none>    <stale>      2           1 (1 not accepted)   10d
+
+NAMESPACE   NAME                                            HOSTNAMES   PARENTS     ACCEPTED                                  RESOLVED                              AGE
+mixed       httproute.gateway.networking.k8s.io/dup         *           a           True                                      True                                  10d
+mixed       httproute.gateway.networking.k8s.io/listeners   *           gw:a,gw:b   1/2 (1 rejected: NotAllowedByListeners)   True                                  10d
+mixed       httproute.gateway.networking.k8s.io/mixed       *           a,b,c,d     1/4 (1 stale, 1 no status, 1 other)       1/4 (1 stale, 1 no status, 1 other)   10d

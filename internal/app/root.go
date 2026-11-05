@@ -36,6 +36,8 @@ type Config struct {
 	Build    BuildInfo
 	// Out and Err default to os.Stdout and os.Stderr.
 	Out, Err io.Writer
+	// Now is the clock AGE is measured against; nil means time.Now.
+	Now func() time.Time
 }
 
 // Flags are the global cluster flags (design §6.1).
@@ -144,7 +146,7 @@ func (f *Flags) Context(parent context.Context) (context.Context, context.Cancel
 	return context.WithTimeout(parent, f.RequestTimeout)
 }
 
-// NewRoot builds the root command with the global flags, version,
+// NewRoot builds the root command with the global flags, get, version,
 // completion and cfg.Commands.
 func NewRoot(cfg Config) *cobra.Command {
 	if cfg.Name == "" {
@@ -159,6 +161,9 @@ func NewRoot(cfg Config) *cobra.Command {
 	if cfg.Registry == nil {
 		cfg.Registry = extension.New()
 	}
+	if cfg.Now == nil {
+		cfg.Now = time.Now
+	}
 	if cfg.Build.Name == "" {
 		cfg.Build.Name = cfg.Name
 	}
@@ -171,7 +176,7 @@ func NewRoot(cfg Config) *cobra.Command {
 	root.SetOut(cfg.Out)
 	root.SetErr(cfg.Err)
 	(&Flags{}).Bind(root.PersistentFlags())
-	root.AddCommand(newVersionCmd(cfg.Registry, cfg.Build))
+	root.AddCommand(newGetCmd(cfg.Registry, cfg.Now), newVersionCmd(cfg.Registry, cfg.Build))
 	root.AddCommand(cfg.Commands...)
 	return root
 }

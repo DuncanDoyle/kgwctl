@@ -23,7 +23,7 @@ func run(root *cobra.Command, args ...string) int {
 }
 
 func TestContextFlagWins(t *testing.T) {
-	env := testenv.New(t, testenv.Options{Contexts: 2})
+	env := newEnv(t, testenv.Options{Contexts: 2})
 	var out, errb bytes.Buffer
 	root := app.NewRoot(app.Config{Out: &out, Err: &errb})
 	code := run(root, "--kubeconfig", env.Kubeconfig, "--context", testenv.ContextName(1), "version")
@@ -46,7 +46,7 @@ func TestContextFlagWins(t *testing.T) {
 }
 
 func TestNamespaceDefaultsToContext(t *testing.T) {
-	env := testenv.New(t, testenv.Options{Contexts: 2})
+	env := newEnv(t, testenv.Options{Contexts: 2})
 	kc, err := clientcmd.LoadFromFile(env.Kubeconfig)
 	if err != nil {
 		t.Fatal(err)

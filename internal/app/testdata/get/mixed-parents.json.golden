@@ -1,0 +1,553 @@
+{
+    "apiVersion": "v1",
+    "items": [
+        {
+            "apiVersion": "gateway.networking.k8s.io/v1",
+            "kind": "Gateway",
+            "metadata": {
+                "creationTimestamp": "X",
+                "generation": 1,
+                "name": "a",
+                "namespace": "mixed",
+                "resourceVersion": "X",
+                "uid": "X"
+            },
+            "spec": {
+                "gatewayClassName": "kgateway",
+                "listeners": [
+                    {
+                        "allowedRoutes": {
+                            "namespaces": {
+                                "from": "Same"
+                            }
+                        },
+                        "hostname": "http.example.com",
+                        "name": "http",
+                        "port": 8080,
+                        "protocol": "HTTP"
+                    }
+                ]
+            },
+            "status": {
+                "conditions": [
+                    {
+                        "lastTransitionTime": "1970-01-01T00:00:00Z",
+                        "message": "Waiting for controller",
+                        "reason": "Pending",
+                        "status": "Unknown",
+                        "type": "Accepted"
+                    },
+                    {
+                        "lastTransitionTime": "1970-01-01T00:00:00Z",
+                        "message": "Waiting for controller",
+                        "reason": "Pending",
+                        "status": "Unknown",
+                        "type": "Programmed"
+                    }
+                ]
+            }
+        },
+        {
+            "apiVersion": "gateway.networking.k8s.io/v1",
+            "kind": "Gateway",
+            "metadata": {
+                "creationTimestamp": "X",
+                "generation": 1,
+                "name": "b",
+                "namespace": "mixed",
+                "resourceVersion": "X",
+                "uid": "X"
+            },
+            "spec": {
+                "gatewayClassName": "kgateway",
+                "listeners": [
+                    {
+                        "allowedRoutes": {
+                            "namespaces": {
+                                "from": "Same"
+                            }
+                        },
+                        "hostname": "http.example.com",
+                        "name": "http",
+                        "port": 8080,
+                        "protocol": "HTTP"
+                    }
+                ]
+            },
+            "status": {
+                "conditions": [
+                    {
+                        "lastTransitionTime": "1970-01-01T00:00:00Z",
+                        "message": "Waiting for controller",
+                        "reason": "Pending",
+                        "status": "Unknown",
+                        "type": "Accepted"
+                    },
+                    {
+                        "lastTransitionTime": "1970-01-01T00:00:00Z",
+                        "message": "Waiting for controller",
+                        "reason": "Pending",
+                        "status": "Unknown",
+                        "type": "Programmed"
+                    }
+                ]
+            }
+        },
+        {
+            "apiVersion": "gateway.networking.k8s.io/v1",
+            "kind": "Gateway",
+            "metadata": {
+                "creationTimestamp": "X",
+                "generation": 1,
+                "name": "c",
+                "namespace": "mixed",
+                "resourceVersion": "X",
+                "uid": "X"
+            },
+            "spec": {
+                "gatewayClassName": "kgateway",
+                "listeners": [
+                    {
+                        "allowedRoutes": {
+                            "namespaces": {
+                                "from": "Same"
+                            }
+                        },
+                        "hostname": "http.example.com",
+                        "name": "http",
+                        "port": 8080,
+                        "protocol": "HTTP"
+                    }
+                ]
+            },
+            "status": {
+                "conditions": [
+                    {
+                        "lastTransitionTime": "1970-01-01T00:00:00Z",
+                        "message": "Waiting for controller",
+                        "reason": "Pending",
+                        "status": "Unknown",
+                        "type": "Accepted"
+                    },
+                    {
+                        "lastTransitionTime": "1970-01-01T00:00:00Z",
+                        "message": "Waiting for controller",
+                        "reason": "Pending",
+                        "status": "Unknown",
+                        "type": "Programmed"
+                    }
+                ]
+            }
+        },
+        {
+            "apiVersion": "gateway.networking.k8s.io/v1",
+            "kind": "Gateway",
+            "metadata": {
+                "creationTimestamp": "X",
+                "generation": 1,
+                "name": "d",
+                "namespace": "mixed",
+                "resourceVersion": "X",
+                "uid": "X"
+            },
+            "spec": {
+                "gatewayClassName": "other",
+                "listeners": [
+                    {
+                        "allowedRoutes": {
+                            "namespaces": {
+                                "from": "Same"
+                            }
+                        },
+                        "hostname": "http.example.com",
+                        "name": "http",
+                        "port": 8080,
+                        "protocol": "HTTP"
+                    }
+                ]
+            },
+            "status": {
+                "conditions": [
+                    {
+                        "lastTransitionTime": "1970-01-01T00:00:00Z",
+                        "message": "Waiting for controller",
+                        "reason": "Pending",
+                        "status": "Unknown",
+                        "type": "Accepted"
+                    },
+                    {
+                        "lastTransitionTime": "1970-01-01T00:00:00Z",
+                        "message": "Waiting for controller",
+                        "reason": "Pending",
+                        "status": "Unknown",
+                        "type": "Programmed"
+                    }
+                ]
+            }
+        },
+        {
+            "apiVersion": "gateway.networking.k8s.io/v1",
+            "kind": "Gateway",
+            "metadata": {
+                "creationTimestamp": "X",
+                "generation": 1,
+                "name": "gw",
+                "namespace": "mixed",
+                "resourceVersion": "X",
+                "uid": "X"
+            },
+            "spec": {
+                "gatewayClassName": "kgateway",
+                "listeners": [
+                    {
+                        "allowedRoutes": {
+                            "namespaces": {
+                                "from": "Same"
+                            }
+                        },
+                        "hostname": "a.example.com",
+                        "name": "a",
+                        "port": 8080,
+                        "protocol": "HTTP"
+                    },
+                    {
+                        "allowedRoutes": {
+                            "namespaces": {
+                                "from": "Same"
+                            }
+                        },
+                        "hostname": "b.example.com",
+                        "name": "b",
+                        "port": 8080,
+                        "protocol": "HTTP"
+                    }
+                ]
+            },
+            "status": {
+                "conditions": [
+                    {
+                        "lastTransitionTime": "1970-01-01T00:00:00Z",
+                        "message": "Waiting for controller",
+                        "reason": "Pending",
+                        "status": "Unknown",
+                        "type": "Accepted"
+                    },
+                    {
+                        "lastTransitionTime": "1970-01-01T00:00:00Z",
+                        "message": "Waiting for controller",
+                        "reason": "Pending",
+                        "status": "Unknown",
+                        "type": "Programmed"
+                    }
+                ]
+            }
+        },
+        {
+            "apiVersion": "gateway.networking.k8s.io/v1",
+            "kind": "HTTPRoute",
+            "metadata": {
+                "creationTimestamp": "X",
+                "generation": 1,
+                "name": "dup",
+                "namespace": "mixed",
+                "resourceVersion": "X",
+                "uid": "X"
+            },
+            "spec": {
+                "parentRefs": [
+                    {
+                        "group": "gateway.networking.k8s.io",
+                        "kind": "Gateway",
+                        "name": "a"
+                    },
+                    {
+                        "group": "gateway.networking.k8s.io",
+                        "kind": "Gateway",
+                        "name": "a",
+                        "namespace": "mixed"
+                    }
+                ],
+                "rules": [
+                    {
+                        "matches": [
+                            {
+                                "path": {
+                                    "type": "PathPrefix",
+                                    "value": "/"
+                                }
+                            }
+                        ]
+                    }
+                ]
+            },
+            "status": {
+                "parents": [
+                    {
+                        "conditions": [
+                            {
+                                "lastTransitionTime": "2026-01-01T00:00:00Z",
+                                "message": "",
+                                "observedGeneration": 1,
+                                "reason": "Accepted",
+                                "status": "True",
+                                "type": "Accepted"
+                            },
+                            {
+                                "lastTransitionTime": "2026-01-01T00:00:00Z",
+                                "message": "",
+                                "observedGeneration": 1,
+                                "reason": "ResolvedRefs",
+                                "status": "True",
+                                "type": "ResolvedRefs"
+                            }
+                        ],
+                        "controllerName": "kgateway.dev/kgateway",
+                        "parentRef": {
+                            "group": "gateway.networking.k8s.io",
+                            "kind": "Gateway",
+                            "name": "a",
+                            "namespace": "mixed"
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "apiVersion": "gateway.networking.k8s.io/v1",
+            "kind": "HTTPRoute",
+            "metadata": {
+                "creationTimestamp": "X",
+                "generation": 1,
+                "name": "listeners",
+                "namespace": "mixed",
+                "resourceVersion": "X",
+                "uid": "X"
+            },
+            "spec": {
+                "parentRefs": [
+                    {
+                        "group": "gateway.networking.k8s.io",
+                        "kind": "Gateway",
+                        "name": "gw",
+                        "sectionName": "a"
+                    },
+                    {
+                        "group": "gateway.networking.k8s.io",
+                        "kind": "Gateway",
+                        "name": "gw",
+                        "sectionName": "b"
+                    }
+                ],
+                "rules": [
+                    {
+                        "matches": [
+                            {
+                                "path": {
+                                    "type": "PathPrefix",
+                                    "value": "/"
+                                }
+                            }
+                        ]
+                    }
+                ]
+            },
+            "status": {
+                "parents": [
+                    {
+                        "conditions": [
+                            {
+                                "lastTransitionTime": "2026-01-01T00:00:00Z",
+                                "message": "",
+                                "observedGeneration": 1,
+                                "reason": "Accepted",
+                                "status": "True",
+                                "type": "Accepted"
+                            },
+                            {
+                                "lastTransitionTime": "2026-01-01T00:00:00Z",
+                                "message": "",
+                                "observedGeneration": 1,
+                                "reason": "ResolvedRefs",
+                                "status": "True",
+                                "type": "ResolvedRefs"
+                            }
+                        ],
+                        "controllerName": "kgateway.dev/kgateway",
+                        "parentRef": {
+                            "group": "gateway.networking.k8s.io",
+                            "kind": "Gateway",
+                            "name": "gw",
+                            "namespace": "mixed",
+                            "sectionName": "a"
+                        }
+                    },
+                    {
+                        "conditions": [
+                            {
+                                "lastTransitionTime": "2026-01-01T00:00:00Z",
+                                "message": "",
+                                "observedGeneration": 1,
+                                "reason": "NotAllowedByListeners",
+                                "status": "False",
+                                "type": "Accepted"
+                            },
+                            {
+                                "lastTransitionTime": "2026-01-01T00:00:00Z",
+                                "message": "",
+                                "observedGeneration": 1,
+                                "reason": "ResolvedRefs",
+                                "status": "True",
+                                "type": "ResolvedRefs"
+                            }
+                        ],
+                        "controllerName": "kgateway.dev/kgateway",
+                        "parentRef": {
+                            "group": "gateway.networking.k8s.io",
+                            "kind": "Gateway",
+                            "name": "gw",
+                            "namespace": "mixed",
+                            "sectionName": "b"
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "apiVersion": "gateway.networking.k8s.io/v1",
+            "kind": "HTTPRoute",
+            "metadata": {
+                "creationTimestamp": "X",
+                "generation": 1,
+                "name": "mixed",
+                "namespace": "mixed",
+                "resourceVersion": "X",
+                "uid": "X"
+            },
+            "spec": {
+                "parentRefs": [
+                    {
+                        "group": "gateway.networking.k8s.io",
+                        "kind": "Gateway",
+                        "name": "a"
+                    },
+                    {
+                        "group": "gateway.networking.k8s.io",
+                        "kind": "Gateway",
+                        "name": "b"
+                    },
+                    {
+                        "group": "gateway.networking.k8s.io",
+                        "kind": "Gateway",
+                        "name": "c"
+                    },
+                    {
+                        "group": "gateway.networking.k8s.io",
+                        "kind": "Gateway",
+                        "name": "d"
+                    }
+                ],
+                "rules": [
+                    {
+                        "matches": [
+                            {
+                                "path": {
+                                    "type": "PathPrefix",
+                                    "value": "/"
+                                }
+                            }
+                        ]
+                    }
+                ]
+            },
+            "status": {
+                "parents": [
+                    {
+                        "conditions": [
+                            {
+                                "lastTransitionTime": "2026-01-01T00:00:00Z",
+                                "message": "",
+                                "observedGeneration": 1,
+                                "reason": "Accepted",
+                                "status": "True",
+                                "type": "Accepted"
+                            },
+                            {
+                                "lastTransitionTime": "2026-01-01T00:00:00Z",
+                                "message": "",
+                                "observedGeneration": 1,
+                                "reason": "ResolvedRefs",
+                                "status": "True",
+                                "type": "ResolvedRefs"
+                            }
+                        ],
+                        "controllerName": "kgateway.dev/kgateway",
+                        "parentRef": {
+                            "group": "gateway.networking.k8s.io",
+                            "kind": "Gateway",
+                            "name": "a",
+                            "namespace": "mixed"
+                        }
+                    },
+                    {
+                        "conditions": [
+                            {
+                                "lastTransitionTime": "2026-01-01T00:00:00Z",
+                                "message": "",
+                                "observedGeneration": 0,
+                                "reason": "Accepted",
+                                "status": "True",
+                                "type": "Accepted"
+                            },
+                            {
+                                "lastTransitionTime": "2026-01-01T00:00:00Z",
+                                "message": "",
+                                "observedGeneration": 0,
+                                "reason": "ResolvedRefs",
+                                "status": "True",
+                                "type": "ResolvedRefs"
+                            }
+                        ],
+                        "controllerName": "kgateway.dev/kgateway",
+                        "parentRef": {
+                            "group": "gateway.networking.k8s.io",
+                            "kind": "Gateway",
+                            "name": "c",
+                            "namespace": "mixed"
+                        }
+                    },
+                    {
+                        "conditions": [
+                            {
+                                "lastTransitionTime": "2026-01-01T00:00:00Z",
+                                "message": "",
+                                "observedGeneration": 1,
+                                "reason": "Accepted",
+                                "status": "True",
+                                "type": "Accepted"
+                            },
+                            {
+                                "lastTransitionTime": "2026-01-01T00:00:00Z",
+                                "message": "",
+                                "observedGeneration": 1,
+                                "reason": "ResolvedRefs",
+                                "status": "True",
+                                "type": "ResolvedRefs"
+                            }
+                        ],
+                        "controllerName": "example.com/other",
+                        "parentRef": {
+                            "group": "gateway.networking.k8s.io",
+                            "kind": "Gateway",
+                            "name": "d",
+                            "namespace": "mixed"
+                        }
+                    }
+                ]
+            }
+        }
+    ],
+    "kind": "List",
+    "metadata": {
+        "resourceVersion": "X"
+    }
+}

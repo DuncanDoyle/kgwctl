@@ -1,0 +1,18 @@
+NAME                                                     CONTROLLER              ACCEPTED   AGE
+gatewayclass.gateway.networking.k8s.io/kgateway          kgateway.dev/kgateway   True       10d
+gatewayclass.gateway.networking.k8s.io/kgateway-custom   kgateway.dev/kgateway   True       10d
+
+NAMESPACE         NAME                                     CLASS      ADDRESS   PROGRAMMED   LISTENERS   ROUTES   AGE
+kgateway-system   gateway.gateway.networking.k8s.io/http   kgateway   <none>    True         1           2        10d
+
+NAMESPACE   NAME                                             HOSTNAMES             PARENTS                ACCEPTED   RESOLVED   AGE
+default     httproute.gateway.networking.k8s.io/example      *                     kgateway-system/http   True       True       10d
+default     httproute.gateway.networking.k8s.io/to-backend   backend.example.com   kgateway-system/http   True       True       10d
+
+NAMESPACE         NAME                                            CONDITIONS    AGE
+kgateway-system   gatewayparameters.gateway.kgateway.dev/custom   <no status>   10d
+
+NAMESPACE   NAME                                        CONDITIONS         AGE
+default     backend.gateway.kgateway.dev/static-bare    <no status>        10d
+default     backend.gateway.kgateway.dev/static-ok      Accepted=True      10d
+default     backend.gateway.kgateway.dev/static-stale   Accepted=<stale>   10d

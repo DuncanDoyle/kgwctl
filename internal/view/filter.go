@@ -41,7 +41,9 @@ type Filter struct {
 	indexDown string
 	// selected is the --install install's index in r.Model.Installs, or -1.
 	selected int
-	ours     map[string]bool
+	// pin is set when --install selects no detected install.
+	pin  error
+	ours map[string]bool
 	// owners maps each attributed object to the indices of the installs owning it.
 	owners map[objects.Ref][]int
 	// classes are the GatewayClasses by name.
@@ -82,6 +84,12 @@ func NewFilter(r *load.Result, s Scope) (*Filter, []string) {
 		}
 	}
 	pinMissing := s.Install != "" && f.selected < 0
+	if pinMissing {
+		f.pin = fmt.Errorf("install %q not detected", s.Install)
+		if err != nil {
+			f.pin = fmt.Errorf("invalid --install %q: %w", s.Install, err)
+		}
+	}
 	switch {
 	case !f.known:
 		warn("ownership unknown (%s)", down)
@@ -202,10 +210,7 @@ func (f *Filter) foreign(ref objects.Ref) bool {
 // Visible reports whether get shows obj, an object of kind k: it is in the
 // scope's namespace and labels, and the hiding rule does not hide it.
 func (f *Filter) Visible(k kinds.Served, obj *unstructured.Unstructured) bool {
-	if ns := f.scope.Namespace; ns != "" && !f.scope.AllNamespaces && obj.GetNamespace() != "" && obj.GetNamespace() != ns {
-		return false
-	}
-	if f.scope.Selector != nil && !f.scope.Selector.Matches(labels.Set(obj.GetLabels())) {
+	if !f.inScope(obj) {
 		return false
 	}
 	if !f.hide {
@@ -215,6 +220,23 @@ func (f *Filter) Visible(k kinds.Served, obj *unstructured.Unstructured) bool {
 		return !h
 	}
 	return !f.decide(k.Category, obj, func(ref objects.Ref) bool { return f.hidden[ref] })
+}
+
+// inScope reports whether obj is in the scope's namespace and matches its labels.
+func (f *Filter) inScope(obj *unstructured.Unstructured) bool {
+	if ns := f.scope.Namespace; ns != "" && !f.scope.AllNamespaces && obj.GetNamespace() != "" && obj.GetNamespace() != ns {
+		return false
+	}
+	return f.scope.Selector == nil || f.scope.Selector.Matches(labels.Set(obj.GetLabels()))
+}
+
+// pinErr is the --install error of Ruling R16: set while ownership is known;
+// otherwise NewFilter warned and hides nothing (design §6.3).
+func (f *Filter) pinErr() error {
+	if f.known {
+		return f.pin
+	}
+	return nil
 }
 
 // InstallOf returns the install owning obj: the --install one when it is an

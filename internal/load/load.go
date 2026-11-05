@@ -24,6 +24,9 @@ type Needs struct {
 	// Requested are the kinds the command prints; one still pending at the
 	// deadline fails the load with a TimeoutError.
 	Requested []schema.GroupVersionResource
+	// Resolve, if set, maps the served kinds to more requested kinds before
+	// the cache starts; its error fails the load.
+	Resolve func([]kinds.Served) ([]schema.GroupVersionResource, error)
 	// ProxyPods and CRDs start those optional watches and wait for them.
 	ProxyPods, CRDs bool
 	// Logger receives the engine's logs; nil discards them.
@@ -119,12 +122,20 @@ func Load(ctx context.Context, c Clients, reg *extension.Registry, needs Needs) 
 		return nil, err
 	}
 	dc := &memoDiscovery{dc: Discovery(ctx, c.Discovery), seen: map[string]answer{}}
-	if _, err := kinds.Resolve(dc, reg.Kinds); err != nil {
+	served, err := kinds.Resolve(dc, reg.Kinds)
+	if err != nil {
 		// Classified from ctx: request errors can lose the deadline cause mid-stream.
 		if ctx.Err() != nil {
 			return nil, &TimeoutError{Stage: StageDiscovery, cause: context.Cause(ctx)}
 		}
 		return nil, fmt.Errorf("resolve served kinds: %w", err)
+	}
+	if needs.Resolve != nil {
+		more, err := needs.Resolve(served)
+		if err != nil {
+			return nil, err
+		}
+		needs.Requested = append(slices.Clone(needs.Requested), more...)
 	}
 	// Build re-resolves from dc's memo, so it sends no request and lists no Catalog.
 	cfg, err := setup.Build(setup.Clients{Dynamic: c.Dynamic, Kube: c.Kube, Discovery: dc, Metadata: c.Metadata},
