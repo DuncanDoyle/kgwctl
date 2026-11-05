@@ -252,3 +252,28 @@ func TestProxyHoldsWatchPastList(t *testing.T) {
 		t.Fatal("hold rule never matched")
 	}
 }
+
+func TestProxyCountsConnsAndWatches(t *testing.T) {
+	env := testenv.New(t, testenv.Options{})
+	p := env.Proxies[0]
+	ctx, cancel := context.WithCancel(t.Context())
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, p.URL()+"/api/v1/namespaces?watch=true", nil)
+	tr := &http.Transport{}
+	defer tr.CloseIdleConnections()
+	resp, err := (&http.Client{Transport: tr}).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.WatchesSeen() != 1 || p.OpenConns() != 1 {
+		t.Errorf("watches seen %d, open conns %d; want 1 and 1", p.WatchesSeen(), p.OpenConns())
+	}
+	cancel()
+	resp.Body.Close()
+	deadline := time.Now().Add(2 * time.Second)
+	for p.OpenConns() != 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if p.OpenConns() != 0 || p.WatchesSeen() != 1 {
+		t.Errorf("after cancel: open conns %d, watches seen %d; want 0 and 1", p.OpenConns(), p.WatchesSeen())
+	}
+}

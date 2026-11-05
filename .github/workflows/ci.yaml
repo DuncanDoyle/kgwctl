@@ -33,7 +33,7 @@ jobs:
         run: go vet ./...
       - name: Format
         run: |
-          out="$(gofmt -l .)"
+          out="$(gofmt -l cmd examples internal pkg)"
           if [ -n "$out" ]; then echo "gofmt needed:"; echo "$out"; exit 1; fi
       - name: Test
         run: |

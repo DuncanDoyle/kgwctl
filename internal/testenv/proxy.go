@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
@@ -91,6 +92,9 @@ type Proxy struct {
 	listed map[string]*listState
 
 	openWatches atomic.Int64
+	watchesSeen atomic.Int64
+	connMu      sync.Mutex
+	conns       map[net.Conn]http.ConnState
 }
 
 type listState struct {
@@ -110,7 +114,10 @@ func newProxy(target *url.URL, transport http.RoundTripper) *Proxy {
 		// Cancelled client requests are expected; their 502 needs no log line.
 		ErrorLog: log.New(io.Discard, "", 0),
 	}
-	p.srv = httptest.NewServer(http.HandlerFunc(p.serve))
+	p.conns = map[net.Conn]http.ConnState{}
+	p.srv = httptest.NewUnstartedServer(http.HandlerFunc(p.serve))
+	p.srv.Config.ConnState = p.trackConn
+	p.srv.Start()
 	return p
 }
 
@@ -143,6 +150,26 @@ func (p *Proxy) Requests() []string {
 
 // OpenWatches returns the number of watch requests currently open.
 func (p *Proxy) OpenWatches() int { return int(p.openWatches.Load()) }
+
+// WatchesSeen returns the number of watch requests received so far.
+func (p *Proxy) WatchesSeen() int { return int(p.watchesSeen.Load()) }
+
+// OpenConns returns the number of client connections not yet closed or hijacked.
+func (p *Proxy) OpenConns() int {
+	p.connMu.Lock()
+	defer p.connMu.Unlock()
+	return len(p.conns)
+}
+
+func (p *Proxy) trackConn(c net.Conn, s http.ConnState) {
+	p.connMu.Lock()
+	defer p.connMu.Unlock()
+	if s == http.StateClosed || s == http.StateHijacked {
+		delete(p.conns, c)
+		return
+	}
+	p.conns[c] = s
+}
 
 // unmatched returns the rules that never applied.
 func (p *Proxy) unmatched() []Match {
@@ -177,6 +204,7 @@ func (p *Proxy) serve(w http.ResponseWriter, r *http.Request) {
 
 	if r.URL.Query().Get("watch") == "true" || r.URL.Query().Get("watch") == "1" {
 		p.openWatches.Add(1)
+		p.watchesSeen.Add(1)
 		defer p.openWatches.Add(-1)
 	}
 	if match != nil {
