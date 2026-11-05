@@ -17,18 +17,6 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # Builds against kgateway-ui at the commit the local go.work uses. That
-      # commit is not pushed yet, so this job cannot pass until kgateway-ui
-      # publishes it. Drop these two steps once go.mod points at a kgateway-ui tag.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: DuncanDoyle/kgateway-ui
-          ref: 5737a1411813ee5e332f66222484a79d297c1fd7
-          path: .deps/kgateway-ui
-      - name: Create go.work
-        run: |
-          go work init . ./.deps/kgateway-ui
-
       - name: Vet
         run: go vet ./...
       - name: Format

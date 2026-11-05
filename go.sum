@@ -1,5 +1,5 @@
-github.com/DuncanDoyle/kgateway-ui v0.0.0-20261104142407-9f44baaa1993 h1:K0d6Yf34uzSFng3UR2lpO1GoViCoQkAwNzG/tPWVyt4=
-github.com/DuncanDoyle/kgateway-ui v0.0.0-20261104142407-9f44baaa1993/go.mod h1:xMyaHioSbqJEmythv2A+KcNAgLmJduQzVOprMbjb3OY=
+github.com/DuncanDoyle/kgateway-ui v0.3.0 h1:wdtnfIB1fU1CPM5J2/345Xsx+VEtVtsQQ8Adhnc+2Aw=
+github.com/DuncanDoyle/kgateway-ui v0.3.0/go.mod h1:xMyaHioSbqJEmythv2A+KcNAgLmJduQzVOprMbjb3OY=
 github.com/Masterminds/semver/v3 v3.4.0 h1:Zog+i5UMtVoCU8oKka5P7i9q9HgrJeGzI9SA1Xbatp0=
 github.com/Masterminds/semver/v3 v3.4.0/go.mod h1:4V+yj/TJE1HU9XfppCwVMZq3I84lprf4nC11bSS5beM=
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=
