@@ -3,7 +3,7 @@
 # kgw-b wants 2 replicas and has 1 ready. Each Gateway has one HTTPRoute;
 # team-b/api also has a TrafficPolicy kgw-b accepted. team-c/stray names
 # team-a/web from a namespace neither install watches; its only status entry
-# is from another controller.
+# is from another controller. team-c/stray-bare is the same with no status.
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: GatewayClass
@@ -391,3 +391,17 @@ status:
           message: ""
           observedGeneration: 1
           lastTransitionTime: "2026-01-01T00:00:00Z"
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: stray-bare
+  namespace: team-c
+spec:
+  parentRefs:
+    - name: web
+      namespace: team-a
+  rules:
+    - backendRefs:
+        - name: stray
+          port: 8080
