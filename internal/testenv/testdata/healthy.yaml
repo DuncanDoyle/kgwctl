@@ -14,7 +14,7 @@ metadata:
     kgateway: kgateway
     app.kubernetes.io/name: kgateway
     app.kubernetes.io/component: controller
-    app.kubernetes.io/version: 2.4.5
+    app.kubernetes.io/version: 2.5.0
 spec:
   replicas: 1
   selector:
@@ -26,11 +26,11 @@ spec:
         kgateway: kgateway
         app.kubernetes.io/name: kgateway
         app.kubernetes.io/component: controller
-        app.kubernetes.io/version: 2.4.5
+        app.kubernetes.io/version: 2.5.0
     spec:
       containers:
         - name: kgateway
-          image: cr.kgateway.dev/kgateway-dev/kgateway:v2.4.5
+          image: cr.kgateway.dev/kgateway-dev/kgateway:v2.5.0
           ports:
             - name: metrics
               containerPort: 9092
@@ -50,11 +50,11 @@ metadata:
     kgateway: kgateway
     app.kubernetes.io/name: kgateway
     app.kubernetes.io/component: controller
-    app.kubernetes.io/version: 2.4.5
+    app.kubernetes.io/version: 2.5.0
 spec:
   containers:
     - name: kgateway
-      image: cr.kgateway.dev/kgateway-dev/kgateway:v2.4.5
+      image: cr.kgateway.dev/kgateway-dev/kgateway:v2.5.0
       ports:
         - name: metrics
           containerPort: 9092
@@ -65,7 +65,7 @@ status:
       status: "True"
   containerStatuses:
     - name: kgateway
-      image: cr.kgateway.dev/kgateway-dev/kgateway:v2.4.5
+      image: cr.kgateway.dev/kgateway-dev/kgateway:v2.5.0
       imageID: ""
       ready: true
       restartCount: 0

@@ -181,8 +181,8 @@ func TestProxyMatchesWatchList(t *testing.T) {
 				time.Sleep(20 * time.Millisecond)
 				acc = ca.Snapshot().Access[httpRoutesGVR]
 			}
-			if acc.OK || !strings.Contains(acc.Err, "forbidden") {
-				t.Fatalf("httproutes access = %+v, want denied (forbidden)", acc)
+			if acc.OK || !acc.Denied {
+				t.Fatalf("httproutes access = %+v, want denied", acc)
 			}
 			if hits.N() == 0 {
 				t.Fatal("403 rule never matched")
@@ -245,8 +245,8 @@ func TestProxyHoldsWatchPastList(t *testing.T) {
 	if !sawOpen {
 		t.Fatal("proxy never reported an open watch")
 	}
-	if !strings.Contains(acc.Err, "forbidden") {
-		t.Fatalf("httproutes access = %+v, want denied (forbidden)", acc)
+	if acc.OK || !acc.Denied {
+		t.Fatalf("httproutes access = %+v, want denied", acc)
 	}
 	if hits.N() == 0 {
 		t.Fatal("hold rule never matched")

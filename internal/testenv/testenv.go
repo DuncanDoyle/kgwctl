@@ -225,6 +225,7 @@ func applyFixtures(t testing.TB, cfg *rest.Config, files []string) []object {
 	for _, f := range files {
 		docs, err := readObjects(f)
 		if err != nil {
+			deleteAll(t, cfg, created)
 			t.Fatalf("testenv: fixture %s: %v", f, err)
 		}
 		for _, u := range docs {

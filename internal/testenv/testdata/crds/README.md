@@ -8,6 +8,8 @@ Installed into every `testenv` envtest. Versions follow the latest kgateway OSS 
 | `gateway-api/experimental/experimental-only.yaml` | https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.7.0/experimental-install.yaml | v1.7.0, experimental channel | only the `gateway.networking.x-k8s.io` CRDs, so the standard CRDs are not installed twice |
 | `kgateway/` | https://github.com/kgateway-dev/kgateway/tree/v2.5.0/install/helm/kgateway-crds/templates | v2.5.0 | Helm escapes (`{{ "{{x}}" }}`) in one TrafficPolicy description rendered to `{{x}}` |
 
+Fixtures label the controller to match these CRDs: `app.kubernetes.io/version: 2.5.0` and image tag `v2.5.0` (ruling R6). Bump both together with the CRDs.
+
 envtest installs only `CustomResourceDefinition` documents, so the bundles' ValidatingAdmissionPolicy is ignored.
 
 Gateway API v1.7.0's experimental channel has no `XListenerSet`; ListenerSet is in the standard channel.

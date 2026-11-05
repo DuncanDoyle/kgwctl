@@ -5,7 +5,11 @@ import (
 	"io"
 	"net/http"
 	"sync"
+
+	utilnet "k8s.io/apimachinery/pkg/util/net"
 )
+
+var _ utilnet.RoundTripperWrapper = (*boundTransport)(nil)
 
 // BindContext returns a transport wrapper that ties every request to ctx: when
 // ctx ends, in-flight requests are cancelled and new ones fail with ctx.Err().
@@ -39,6 +43,10 @@ func (b *boundTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	resp.Body = &boundBody{ReadCloser: resp.Body, release: release}
 	return resp, nil
 }
+
+// WrappedRoundTripper implements utilnet.RoundTripperWrapper, so client-go
+// can reach the transport underneath (for example to close idle connections).
+func (b *boundTransport) WrappedRoundTripper() http.RoundTripper { return b.next }
 
 type boundBody struct {
 	io.ReadCloser
