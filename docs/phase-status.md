@@ -12,8 +12,8 @@ Status: design approved 2026-11-05 (D-010); implementation sub-phase 1.1
 - [x] Q3 Phase 1 design (`design.md`), incl. the maintainer proposal draft (program P-005) — r4, 372c23f..e14b8b8
 - [x] Q4 Phase 1 implementation plan (`implementation-plan.md`) — r3, sub-phases 1.1–1.4
 - [x] Q5 Cross-model review of design + plan, triage, owner approval — 4 Codex rounds; approved 2026-11-05 (D-010)
-- [ ] Q6 File R1–R4 cross-repo issues in kgateway-ui (design §11) ← CURRENT
-- [ ] Q7 Sub-phase 1.1 — foundation (plan §1.1)
+- [x] Q6 File R1–R4 cross-repo issues in kgateway-ui (design §11) — DuncanDoyle/kgateway-ui#17–#20
+- [ ] Q7 Sub-phase 1.1 — foundation (plan §1.1) ← CURRENT
 - [ ] Q8 Sub-phase 1.2 — `get`
 - [ ] Q9 Sub-phase 1.3 — `describe`
 - [ ] Q10 Sub-phase 1.4 — live check, scale, docs
@@ -28,7 +28,16 @@ Status: design approved 2026-11-05 (D-010); implementation sub-phase 1.1
 - [ ] phase-1-complete.md written, roadmap updated, tracked items closed
 
 ## Sub-phase
-none
+Sub-phase: 1.1 — Foundation
+Kind: planned
+Base: d109da6e0c37af774744eed31806cc6e0ddd562e
+Brief: docs/phases/phase-1/phase-1.1-brief.md
+
+### Allowed work
+Features within the approved design (plan Tasks 1.1.1–1.1.5).
+
+### Not allowed
+Design changes without a decisions.md entry and owner approval.
 
 ## Program
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
