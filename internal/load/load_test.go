@@ -187,9 +187,8 @@ func TestLoadDeadlineErrorIsLoading(t *testing.T) {
 	}
 }
 
-// TestLoadPostDeadlineFailure holds every Pod watch, so the deadline cancels one
-// in flight and records the client's error on the settled Pods input. Inputs
-// must keep Pods ok, and the engine must read the same access state.
+// TestLoadPostDeadlineFailure: a Pod watch cancelled by the deadline leaves Pods
+// ok in Inputs, and the engine reads the same access state.
 func TestLoadPostDeadlineFailure(t *testing.T) {
 	testenv.ClassicWatch(t)
 	env := testenv.New(t, testenv.Options{Fixtures: []string{healthy}})

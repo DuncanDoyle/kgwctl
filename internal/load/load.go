@@ -132,6 +132,8 @@ func Load(ctx context.Context, c Clients, reg *extension.Registry, needs Needs) 
 	if err != nil {
 		return nil, err
 	}
+	// One-shot: no change signal, and proxy Pods only when asked.
+	cfg.Cache.Changes = nil
 	if !needs.ProxyPods {
 		cfg.Cache.ProxyPodSelectors = nil
 	}
@@ -149,7 +151,7 @@ func Load(ctx context.Context, c Clients, reg *extension.Registry, needs Needs) 
 		in, ok := inputs[gvr]
 		// A requested kind the cache never watched fails the load (Ruling R12).
 		if !ok {
-			return nil, fmt.Errorf("requested %s is not among the loaded kinds", qualifiedName(gvr))
+			return nil, fmt.Errorf("%s is not served by this cluster", qualifiedName(gvr))
 		}
 		if in.State == StateLoading {
 			late = append(late, in.Resource)
@@ -173,8 +175,8 @@ func Load(ctx context.Context, c Clients, reg *extension.Registry, needs Needs) 
 // staleness and scope-verifier windows it sets are never reached.
 const metricsInterval = time.Minute
 
-// memoDiscovery serves each group version's first answer, NotFound included,
-// again, so setup.Build repeats Load's discovery without requests. It lists no Catalog.
+// memoDiscovery replays Load's discovery answers, so setup.Build sends no
+// requests. It lists no Catalog.
 type memoDiscovery struct {
 	dc   kinds.DiscoveryClient
 	seen map[string]answer
