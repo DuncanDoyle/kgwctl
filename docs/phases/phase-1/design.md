@@ -85,27 +85,29 @@ One table per kind, kubectl-style. Columns show status summaries the library alr
 | Kind | Columns (`wide` adds) |
 |---|---|
 | GatewayClass | NAME, CONTROLLER, ACCEPTED, AGE (+ PARAMETERS) |
-| Gateway | NAMESPACE, NAME, CLASS, ADDRESS, PROGRAMMED, LISTENERS, ROUTES, AGE (+ LISTENERSETS, INSTALL) |
+| Gateway | NAMESPACE, NAME, CLASS, ADDRESS, PROGRAMMED, LISTENERS, ROUTES, AGE (+ LISTENERSETS) |
 | ListenerSet | NAMESPACE, NAME, PARENT, ACCEPTED, PROGRAMMED, LISTENERS, AGE |
 | HTTPRoute, GRPCRoute, TCPRoute, TLSRoute | NAMESPACE, NAME, HOSTNAMES, PARENTS, ACCEPTED, RESOLVED, AGE (+ BACKENDS, DELEGATION) |
 | Policy kinds | NAMESPACE, NAME, ANCESTORS, ACCEPTED, AGE |
 | Other kinds | NAMESPACE, NAME, CONDITIONS, AGE |
 
+INSTALL is added to every attributed kind's table, in both formats, when more than one install is detected (D-012). ROUTES is the library's linked-route count plus ` (n not accepted)`; `-` marks an object no install indexes.
+
 **Object conditions** (GatewayClass, Gateway, ListenerSet, other kinds) render as follows:
 - `True`, `False (<Reason>)` or `Unknown (<Reason>)`;
 - `<no status>` when the condition is absent;
-- `<stale>` when the condition's `observedGeneration` is behind `metadata.generation` (`objects.IsStale`, evaluated per condition).
+- `<stale>` when the condition's `observedGeneration` is behind `metadata.generation` (`objects.IsStale`, evaluated per condition), except that an Unknown condition with no `observedGeneration` (never reconciled) renders `Unknown (<Reason>)` (D-012).
 
 **Per-parent and per-ancestor conditions** (routes: ACCEPTED, RESOLVED; policies: ACCEPTED) summarise over a fixed denominator:
 
 | Input | Rule |
 |---|---|
 | Denominator (routes) | the route's `spec.parentRefs` (`objects.RouteParentRefs`), deduplicated on the full defaulted parentRef, including `sectionName` and `port`. Two listeners of one Gateway are two parents. `describe` notes exact duplicates. |
-| Denominator (policies) | the `status.ancestors` entries (`objects.PolicyAncestors`); with none, the cell is `<no status>` |
+| Denominator (policies) | the distinct ancestorRefs in `status.ancestors` (`objects.PolicyAncestors`); with none, the cell is `<no status>` |
 | Status entries of one parent | the `status.parents` entries whose full parentRef matches it (`objects.RouteParents`), as the library matches at `explore/rows.go:283-285` |
 | State: `accepted` / `rejected` / `stale` | an entry from one of our controllers (§6.2) whose condition is True / False (with its reason) / stale (`objects.IsStale`). With entries from several of ours, the one from the install owning the parent wins; failing that, the worst. |
 | State: `other` | entries only from other controllers |
-| State: `unwatched` / `declared` | no entry from ours, and the owning install's `explore` index places the route in that state (`Attachment` unwatched or declared) |
+| State: `unwatched` / `declared` | no entry from ours, and the owning install's `explore` index places the route in that state (`Attachment` unwatched or declared); this wins over `other` (D-012) |
 | State: `no status` | anything else |
 | Cell, all parents accepted | `True` |
 | Cell, otherwise | `<accepted>/<total>` plus each non-zero count, in the order rejected, stale, no status, unwatched, declared, other. Examples: `1/3 (1 stale, 1 no status)`, `0/1 (1 rejected: NotAllowedByListeners)`. |
@@ -281,7 +283,8 @@ They show `<no status>` or `0/n`, which is theme 1. Absence from `Owned` alone n
 
 **Flags and special cases:**
 - **`--all-controllers`:** shows hidden objects too, with `other` in their status cells.
-- **`--install ns/name`:** narrows to one install when several exist. Hidden then also covers objects owned by the other detected installs. An `INSTALL` column appears when more than one install is detected.
+- **`--install ns/name`:** narrows to one install when several exist. Hidden then also covers objects owned by the other detected installs. An `INSTALL` column appears when more than one install is detected. A value naming no detected install is an error, unless ownership inputs are unavailable (D-012).
+- **Named lookups:** `get <kind> <name>` returns the object even when it would be hidden (D-012).
 - **No install detected,** or an input ownership depends on is unavailable (§6.3): nothing is hidden, and stderr says why.
 
 *(our call. It honours the UI owner's feedback that other controllers' routes confuse multi-controller clusters, without hiding the orphans this tool exists to show. Routes in unwatched namespaces are shown on purpose: they name our Gateway and will never get status.)*
