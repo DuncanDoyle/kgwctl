@@ -14,6 +14,8 @@ import (
 	"github.com/DuncanDoyle/kgateway-ui/pkg/extension"
 	"github.com/DuncanDoyle/kgateway-ui/pkg/health"
 	"github.com/DuncanDoyle/kgateway-ui/pkg/kinds"
+	"github.com/DuncanDoyle/kgateway-ui/pkg/setup"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
@@ -116,18 +118,27 @@ func Load(ctx context.Context, c Clients, reg *extension.Registry, needs Needs) 
 	if err := health.ValidateOrder(reg.Checks); err != nil {
 		return nil, err
 	}
-	served, err := kinds.Resolve(Discovery(ctx, c.Discovery), reg.Kinds)
-	if err != nil {
+	dc := &memoDiscovery{dc: Discovery(ctx, c.Discovery), seen: map[string]answer{}}
+	if _, err := kinds.Resolve(dc, reg.Kinds); err != nil {
 		// Classified from ctx: request errors can lose the deadline cause mid-stream.
 		if ctx.Err() != nil {
 			return nil, &TimeoutError{Stage: StageDiscovery, cause: context.Cause(ctx)}
 		}
 		return nil, fmt.Errorf("resolve served kinds: %w", err)
 	}
+	// Build re-resolves from dc's memo, so it sends no request and lists no Catalog.
+	cfg, err := setup.Build(setup.Clients{Dynamic: c.Dynamic, Kube: c.Kube, Discovery: dc, Metadata: c.Metadata},
+		setup.Options{MetricsInterval: metricsInterval, NoEvents: true, NoCRDs: !needs.CRDs}, reg)
+	if err != nil {
+		return nil, err
+	}
+	if !needs.ProxyPods {
+		cfg.Cache.ProxyPodSelectors = nil
+	}
 
 	cctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	ca := cache.New(cacheConfig(c, reg, served, needs))
+	ca := cache.New(cfg.Cache)
 	ca.Start(cctx)
 	snap, pending := wait(ctx, ca, optional(needs))
 	cancel()
@@ -135,7 +146,12 @@ func Load(ctx context.Context, c Clients, reg *extension.Registry, needs Needs) 
 	inputs := classify(snap.Access, pending)
 	var late []string
 	for _, gvr := range needs.Requested {
-		if in, ok := inputs[gvr]; ok && in.State == StateLoading {
+		in, ok := inputs[gvr]
+		// A requested kind the cache never watched fails the load (Ruling R12).
+		if !ok {
+			return nil, fmt.Errorf("requested %s is not among the loaded kinds", qualifiedName(gvr))
+		}
+		if in.State == StateLoading {
 			late = append(late, in.Resource)
 		}
 	}
@@ -143,10 +159,47 @@ func Load(ctx context.Context, c Clients, reg *extension.Registry, needs Needs) 
 		slices.Sort(late)
 		return nil, &TimeoutError{Stage: StageLoading, Pending: late, cause: context.Cause(ctx)}
 	}
-	// Compute does no I/O in this wiring, so it runs on what loaded even past the deadline (§4.4).
-	m := engine.New(engineConfig(reg, served, snap, needs.Logger)).Compute()
-	return &Result{Model: m, Served: served, Inputs: inputs}, nil
+	// Compute does no I/O here, so it runs on what loaded even past the deadline (§4.4).
+	cfg.Engine.Snapshots = fixedSnapshot{snap}
+	cfg.Engine.Logger = needs.Logger
+	if cfg.Engine.Logger == nil {
+		cfg.Engine.Logger = slog.New(slog.DiscardHandler)
+	}
+	m := engine.New(cfg.Engine).Compute()
+	return &Result{Model: m, Served: cfg.Engine.Served, Inputs: inputs}, nil
 }
+
+// metricsInterval only satisfies setup.Build: no metrics are collected, so the
+// staleness and scope-verifier windows it sets are never reached.
+const metricsInterval = time.Minute
+
+// memoDiscovery serves each group version's first answer, NotFound included,
+// again, so setup.Build repeats Load's discovery without requests. It lists no Catalog.
+type memoDiscovery struct {
+	dc   kinds.DiscoveryClient
+	seen map[string]answer
+}
+
+type answer struct {
+	l   *metav1.APIResourceList
+	err error
+}
+
+// ServerResourcesForGroupVersion implements kinds.DiscoveryClient.
+func (m *memoDiscovery) ServerResourcesForGroupVersion(gv string) (*metav1.APIResourceList, error) {
+	a, ok := m.seen[gv]
+	if !ok {
+		a.l, a.err = m.dc.ServerResourcesForGroupVersion(gv)
+		m.seen[gv] = a
+	}
+	return a.l, a.err
+}
+
+// fixedSnapshot hands Compute the snapshot Load classified its inputs from.
+type fixedSnapshot struct{ s *cache.Snapshot }
+
+// Snapshot implements cache.Snapshotter.
+func (f fixedSnapshot) Snapshot() *cache.Snapshot { return f.s }
 
 // optional returns the Access keys of the optional inputs needs waits for.
 func optional(needs Needs) []schema.GroupVersionResource {
@@ -211,8 +264,8 @@ func wait(ctx context.Context, ca *cache.Cache, opt []schema.GroupVersionResourc
 		}
 		acc[gvr], pending[gvr] = a, true
 	}
-	// The engine reads the access states the output reports. Stores change only by
-	// whole-list replaces and watch events, so no input holds a partial list.
+	// The engine reads the access states the output reports. No input holds a partial list:
+	// client-go's AtomicFIFO gate (default-on beta in v0.36) applies each LIST as one replace.
 	snap := *final
 	snap.Access = acc
 	return &snap, pending
@@ -249,4 +302,12 @@ func resourceName(gvr schema.GroupVersionResource) string {
 		return gvr.Resource
 	}
 	return gvr.Resource + "." + gvr.Group
+}
+
+// qualifiedName is kubectl's "<resource>.<version>.<group>", or "<resource>.<version>" for the core group.
+func qualifiedName(gvr schema.GroupVersionResource) string {
+	if gvr.Group == "" {
+		return gvr.Resource + "." + gvr.Version
+	}
+	return gvr.Resource + "." + gvr.Version + "." + gvr.Group
 }
