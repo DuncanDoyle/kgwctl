@@ -1,0 +1,138 @@
+# Two controllers, kgateway (healthy.yaml) and a vendor controller with its
+# own controller name, both write an entry for the same parent. The vendor
+# install owns no Gateway; shared/missing does not exist.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vendor-controller
+  namespace: vendor-system
+  labels:
+    app: vendor-controller
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vendor-controller
+  template:
+    metadata:
+      labels:
+        app: vendor-controller
+    spec:
+      containers:
+        - name: controller
+          image: example.com/vendor-controller:v1.0.0
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: owner-accepts
+  namespace: shared
+spec:
+  parentRefs:
+    - name: http
+      namespace: kgateway-system
+status:
+  parents:
+    - parentRef:
+        group: gateway.networking.k8s.io
+        kind: Gateway
+        name: http
+        namespace: kgateway-system
+      controllerName: kgateway.dev/kgateway
+      conditions:
+        - type: Accepted
+          status: "True"
+          reason: Accepted
+          message: ""
+          observedGeneration: 1
+          lastTransitionTime: "2026-01-01T00:00:00Z"
+    - parentRef:
+        group: gateway.networking.k8s.io
+        kind: Gateway
+        name: http
+        namespace: kgateway-system
+      controllerName: example.com/vendor
+      conditions:
+        - type: Accepted
+          status: "False"
+          reason: NotAllowedByListeners
+          message: ""
+          observedGeneration: 1
+          lastTransitionTime: "2026-01-01T00:00:00Z"
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: owner-rejects
+  namespace: shared
+spec:
+  parentRefs:
+    - name: http
+      namespace: kgateway-system
+status:
+  parents:
+    - parentRef:
+        group: gateway.networking.k8s.io
+        kind: Gateway
+        name: http
+        namespace: kgateway-system
+      controllerName: kgateway.dev/kgateway
+      conditions:
+        - type: Accepted
+          status: "False"
+          reason: NotAllowedByListeners
+          message: ""
+          observedGeneration: 1
+          lastTransitionTime: "2026-01-01T00:00:00Z"
+    - parentRef:
+        group: gateway.networking.k8s.io
+        kind: Gateway
+        name: http
+        namespace: kgateway-system
+      controllerName: example.com/vendor
+      conditions:
+        - type: Accepted
+          status: "True"
+          reason: Accepted
+          message: ""
+          observedGeneration: 1
+          lastTransitionTime: "2026-01-01T00:00:00Z"
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: no-owner
+  namespace: shared
+spec:
+  parentRefs:
+    - name: missing
+      namespace: shared
+status:
+  parents:
+    - parentRef:
+        group: gateway.networking.k8s.io
+        kind: Gateway
+        name: missing
+        namespace: shared
+      controllerName: kgateway.dev/kgateway
+      conditions:
+        - type: Accepted
+          status: "True"
+          reason: Accepted
+          message: ""
+          observedGeneration: 1
+          lastTransitionTime: "2026-01-01T00:00:00Z"
+    - parentRef:
+        group: gateway.networking.k8s.io
+        kind: Gateway
+        name: missing
+        namespace: shared
+      controllerName: example.com/vendor
+      conditions:
+        - type: Accepted
+          status: "False"
+          reason: NoMatchingParent
+          message: ""
+          observedGeneration: 1
+          lastTransitionTime: "2026-01-01T00:00:00Z"

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/DuncanDoyle/kgateway-ui/pkg/kinds"
@@ -95,9 +96,20 @@ func TestDownstreamKindRegisteredAndServed(t *testing.T) {
 }
 
 func TestDownstreamPolicyInGet(t *testing.T) {
-	// TODO(Task 1.2.3): un-skip when `get` exists and assert the ExamplePolicy
-	// with no ancestors appears in `get examplepolicies -A`.
-	t.Skip("needs get, sub-phase 1.2")
+	env := newEnv(t)
+	code, stdout, stderr := runRoot(t, env, "get", "examplepolicies", "-A")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr: %s", code, stderr)
+	}
+	// A policy kind gets the policy columns; with no ancestors both cells say so.
+	lines := strings.Split(strings.TrimSuffix(stdout, "\n"), "\n")
+	if len(lines) != 2 || strings.Join(strings.Fields(lines[0]), " ") != "NAMESPACE NAME ANCESTORS ACCEPTED AGE" {
+		t.Fatalf("stdout = %q, want a header and one row", stdout)
+	}
+	row := strings.Fields(lines[1])
+	if len(row) != 6 || row[0] != "default" || row[1] != "lonely" || row[2] != "<none>" || row[3]+" "+row[4] != "<no status>" {
+		t.Errorf("row = %q, want default/lonely with no ancestors and <no status>", lines[1])
+	}
 }
 
 func TestDownstreamCommand(t *testing.T) {

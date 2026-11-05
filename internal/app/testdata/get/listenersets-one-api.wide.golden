@@ -1,0 +1,2 @@
+NAMESPACE         NAME    GROUP                       PARENT   ACCEPTED            PROGRAMMED          LISTENERS   AGE
+kgateway-system   extra   gateway.networking.k8s.io   http     Unknown (Pending)   Unknown (Pending)   1           10d

@@ -4,7 +4,7 @@
 Phase: 1 — Foundation and resource inspection
 Base: 779c421e8d8ed8a4a71847c5cc29bc61ffedbd09
 Docs: docs/phases/phase-1/
-Status: design approved 2026-11-05 (D-010); 1.1 complete; implementation sub-phase 1.2
+Status: design approved 2026-11-05 (D-010); 1.1 and 1.2 complete; next sub-phase 1.3
 
 ### Queue
 - [x] Q1 Owner reviews roadmap and decisions D-001–D-008 — approved 2026-11-04
@@ -14,7 +14,7 @@ Status: design approved 2026-11-05 (D-010); 1.1 complete; implementation sub-pha
 - [x] Q5 Cross-model review of design + plan, triage, owner approval — 4 Codex rounds; approved 2026-11-05 (D-010)
 - [x] Q6 File R1–R4 cross-repo issues in kgateway-ui (design §11) — DuncanDoyle/kgateway-ui#17–#20
 - [x] Q7 Sub-phase 1.1 — foundation — phase-1.1-complete.md; kgateway-ui v0.3.0
-- [ ] Q8 Sub-phase 1.2 — `get` ← CURRENT — branch duncandoyle/phase1Get
+- [x] Q8 Sub-phase 1.2 — `get` — phase-1.2-complete.md; reviews/1.2-codex.md; D-012
 - [ ] Q9 Sub-phase 1.3 — `describe`
 - [ ] Q10 Sub-phase 1.4 — live check, scale, docs
 - [x] Q11 Maintainer proposal (P-005): not filed, deferred by the owner (D-011)
@@ -28,16 +28,7 @@ Status: design approved 2026-11-05 (D-010); 1.1 complete; implementation sub-pha
 - [ ] phase-1-complete.md written, roadmap updated, tracked items closed
 
 ## Sub-phase
-Sub-phase: 1.2 — `get`
-Kind: planned
-Base: a66aa1d56de9bd44e203c350503a184b0f341d7b
-Brief: docs/phases/phase-1/phase-1.2-brief.md
-
-### Allowed work
-Features within the approved design (plan Tasks 1.2.1–1.2.4), the `pkg/setup` swap (Task 1.2.0) and the 1.1 carry-over.
-
-### Not allowed
-Design changes without a decisions.md entry and owner approval.
+n/a
 
 ## Program
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
@@ -56,3 +47,4 @@ Design changes without a decisions.md entry and owner approval.
 - 2026-11-05 Close blocked (1.1): (a) go.mod pins kgateway-ui 9f44baa, which lacks APIs 1.1 uses; build and CI need a go.work to 5737a14 (unpushed) until kgateway-ui publishes and tags it (#16); (b) under Go 1.26, TestNoAccumulation fails on a goroutine leak in kgateway-ui pkg/cache (watch.Filter in instrument), reported to the kgateway-ui session.
 - 2026-11-05 Blocker (b) fixed upstream: kgateway-ui 2df2d02 (local, phase3Seams, in review) replaces watch.Filter. Against it, `go test -race -count=1 ./...` exits 0 on Go 1.27.3 and Go 1.26.0. Only (a) remains: publish + tag kgateway-ui, then pin go.mod, drop CI's workspace step (its checkout SHA moves to the tag).
 - 2026-11-05 Blocker (a) resolved: kgateway-ui v0.3.0 tagged; go.mod uses it, CI workspace step dropped. Green with `-race` on Go 1.27.3 and 1.26.0. 1.1 closed.
+- 2026-11-05 Sub-phase 1.2 closed: Codex review 5 findings fixed (351a9f7); D-012 records the `get` details settled in implementation.

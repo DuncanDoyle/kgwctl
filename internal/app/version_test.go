@@ -40,28 +40,35 @@ type result struct {
 func runCmd(t *testing.T, env *testenv.Env, args ...string) result {
 	t.Helper()
 	var out, errb bytes.Buffer
-	root := app.NewRoot(app.Config{Build: testBuild, Out: &out, Err: &errb})
+	root := app.NewRoot(app.Config{Build: testBuild, Out: &out, Err: &errb, Now: testNow})
 	start := time.Now()
 	code := run(root, append([]string{"--kubeconfig", env.Kubeconfig}, args...)...)
 	return result{code: code, stdout: out.String(), stderr: errb.String(), took: time.Since(start)}
 }
 
-func golden(t *testing.T, name, got string) {
+// golden compares got with testdata/<dir>/<name>.golden, or rewrites it with -update.
+func golden(t *testing.T, dir, name, got string) {
 	t.Helper()
-	path := filepath.Join("testdata", "version", name+".golden")
+	path := filepath.Join("testdata", dir, name+".golden")
 	if *update {
 		if err := os.WriteFile(path, []byte(got), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		return
 	}
-	want, err := os.ReadFile(path)
+	if want := readGolden(t, dir, name); got != want {
+		t.Errorf("output differs from %s\n--- got ---\n%s\n--- want ---\n%s", path, got, want)
+	}
+}
+
+// readGolden returns testdata/<dir>/<name>.golden.
+func readGolden(t *testing.T, dir, name string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("testdata", dir, name+".golden"))
 	if err != nil {
 		t.Fatalf("read golden (run with -update to create it): %v", err)
 	}
-	if got != string(want) {
-		t.Errorf("output differs from %s\n--- got ---\n%s\n--- want ---\n%s", path, got, want)
-	}
+	return string(b)
 }
 
 func TestVersion(t *testing.T) {
@@ -105,7 +112,7 @@ func TestVersion(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			env := testenv.New(t, testenv.Options{Fixtures: tc.fixtures})
+			env := newEnv(t, testenv.Options{Fixtures: tc.fixtures})
 			if tc.rules != nil {
 				tc.rules(env.Proxies[0])
 			}
@@ -143,7 +150,7 @@ func TestVersion(t *testing.T) {
 							t.Errorf("envelope = %+v", env)
 						}
 					}
-					golden(t, tc.name+"."+format, r.stdout)
+					golden(t, "version", tc.name+"."+format, r.stdout)
 				})
 			}
 			if tc.noRequests {
@@ -156,7 +163,7 @@ func TestVersion(t *testing.T) {
 }
 
 func TestVersionHangingClusterTimesOut(t *testing.T) {
-	env := testenv.New(t, testenv.Options{})
+	env := newEnv(t, testenv.Options{})
 	env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindDiscovery, Resource: "*"}, testenv.Action{Delay: 30 * time.Second})
 	r := runCmd(t, env, "version", "--request-timeout", "1s")
 	if r.code != 1 {
@@ -175,7 +182,7 @@ func TestVersionHangingClusterTimesOut(t *testing.T) {
 }
 
 func TestVersionUnknownContext(t *testing.T) {
-	env := testenv.New(t, testenv.Options{})
+	env := newEnv(t, testenv.Options{})
 	r := runCmd(t, env, "version", "--context", "no-such-context")
 	if r.code != 1 {
 		t.Fatalf("exit %d, want 1", r.code)
@@ -189,7 +196,7 @@ func TestVersionUnknownContext(t *testing.T) {
 }
 
 func TestVersionInvalidOutput(t *testing.T) {
-	env := testenv.New(t, testenv.Options{})
+	env := newEnv(t, testenv.Options{})
 	r := runCmd(t, env, "version", "--client", "-o", "table")
 	if r.code != 1 || !strings.Contains(r.stderr, "table") || r.stdout != "" {
 		t.Errorf("exit %d, stderr %q, stdout %q", r.code, r.stderr, r.stdout)

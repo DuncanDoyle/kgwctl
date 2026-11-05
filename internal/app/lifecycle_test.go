@@ -60,7 +60,7 @@ func TestCancelOnEveryExit(t *testing.T) {
 			if tc.classic {
 				testenv.ClassicWatch(t)
 			}
-			env := testenv.New(t, testenv.Options{Fixtures: []string{healthyFixture}})
+			env := newEnv(t, testenv.Options{Fixtures: []string{healthyFixture}})
 			if tc.rule != nil {
 				env.Proxies[0].Rule(*tc.rule, tc.action)
 			}
@@ -113,7 +113,7 @@ func failControllerPodWatch(t *testing.T, p *testenv.Proxy) {
 // within 1s of the 1s deadline. Discovery is held, so version fails; a held
 // core input only warns (see TestCancelOnEveryExit).
 func TestReturnAtDeadline(t *testing.T) {
-	env := testenv.New(t, testenv.Options{Fixtures: []string{healthyFixture}})
+	env := newEnv(t, testenv.Options{Fixtures: []string{healthyFixture}})
 	hits := env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindDiscovery, Resource: "*"}, testenv.Action{Delay: time.Hour})
 	r := runCmd(t, env, "version", "--request-timeout", "1s")
 	if r.code != 1 {
@@ -141,7 +141,7 @@ func settledConns(p *testenv.Proxy) int {
 }
 
 func TestNoAccumulation(t *testing.T) {
-	env := testenv.New(t, testenv.Options{Fixtures: []string{healthyFixture}})
+	env := newEnv(t, testenv.Options{Fixtures: []string{healthyFixture}})
 	first, firstConns := 0, 0
 	for i := range 20 {
 		if r := runCmd(t, env, "version"); r.code != 0 {

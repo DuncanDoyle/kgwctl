@@ -187,18 +187,16 @@ func TestLoadDeadlineErrorIsLoading(t *testing.T) {
 	}
 }
 
-// TestLoadPostDeadlineFailure fails the settled Pod watch only after the
-// deadline: the engine must still see Pods as ok, as Inputs reports them.
+// TestLoadPostDeadlineFailure: a Pod watch cancelled by the deadline leaves Pods
+// ok in Inputs, and the engine reads the same access state.
 func TestLoadPostDeadlineFailure(t *testing.T) {
 	testenv.ClassicWatch(t)
 	env := testenv.New(t, testenv.Options{Fixtures: []string{healthy}})
 	sel := testenv.ProxyPodSelector(extension.New())
 	env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindAcquire, Resource: "pods", LabelSelector: sel}, testenv.Action{Delay: time.Hour})
-	release := make(chan struct{})
-	env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindWatch, Resource: "pods"}, testenv.Action{Until: release, Status: http.StatusInternalServerError})
+	env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindWatch, Resource: "pods"}, testenv.Action{Delay: time.Hour})
 	t.Cleanup(load.SetDeadlineHook(func(s cache.Snapshotter) {
-		close(release)
-		// No later Pod watch can succeed, so the failure stays recorded.
+		// Every later Pod request runs under the ended context, so the error stays recorded.
 		for end := time.Now().Add(5 * time.Second); s.Snapshot().Access[cache.PodsGVR].Err == ""; time.Sleep(10 * time.Millisecond) {
 			if time.Now().After(end) {
 				t.Error("the Pod watch failure was never recorded")
@@ -275,5 +273,24 @@ func assertDiscoveryTimeout(t *testing.T, err error, took time.Duration) {
 	}
 	if took >= 1500*time.Millisecond {
 		t.Fatalf("Load returned after %v, want < 1.5s", took)
+	}
+}
+
+// TestLoadRequestedNotLoaded requests a version the cache does not watch:
+// Load must fail naming it, not succeed without the input.
+func TestLoadRequestedNotLoaded(t *testing.T) {
+	env := testenv.New(t, testenv.Options{Fixtures: []string{healthy}})
+	beta := schema.GroupVersionResource{Group: "gateway.networking.k8s.io", Version: "v1beta1", Resource: "httproutes"}
+	r, err := runLoad(t, env, 10*time.Second, load.Needs{Requested: []schema.GroupVersionResource{httpRoutesGVR, beta}})
+
+	if err == nil || r != nil {
+		t.Fatalf("Load = %v, %v; want an error and no result", r, err)
+	}
+	if !strings.Contains(err.Error(), "httproutes.v1beta1.gateway.networking.k8s.io") {
+		t.Fatalf("error %q does not name the missing version", err)
+	}
+	var te *load.TimeoutError
+	if errors.As(err, &te) {
+		t.Fatalf("err = %v, want a non-timeout error", err)
 	}
 }

@@ -1,0 +1,231 @@
+# Per-parent status cases, loaded with healthy.yaml (an unscoped install).
+# mixed/mixed: a accepted, b no entry, c stale (observedGeneration 0), d only
+# another controller (its class "other" is not defined here).
+# mixed/dup: parent a written twice, once with and once without a namespace.
+# mixed/listeners: listeners a (accepted) and b (rejected) of mixed/gw.
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: a
+  namespace: mixed
+spec:
+  gatewayClassName: kgateway
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 8080
+      hostname: http.example.com
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: b
+  namespace: mixed
+spec:
+  gatewayClassName: kgateway
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 8080
+      hostname: http.example.com
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: c
+  namespace: mixed
+spec:
+  gatewayClassName: kgateway
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 8080
+      hostname: http.example.com
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: d
+  namespace: mixed
+spec:
+  gatewayClassName: other
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 8080
+      hostname: http.example.com
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: gw
+  namespace: mixed
+spec:
+  gatewayClassName: kgateway
+  listeners:
+    - name: a
+      protocol: HTTP
+      port: 8080
+      hostname: a.example.com
+    - name: b
+      protocol: HTTP
+      port: 8080
+      hostname: b.example.com
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mixed
+  namespace: mixed
+spec:
+  parentRefs:
+    - name: a
+    - name: b
+    - name: c
+    - name: d
+status:
+  parents:
+    - parentRef:
+        group: gateway.networking.k8s.io
+        kind: Gateway
+        name: a
+        namespace: mixed
+      controllerName: kgateway.dev/kgateway
+      conditions:
+        - type: Accepted
+          status: "True"
+          reason: Accepted
+          message: ""
+          observedGeneration: 1
+          lastTransitionTime: "2026-01-01T00:00:00Z"
+        - type: ResolvedRefs
+          status: "True"
+          reason: ResolvedRefs
+          message: ""
+          observedGeneration: 1
+          lastTransitionTime: "2026-01-01T00:00:00Z"
+    - parentRef:
+        group: gateway.networking.k8s.io
+        kind: Gateway
+        name: c
+        namespace: mixed
+      controllerName: kgateway.dev/kgateway
+      conditions:
+        - type: Accepted
+          status: "True"
+          reason: Accepted
+          message: ""
+          observedGeneration: 0
+          lastTransitionTime: "2026-01-01T00:00:00Z"
+        - type: ResolvedRefs
+          status: "True"
+          reason: ResolvedRefs
+          message: ""
+          observedGeneration: 0
+          lastTransitionTime: "2026-01-01T00:00:00Z"
+    - parentRef:
+        group: gateway.networking.k8s.io
+        kind: Gateway
+        name: d
+        namespace: mixed
+      controllerName: example.com/other
+      conditions:
+        - type: Accepted
+          status: "True"
+          reason: Accepted
+          message: ""
+          observedGeneration: 1
+          lastTransitionTime: "2026-01-01T00:00:00Z"
+        - type: ResolvedRefs
+          status: "True"
+          reason: ResolvedRefs
+          message: ""
+          observedGeneration: 1
+          lastTransitionTime: "2026-01-01T00:00:00Z"
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: dup
+  namespace: mixed
+spec:
+  parentRefs:
+    - name: a
+    - name: a
+      namespace: mixed
+status:
+  parents:
+    - parentRef:
+        group: gateway.networking.k8s.io
+        kind: Gateway
+        name: a
+        namespace: mixed
+      controllerName: kgateway.dev/kgateway
+      conditions:
+        - type: Accepted
+          status: "True"
+          reason: Accepted
+          message: ""
+          observedGeneration: 1
+          lastTransitionTime: "2026-01-01T00:00:00Z"
+        - type: ResolvedRefs
+          status: "True"
+          reason: ResolvedRefs
+          message: ""
+          observedGeneration: 1
+          lastTransitionTime: "2026-01-01T00:00:00Z"
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: listeners
+  namespace: mixed
+spec:
+  parentRefs:
+    - name: gw
+      sectionName: a
+    - name: gw
+      sectionName: b
+status:
+  parents:
+    - parentRef:
+        group: gateway.networking.k8s.io
+        kind: Gateway
+        name: gw
+        namespace: mixed
+        sectionName: a
+      controllerName: kgateway.dev/kgateway
+      conditions:
+        - type: Accepted
+          status: "True"
+          reason: Accepted
+          message: ""
+          observedGeneration: 1
+          lastTransitionTime: "2026-01-01T00:00:00Z"
+        - type: ResolvedRefs
+          status: "True"
+          reason: ResolvedRefs
+          message: ""
+          observedGeneration: 1
+          lastTransitionTime: "2026-01-01T00:00:00Z"
+    - parentRef:
+        group: gateway.networking.k8s.io
+        kind: Gateway
+        name: gw
+        namespace: mixed
+        sectionName: b
+      controllerName: kgateway.dev/kgateway
+      conditions:
+        - type: Accepted
+          status: "False"
+          reason: NotAllowedByListeners
+          message: ""
+          observedGeneration: 1
+          lastTransitionTime: "2026-01-01T00:00:00Z"
+        - type: ResolvedRefs
+          status: "True"
+          reason: ResolvedRefs
+          message: ""
+          observedGeneration: 1
+          lastTransitionTime: "2026-01-01T00:00:00Z"

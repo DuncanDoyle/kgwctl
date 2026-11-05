@@ -1,0 +1,5 @@
+NAMESPACE   NAME       HOSTNAMES   PARENTS                ACCEPTED           RESOLVED           AGE   BACKENDS   DELEGATION
+default     child-a    *           HTTPRoute/parent       True               True               10d   example    child of parent
+default     declared   *           HTTPRoute/example      0/1 (1 declared)   0/1 (1 declared)   10d   example    <none>
+default     example    *           kgateway-system/http   True               True               10d   example    <none>
+default     parent     *           kgateway-system/http   True               True               10d   <none>     1 child

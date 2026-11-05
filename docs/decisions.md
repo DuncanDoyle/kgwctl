@@ -67,3 +67,17 @@ Append-only. Newest at the bottom. Supersede, don't edit.
 **Decision:** Don't file the proposal. The draft (`docs/phases/phase-1/maintainer-proposal.md`) stays as a reference for when the project goes public.
 **Alternatives:** File now — rejected by the owner.
 **Consequences:** P-005 is deferred in the program file. Phase 1 has no proposal step; the question returns at Phase 7 (upstream move) at the latest.
+
+## D-012 — `get` details settled during sub-phase 1.2 (2026-11-05, phase 1) — our call, owner may override
+**Context:** Implementing `get` raised cases design §3.1 and §6.2 left open or worded loosely. Each was ruled during implementation (SDD ledger R15–R28) and checked by task reviews and the Codex sub-phase review.
+**Decision:**
+- INSTALL shows in table and wide output, on every attributed kind, whenever more than one install is detected. It lists every owning install, or `unknown` when ownership inputs are not ok.
+- ROUTES is the library's linked-route count for the Gateway plus ` (n not accepted)`; `-` marks an object no install indexes.
+- The policy ANCESTORS denominator counts each distinct ancestorRef once, even when two controllers write it.
+- For a parent with only foreign status entries, the owning install's index state (`unwatched`, `declared`) wins over `other`.
+- A condition with no `observedGeneration` and status Unknown renders `Unknown (<Reason>)`, not `<stale>`.
+- `get <kind> <name>` bypasses the hiding rule. With several kinds and a name, a kind without the object fails the command: exit 1, empty stdout.
+- `--install` naming no detected install is exit 1 when ownership inputs are ok; otherwise a warning, and nothing is hidden.
+- Overlapping kind arguments (`ls,xlistenersets`) list each object once; the alias table wins.
+**Alternatives:** kubectl-style partial output for multi-kind named lookups — rejected: stdout stays empty on every error (§8).
+**Consequences:** Design §3.1 and §6.2 updated to match. `describe` (1.3) reuses the same cells.

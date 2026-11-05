@@ -1,0 +1,2 @@
+NAMESPACE   NAME      HOSTNAMES   PARENTS                ACCEPTED   RESOLVED   AGE
+default     example   *           kgateway-system/http   True       True       10d
