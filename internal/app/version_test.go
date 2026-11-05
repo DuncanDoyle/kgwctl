@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/DuncanDoyle/kgateway-ui/pkg/extension"
+	"github.com/DuncanDoyle/kgateway-ui/pkg/install"
 
 	"github.com/DuncanDoyle/kgwctl/internal/app"
 	"github.com/DuncanDoyle/kgwctl/internal/testenv"
@@ -65,6 +66,7 @@ func golden(t *testing.T, name, got string) {
 
 func TestVersion(t *testing.T) {
 	proxySel := testenv.ProxyPodSelector(extension.New())
+	ctrlSel := install.UpstreamDetector{}.ControllerPodSelector().String()
 	cases := []struct {
 		name     string
 		fixtures []string
@@ -96,6 +98,9 @@ func TestVersion(t *testing.T) {
 		{name: "gateways-denied", fixtures: []string{healthyFixture, skewFixture}, rules: func(p *testenv.Proxy) {
 			p.Rule(testenv.Match{Kind: testenv.KindAcquire, Resource: "gateways.gateway.networking.k8s.io"}, testenv.Action{Status: http.StatusForbidden})
 		}, warn: "Warning: gateways.gateway.networking.k8s.io: denied"},
+		{name: "controller-pods-denied", fixtures: []string{healthyFixture, skewFixture}, rules: func(p *testenv.Proxy) {
+			p.Rule(testenv.Match{Kind: testenv.KindAcquire, Resource: "pods", LabelSelector: ctrlSel}, testenv.Action{Status: http.StatusForbidden})
+		}, warn: "Warning: pods: denied"},
 		{name: "client-only", args: []string{"--client"}, noRequests: true},
 	}
 	for _, tc := range cases {
@@ -160,8 +165,9 @@ func TestVersionHangingClusterTimesOut(t *testing.T) {
 	if r.took > 2500*time.Millisecond {
 		t.Errorf("took %v, want about 1s", r.took)
 	}
-	if !strings.Contains(r.stderr, "discovery") && !strings.Contains(r.stderr, "loading") {
-		t.Errorf("stderr = %q, want the stage named", r.stderr)
+	// Discovery is the stalled stage, so the error names it.
+	if r.stderr != "Error: timed out during discovery\n" {
+		t.Errorf("stderr = %q, want the discovery timeout", r.stderr)
 	}
 	if r.stdout != "" {
 		t.Errorf("stdout = %q, want empty", r.stdout)

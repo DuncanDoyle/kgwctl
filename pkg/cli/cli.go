@@ -54,8 +54,8 @@ func NewRootCommand(opts ...Option) *cobra.Command {
 	return app.NewRoot(app.Config{Name: o.name, Registry: o.registry, Commands: o.commands, Build: o.build})
 }
 
-// Execute runs root and returns the process exit code: 0, or 1 after an
-// "Error: <msg>" line on stderr.
+// Execute runs root and returns the exit code: 0, or 1 after "Error: <msg>" on stderr.
+// It silences klog for the whole process and does not restore it.
 func Execute(root *cobra.Command) int { return app.Execute(root) }
 
 // logIgnored logs each registry capability the CLI does not use: the

@@ -33,10 +33,14 @@ type VersionView struct {
 type InstallVersion struct {
 	ID      string `json:"id"`
 	Display string `json:"display"`
-	// Controller is the install's version as the detector read it; "" when unknown.
+	// Controller is the install's version without "v"; "" when unknown.
 	Controller string `json:"controller"`
-	Replicas   int    `json:"replicas"`
-	Ready      int    `json:"ready"`
+	// Replicas is the controller Deployment's desired count; nil when there is none.
+	Replicas *int `json:"replicas"`
+	// Ready counts Ready controller Pods; nil when ReadyUnknown is set.
+	Ready *int `json:"ready"`
+	// ReadyUnknown says why Ready is not known, as "pods: denied".
+	ReadyUnknown string `json:"readyUnknown,omitempty"`
 	// Proxies is null when ProxiesUnknown is set, else one entry per Gateway and version.
 	Proxies []ProxyVersion `json:"proxies"`
 	// ProxiesUnknown names the ownership inputs that are not ok, as "gateways: denied".
@@ -49,7 +53,8 @@ type ProxyVersion struct {
 	Gateway string `json:"gateway"`
 	// Version is the proxy image tag without "v"; "" when unknown.
 	Version string `json:"version,omitempty"`
-	Pods    int    `json:"pods,omitempty"`
+	// Pods is set, possibly to 0, for every observed entry; nil when Unknown is set.
+	Pods *int `json:"pods,omitempty"`
 	// DiffersFromController marks a version other than the controller's.
 	DiffersFromController bool `json:"differsFromController,omitempty"`
 	// Unknown says why the Gateway's proxies were not read, as "proxy pods: denied".
@@ -91,7 +96,7 @@ func Version(b BuildInfo, r *load.Result) VersionView {
 	ownersDown := unavailable(r, owners)
 	proxyPods, watched := r.Inputs[cache.ProxyPodsGVR]
 	for _, im := range r.Model.Installs {
-		v.Installs = append(v.Installs, installVersion(im, ownersDown, proxyPods, watched))
+		v.Installs = append(v.Installs, installVersion(im, r.Inputs[cache.PodsGVR], ownersDown, proxyPods, watched))
 	}
 	if len(v.Installs) == 0 {
 		v.InstallsUnknown = unavailable(r, detect)
@@ -100,17 +105,29 @@ func Version(b BuildInfo, r *load.Result) VersionView {
 	return v
 }
 
-func installVersion(im engine.InstallModel, ownersDown string, proxyPods load.Input, watched bool) InstallVersion {
-	iv := InstallVersion{ID: im.Resolved.ID(), Display: im.Resolved.Display(), Controller: im.Resolved.Version}
+// installVersion builds im's entry; pods is the controller Pod input.
+func installVersion(im engine.InstallModel, pods load.Input, ownersDown string, proxyPods load.Input, watched bool) InstallVersion {
+	iv := InstallVersion{ID: im.Resolved.ID(), Display: im.Resolved.Display(), Controller: trimV(im.Resolved.Version)}
 	proc := im.Process
 	if proc != nil {
 		if d := proc.Controller.Desired; d != nil {
-			iv.Replicas = int(*d)
+			iv.Replicas = new(int(*d))
 		}
-		for _, p := range proc.Controller.Processes {
-			if p.Ready != nil && *p.Ready {
-				iv.Ready++
+		// Not observed means the Pod input is down or there is no Deployment: never 0 ready.
+		if proc.Controller.Observed {
+			n := 0
+			for _, p := range proc.Controller.Processes {
+				if p.Ready != nil && *p.Ready {
+					n++
+				}
 			}
+			iv.Ready = &n
+		}
+	}
+	if iv.Ready == nil {
+		iv.ReadyUnknown = "no controller Deployment"
+		if pods.State != load.StateOK && pods.State != "" {
+			iv.ReadyUnknown = label(pods)
 		}
 	}
 	if ownersDown != "" {
@@ -155,7 +172,7 @@ func proxyVersions(gw string, set process.Set, controller string) []ProxyVersion
 		return []ProxyVersion{{Gateway: gw, Unknown: reason}}
 	}
 	if len(set.Processes) == 0 {
-		return []ProxyVersion{{Gateway: gw}}
+		return []ProxyVersion{{Gateway: gw, Pods: new(0)}}
 	}
 	count := map[string]int{}
 	for _, p := range set.Processes {
@@ -163,7 +180,7 @@ func proxyVersions(gw string, set process.Set, controller string) []ProxyVersion
 	}
 	var out []ProxyVersion
 	for _, ver := range slices.Sorted(maps.Keys(count)) {
-		out = append(out, ProxyVersion{Gateway: gw, Version: ver, Pods: count[ver],
+		out = append(out, ProxyVersion{Gateway: gw, Version: ver, Pods: new(count[ver]),
 			DiffersFromController: ver != "" && controller != "" && trimV(ver) != trimV(controller)})
 	}
 	return out

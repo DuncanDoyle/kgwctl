@@ -51,7 +51,7 @@ func client(c view.BuildInfo) string {
 
 func writeInstall(b *strings.Builder, in view.InstallVersion) {
 	fmt.Fprintf(b, "Install: %s\n", in.Display)
-	fmt.Fprintf(b, "  Controller: %s (%d/%d replicas)\n", version(in.Controller), in.Ready, in.Replicas)
+	fmt.Fprintf(b, "  Controller: %s%s\n", version(in.Controller), replicas(in))
 	switch {
 	case in.ProxiesUnknown != "":
 		fmt.Fprintf(b, "  Proxies: unknown (%s)\n", in.ProxiesUnknown)
@@ -67,17 +67,30 @@ func writeInstall(b *strings.Builder, in view.InstallVersion) {
 			fmt.Fprintf(tw, "    %s\tunknown (%s)\n", p.Gateway, p.Unknown)
 			continue
 		}
-		if p.Pods == 0 {
+		if p.Pods == nil || *p.Pods == 0 {
 			fmt.Fprintf(tw, "    %s\tno pods\n", p.Gateway)
 			continue
 		}
-		line := fmt.Sprintf("    %s\t%s\t%s", p.Gateway, version(p.Version), pods(p.Pods))
+		line := fmt.Sprintf("    %s\t%s\t%s", p.Gateway, version(p.Version), pods(*p.Pods))
 		if p.DiffersFromController {
 			line += "\tdiffers from controller"
 		}
 		fmt.Fprintln(tw, line)
 	}
 	_ = tw.Flush() // writes to a strings.Builder, which never fails
+}
+
+// replicas is " (1/2 replicas)", or what is known of the two counts.
+func replicas(in view.InstallVersion) string {
+	switch {
+	case in.Replicas != nil && in.Ready != nil:
+		return fmt.Sprintf(" (%d/%d replicas)", *in.Ready, *in.Replicas)
+	case in.Replicas != nil:
+		return fmt.Sprintf(" (%d desired, ready unknown (%s))", *in.Replicas, in.ReadyUnknown)
+	case in.Ready != nil:
+		return fmt.Sprintf(" (%d ready, desired unknown)", *in.Ready)
+	}
+	return " (replicas unknown (" + in.ReadyUnknown + "))"
 }
 
 func crds(c view.CRDVersion) string {

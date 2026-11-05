@@ -1,0 +1,5 @@
+Client:  kgwctl v0.1.0 (a1b2c3d, go1.26.0)
+Install: kgateway-system/kgateway
+  Controller: v2.5.0 (1 desired, ready unknown (pods: denied))
+  Proxies: unknown (pods: denied)
+Gateway API CRDs: v1.7.0 (standard)
