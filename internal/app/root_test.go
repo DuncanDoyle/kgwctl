@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DuncanDoyle/kgateway-ui/pkg/extension"
 	"github.com/spf13/cobra"
@@ -24,7 +25,10 @@ func loadCmd() *cobra.Command {
 		Use:  "load",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			f := app.FlagsFrom(cmd)
+			f, err := app.FlagsFrom(cmd)
+			if err != nil {
+				return err
+			}
 			cfg, _, err := f.RESTConfig()
 			if err != nil {
 				return err
@@ -108,8 +112,9 @@ func TestFlagsParse(t *testing.T) {
 	// A fresh command per root: a command keeps the flag values it parsed.
 	probe := func() *cobra.Command {
 		return &cobra.Command{Use: "probe", RunE: func(cmd *cobra.Command, _ []string) error {
-			got = app.FlagsFrom(cmd)
-			return nil
+			var err error
+			got, err = app.FlagsFrom(cmd)
+			return err
 		}}
 	}
 	root := app.NewRoot(app.Config{Commands: []*cobra.Command{probe()}})
@@ -148,5 +153,50 @@ func TestExecuteUnknownFlagIsError(t *testing.T) {
 	}
 	if !strings.HasPrefix(errb.String(), "Error: ") || strings.Contains(errb.String(), "Usage:") || out.Len() != 0 {
 		t.Errorf("stderr = %q, stdout = %q", errb.String(), out.String())
+	}
+}
+
+func TestRequestTimeoutZeroMeansNoDeadline(t *testing.T) {
+	f := app.Flags{}
+	ctx, cancel := f.Context(t.Context())
+	defer cancel()
+	if _, ok := ctx.Deadline(); ok || ctx.Err() != nil {
+		t.Errorf("timeout 0: deadline set or ctx done (%v)", ctx.Err())
+	}
+	cancel()
+	if ctx.Err() == nil {
+		t.Error("cancel did not cancel the child context")
+	}
+	if t.Context().Err() != nil {
+		t.Error("cancel reached the parent")
+	}
+	f.RequestTimeout = time.Hour
+	ctx2, cancel2 := f.Context(t.Context())
+	defer cancel2()
+	if _, ok := ctx2.Deadline(); !ok {
+		t.Error("positive timeout set no deadline")
+	}
+}
+
+func TestNegativeRequestTimeoutIsUsageError(t *testing.T) {
+	var out, errb bytes.Buffer
+	ran := false
+	cmd := &cobra.Command{Use: "probe", RunE: func(c *cobra.Command, _ []string) error {
+		_, err := app.FlagsFrom(c)
+		ran = true
+		return err
+	}}
+	root := app.NewRoot(app.Config{Commands: []*cobra.Command{cmd}, Out: &out, Err: &errb})
+	if code := run(root, "--request-timeout=-1s", "probe"); code != 1 || !ran {
+		t.Errorf("exit = %d, ran = %v, want 1", code, ran)
+	}
+	if !strings.Contains(errb.String(), "Error: invalid --request-timeout") || out.Len() != 0 {
+		t.Errorf("stderr = %q, stdout = %q", errb.String(), out.String())
+	}
+}
+
+func TestFlagsFromUnregisteredIsError(t *testing.T) {
+	if _, err := app.FlagsFrom(&cobra.Command{Use: "bare"}); err == nil {
+		t.Error("FlagsFrom on a command without the global flags returned no error")
 	}
 }

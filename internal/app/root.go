@@ -3,6 +3,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -71,17 +72,39 @@ func (f *Flags) Bind(fs *pflag.FlagSet) {
 }
 
 // FlagsFrom reads the global flags as parsed for cmd or one of its parents.
-func FlagsFrom(cmd *cobra.Command) *Flags {
+// It fails if they are not registered (cmd is outside NewRoot) or if
+// --request-timeout is negative.
+func FlagsFrom(cmd *cobra.Command) (*Flags, error) {
 	fs := cmd.Flags()
 	f := &Flags{}
-	f.Kubeconfig, _ = fs.GetString(flagKubeconfig)
-	f.ContextName, _ = fs.GetString(flagContext)
-	f.Namespace, _ = fs.GetString(flagNamespace)
-	f.AllNamespaces, _ = fs.GetBool(flagAllNamespaces)
-	f.RequestTimeout, _ = fs.GetDuration(flagRequestTimeout)
-	f.Install, _ = fs.GetString(flagInstall)
-	f.AllControllers, _ = fs.GetBool(flagAllControllers)
-	return f
+	var errs []error
+	get := func(err error) {
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+	var err error
+	f.Kubeconfig, err = fs.GetString(flagKubeconfig)
+	get(err)
+	f.ContextName, err = fs.GetString(flagContext)
+	get(err)
+	f.Namespace, err = fs.GetString(flagNamespace)
+	get(err)
+	f.AllNamespaces, err = fs.GetBool(flagAllNamespaces)
+	get(err)
+	f.RequestTimeout, err = fs.GetDuration(flagRequestTimeout)
+	get(err)
+	f.Install, err = fs.GetString(flagInstall)
+	get(err)
+	f.AllControllers, err = fs.GetBool(flagAllControllers)
+	get(err)
+	if err := errors.Join(errs...); err != nil {
+		return nil, fmt.Errorf("global flags not registered on %q: %w", cmd.Name(), err)
+	}
+	if f.RequestTimeout < 0 {
+		return nil, fmt.Errorf("invalid --%s %v: must not be negative", flagRequestTimeout, f.RequestTimeout)
+	}
+	return f, nil
 }
 
 // RESTConfig loads the kubeconfig with the standard clientcmd rules and
@@ -109,8 +132,12 @@ func (f *Flags) RESTConfig() (*rest.Config, string, error) {
 	return cfg, ns, nil
 }
 
-// Context returns parent bounded by --request-timeout (design §4.4).
+// Context returns parent bounded by --request-timeout (design §4.4); 0 means
+// no deadline.
 func (f *Flags) Context(parent context.Context) (context.Context, context.CancelFunc) {
+	if f.RequestTimeout <= 0 {
+		return context.WithCancel(parent)
+	}
 	return context.WithTimeout(parent, f.RequestTimeout)
 }
 
