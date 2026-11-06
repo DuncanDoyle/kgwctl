@@ -191,3 +191,44 @@ func TestDescribeOwnershipDown(t *testing.T) {
 		}
 	}
 }
+
+// TestUnknownNeverObservedNotStale: get, describe relations and describe
+// conditions apply one stale rule to an Unknown parent condition (D-012).
+func TestUnknownNeverObservedNotStale(t *testing.T) {
+	env := newEnv(t, testenv.Options{Fixtures: []string{healthyFixture, "../testenv/testdata/unknown-parent.yaml"}})
+	r := runCmd(t, env, "get", "hr", "pending", "-n", "pending")
+	if r.code != 0 || strings.Contains(r.stdout, "stale") {
+		t.Errorf("get: exit %d, stdout %q; want no stale parent", r.code, r.stdout)
+	}
+	r = runCmd(t, env, "describe", "hr", "pending", "-n", "pending", "-o", "json")
+	if r.code != 0 {
+		t.Fatalf("describe: exit %d, stderr %q", r.code, r.stderr)
+	}
+	var v struct {
+		Item struct {
+			Conditions []struct {
+				Scope      string
+				Conditions []struct {
+					Type, Status, Reason string
+					Stale                bool
+				}
+			}
+			Relations struct {
+				Parents []struct{ State, Reason string }
+			}
+		}
+	}
+	if err := json.Unmarshal([]byte(r.stdout), &v); err != nil {
+		t.Fatal(err)
+	}
+	if ps := v.Item.Relations.Parents; len(ps) != 1 || ps[0].State == "stale" || ps[0].Reason != "Pending" {
+		t.Errorf("relations.parents = %+v, want one non-stale parent with reason Pending", ps)
+	}
+	for _, b := range v.Item.Conditions {
+		for _, c := range b.Conditions {
+			if b.Scope == "parent" && c.Type == "Accepted" && (c.Stale || c.Status != "Unknown" || c.Reason != "Pending") {
+				t.Errorf("parent Accepted condition = %+v, want Unknown (Pending), not stale", c)
+			}
+		}
+	}
+}

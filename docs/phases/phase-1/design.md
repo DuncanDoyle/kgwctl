@@ -105,7 +105,7 @@ INSTALL is added to every attributed kind's table, in both formats, when more th
 | Denominator (routes) | the route's `spec.parentRefs` (`objects.RouteParentRefs`), deduplicated on the full defaulted parentRef, including `sectionName` and `port`. Two listeners of one Gateway are two parents. `describe` notes exact duplicates. |
 | Denominator (policies) | the distinct ancestorRefs in `status.ancestors` (`objects.PolicyAncestors`); with none, the cell is `<no status>` |
 | Status entries of one parent | the `status.parents` entries whose full parentRef matches it (`objects.RouteParents`), as the library matches at `explore/rows.go:283-285` |
-| State: `accepted` / `rejected` / `stale` | an entry from one of our controllers (§6.2) whose condition is True / False (with its reason) / stale (`objects.IsStale`). With entries from several of ours, the one from the install owning the parent wins; failing that, the worst. |
+| State: `accepted` / `rejected` / `stale` | an entry from one of our controllers (§6.2) whose condition is True / False (with its reason) / stale (`objects.IsStale`, except Unknown with no `observedGeneration`, D-012). With entries from several of ours, the one from the install owning the parent wins; failing that, the worst. |
 | State: `other` | entries only from other controllers |
 | State: `unwatched` / `declared` | no entry from ours, and the owning install's `explore` index places the route in that state (`Attachment` unwatched or declared); this wins over `other` (D-012) |
 | State: `no status` | anything else |
