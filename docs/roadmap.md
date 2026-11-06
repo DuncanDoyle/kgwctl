@@ -9,7 +9,7 @@ A command-line tool for operators to inspect and troubleshoot kgateway installat
 ## Phases
 
 ### Phase 1 — Foundation and resource inspection
-**Status:** In progress — design approved 2026-11-05; 1.1 (foundation, `version`) and 1.2 (`get`) complete 2026-11-05; 1.3 (`describe`) and 1.4 (live check, scale, docs) complete 2026-11-06
+**Status:** Complete 2026-11-06 — `docs/phases/phase-1/phase-1-complete.md`
 **Docs:** `docs/phases/phase-1/`
 **Waits on:** none — E2 delivered in kgateway-ui v0.3.0
 
@@ -20,7 +20,7 @@ A command-line tool for operators to inspect and troubleshoot kgateway installat
 ### Phase 2 — `check`
 **Status:** Not started
 **Docs:** `docs/phases/phase-2/`
-**Waits on:** program edge E8 (kgateway-ui health checks callable one-shot)
+**Waits on:** none — E8 delivered in kgateway-ui v0.3.0
 
 One-shot install and config health, for CI gates after install or upgrade and as the first step in support triage.
 - xDS rejections are built and tested first: "Accepted, but Envoy rejected it" is the costliest support theme (D-010).
