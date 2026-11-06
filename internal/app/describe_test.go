@@ -44,6 +44,8 @@ func TestDescribe(t *testing.T) {
 			want: []string{"Declared references (not resolved):", "Gateway/kgateway-system/missing"}},
 		{name: "delegation-child", fixtures: []string{healthyFixture, delegationFixture}, args: []string{"describe", "hr", "child-a", "-n", "default"},
 			want: []string{"Delegation parents:", "HTTPRoute/parent"}},
+		{name: "delegation-parent", fixtures: []string{healthyFixture, delegationFixture}, args: []string{"describe", "hr", "parent", "-n", "default"},
+			want: []string{"delegate (name) child-a", "Delegation children:  HTTPRoute/child-a", "Backends:             <none>"}},
 		{name: "policy-ancestors", fixtures: base, args: []string{"describe", "tp", "route-policy", "-n", "default"},
 			want: []string{"ancestor Gateway/kgateway-system/http", "Ancestors (from status):"}},
 		{name: "policy-none", fixtures: []string{healthyFixture, orphansFixture}, args: []string{"describe", "tp", "no-ancestors", "-n", "default"},

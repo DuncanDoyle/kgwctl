@@ -40,7 +40,6 @@ item:
         namespace: kgateway-system
       reason: Accepted
       state: accepted
-    resolved: false
     unknown: 'pods: denied'
   spec:
     rules:

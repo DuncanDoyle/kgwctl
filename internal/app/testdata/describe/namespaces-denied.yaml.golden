@@ -44,7 +44,6 @@ item:
     namespace: kgateway-system
     observedGeneration: 1
   relations:
-    resolved: false
     unknown: 'namespaces: denied'
   spec:
     class: kgateway

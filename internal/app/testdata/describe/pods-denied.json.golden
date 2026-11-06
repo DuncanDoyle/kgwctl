@@ -64,7 +64,6 @@
       }
     ],
     "relations": {
-      "resolved": false,
       "unknown": "pods: denied",
       "parents": [
         {

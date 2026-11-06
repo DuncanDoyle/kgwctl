@@ -1,0 +1,25 @@
+Name:                 parent
+Namespace:            default
+Kind:                 HTTPRoute.gateway.networking.k8s.io
+Install:              kgateway-system/kgateway
+Age:                  10d
+Generation:           1
+Observed generation:  <none>
+Spec:
+  Hostnames:  *
+  Rules:
+    rule 0:
+      Matches:   PathPrefix /
+      Filters:   <none>
+      Backends:  delegate (name) child-a
+Conditions:
+  parent Gateway/kgateway-system/http (kgateway.dev/kgateway):
+    TYPE          STATUS  REASON        MESSAGE  LAST TRANSITION       OBSERVED GEN
+    Accepted      True    Accepted      -        2026-01-01T00:00:00Z  1
+    ResolvedRefs  True    ResolvedRefs  -        2026-01-01T00:00:00Z  1
+Relations:
+  Parents:
+    Gateway/kgateway-system/http  accepted  kgateway.dev/kgateway
+  Delegation parents:   <none>
+  Delegation children:  HTTPRoute/child-a
+  Backends:             <none>

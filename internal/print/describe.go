@@ -162,7 +162,7 @@ func backendRef(br view.BackendRefSpec, ns string) string {
 		}
 		return fmt.Sprintf("delegate (%s) %s", d.Mode, target)
 	}
-	s := view.RefName(br.Ref, ns, "Service")
+	s := view.RefName(*br.Ref, ns, "Service")
 	if br.Port != 0 {
 		s += ":" + strconv.Itoa(int(br.Port))
 	}

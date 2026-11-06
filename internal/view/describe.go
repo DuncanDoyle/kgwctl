@@ -114,8 +114,9 @@ type FilterSpec struct {
 }
 
 // BackendRefSpec is one rule backendRef: a backend, or a delegation to child routes.
+// The embedded Ref is nil for a delegation, so its fields are absent from JSON.
 type BackendRefSpec struct {
-	objects.Ref
+	*objects.Ref
 	Port int32 `json:"port,omitempty"`
 	// Weight is nil when the spec leaves it to the default.
 	Weight     *int32          `json:"weight,omitempty"`
@@ -375,7 +376,7 @@ func ruleSpec(rl objects.Rule) RuleSpec {
 		s.Filters = append(s.Filters, fs)
 	}
 	for _, b := range rl.BackendRefs {
-		bs := BackendRefSpec{Ref: b.Ref, Port: b.Port}
+		bs := BackendRefSpec{Ref: &b.Ref, Port: b.Port}
 		if !b.WeightDefaulted {
 			bs.Weight = new(b.Weight)
 		}
@@ -450,8 +451,7 @@ func relations(r *load.Result, f *Filter, k kinds.Served, u *unstructured.Unstru
 	default:
 		return rel, nil
 	}
-	resolved := false
-	rel.Resolved = &resolved
+	// Resolved stays nil while index inputs are down: nobody knows (Ruling R33).
 	if f.indexDown != "" {
 		rel.Unknown = f.indexDown
 		// Parent states come from status; RouteParents degrades the index-only states (Ruling R33).
@@ -460,6 +460,8 @@ func relations(r *load.Result, f *Filter, k kinds.Served, u *unstructured.Unstru
 		}
 		return rel, indexIncomplete(r)
 	}
+	resolved := false
+	rel.Resolved = &resolved
 	ref := objects.RefOf(u)
 	var ix *explore.Index
 	if i, ok := f.installOfRef(ref); ok {
