@@ -55,7 +55,7 @@ func NewRootCommand(opts ...Option) *cobra.Command {
 }
 
 // Execute runs root and returns the exit code: 0, or 1 after "Error: <msg>" on stderr.
-// Its first call silences klog for the whole process; nothing restores it.
+// It replaces klog's logger process-wide, so call it before the host starts any client-go goroutine.
 func Execute(root *cobra.Command) int { return app.Execute(root) }
 
 // logIgnored logs each registry capability the CLI does not use: the

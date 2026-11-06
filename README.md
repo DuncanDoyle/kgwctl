@@ -30,7 +30,7 @@ Gateway API CRDs: v1.7.0 (standard)
 
 ### `get <kind>[,<kind>...] [name]`
 
-Lists objects with their status. Use `all` for every served kind, and `-o wide|json|yaml` for the other formats. Kinds take plural, singular, `kind.group` or short names: `gwc`, `gw`, `hr`, `gr`, `tr`, `tlsr`, `btlsp`, `tp`, `lp`, `bcp`, `gwp`, `be`, and `ls` for ListenerSets.
+Lists objects with their status. Use `all` for every served kind except GatewayClass (`gwc,all` lists both), and `-o wide|json|yaml` for the other formats. Kinds take plural, singular, `kind.group` or short names: `gwc`, `gw`, `hr`, `gr`, `tr`, `tlsr`, `btlsp`, `tp`, `lp`, `bcp`, `gwp`, `be`, and `ls` for ListenerSets.
 
 ```console
 $ kgwctl get httproutes -A
@@ -80,7 +80,7 @@ Relations:
 
 ## Output and exit codes
 
-Exit code `0` means success and `1` means any error, in every output format. Data goes to stdout; errors and warnings go to stderr. With `-o json|yaml`, `describe` and `version` print a versioned envelope, documented in [`docs/output.md`](docs/output.md). Tables and text layouts are not a stable interface.
+Exit code `0` means success and `1` means any error, in every output format. Data goes to stdout; errors and warnings go to stderr. With `-o json|yaml`, `describe` and `version` print a versioned envelope, documented in [`docs/output.md`](docs/output.md); `get` prints a plain Kubernetes `List`. Tables and text layouts are not a stable interface.
 
 ## Permissions
 
@@ -94,7 +94,7 @@ Known limits:
 - `watch` is required as well as `list` ([DuncanDoyle/kgateway-ui#18](https://github.com/DuncanDoyle/kgateway-ui/issues/18)).
 - Objects are listed cluster-wide, so users limited to some namespaces get errors ([DuncanDoyle/kgateway-ui#19](https://github.com/DuncanDoyle/kgateway-ui/issues/19)).
 
-When an input can't be read, kgwctl names it on stderr (and in the JSON `incomplete` list) instead of printing partial data.
+When the kind `get` or `describe` was asked for can't be read, the command fails: exit `1`, empty stdout. Any other input that can't be read is named in a stderr warning, and the output marks what depends on it as unknown. With `-o json|yaml`, `describe` and `version` also list those inputs in the `incomplete` field.
 
 ## Extending
 
