@@ -239,6 +239,15 @@ func (f *Filter) pinErr() error {
 	return nil
 }
 
+// PinIgnored is the warning for an --install that selects no detected install
+// while ownership is unknown, so nothing is narrowed; "" otherwise.
+func (f *Filter) PinIgnored() string {
+	if f.pin == nil || f.known {
+		return ""
+	}
+	return f.pin.Error() + "; showing every install"
+}
+
 // InstallOf returns the install owning obj: the --install one when it is an
 // owner, else the first. It is false when no install owns obj or ownership is unknown.
 func (f *Filter) InstallOf(obj *unstructured.Unstructured) (install.Resolved, bool) {

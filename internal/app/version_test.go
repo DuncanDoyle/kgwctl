@@ -86,6 +86,7 @@ func TestVersion(t *testing.T) {
 	}{
 		{name: "skew", fixtures: []string{healthyFixture, skewFixture}},
 		{name: "two-installs", fixtures: []string{twoInstalls}},
+		{name: "two-installs-pinned", fixtures: []string{twoInstalls}, args: []string{"--install", "kgw-a/kgateway"}},
 		{name: "proxy-pods-delayed", fixtures: []string{healthyFixture, skewFixture}, rules: func(p *testenv.Proxy) {
 			p.Rule(testenv.Match{Kind: testenv.KindAcquire, Resource: "pods", LabelSelector: proxySel}, testenv.Action{Delay: 300 * time.Millisecond})
 		}},
@@ -178,6 +179,30 @@ func TestVersionHangingClusterTimesOut(t *testing.T) {
 	}
 	if r.stdout != "" {
 		t.Errorf("stdout = %q, want empty", r.stdout)
+	}
+}
+
+// TestVersionInstallNotDetected: --install follows R16 as in get and describe.
+func TestVersionInstallNotDetected(t *testing.T) {
+	env := newEnv(t, testenv.Options{Fixtures: []string{twoInstalls}})
+	for _, format := range []string{"text", "json", "yaml"} {
+		r := runCmd(t, env, "version", "-o", format, "--install", "kgw-x/nope")
+		if r.code != 1 || r.stdout != "" || r.stderr != "Error: install \"kgw-x/nope\" not detected\n" {
+			t.Errorf("%s: exit %d, stdout %q, stderr %q; want 1 and the get error", format, r.code, r.stdout, r.stderr)
+		}
+	}
+	// With ownership unreadable, it warns and reports every install.
+	ctrlSel := install.UpstreamDetector{}.ControllerPodSelector().String()
+	env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindAcquire, Resource: "pods", LabelSelector: ctrlSel}, testenv.Action{Status: http.StatusForbidden})
+	r := runCmd(t, env, "version", "--install", "kgw-x/nope")
+	if r.code != 0 {
+		t.Fatalf("exit %d, stderr %q", r.code, r.stderr)
+	}
+	if strings.Count(r.stdout, "Install: ") != 2 {
+		t.Errorf("stdout = %q, want both installs", r.stdout)
+	}
+	if !strings.Contains(r.stderr, `Warning: install "kgw-x/nope" not detected`) {
+		t.Errorf("stderr = %q, want the --install warning", r.stderr)
 	}
 }
 
