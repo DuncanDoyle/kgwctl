@@ -11,7 +11,7 @@ Spec:
     rule 0:
       Matches:   PathPrefix /
       Filters:   <none>
-      Backends:  Service/example:8080 weight 1
+      Backends:  example:8080 weight 1
 Conditions:
   parent HTTPRoute/parent (kgateway.dev/kgateway):
     TYPE          STATUS  REASON        MESSAGE  LAST TRANSITION       OBSERVED GEN
@@ -22,4 +22,4 @@ Relations:
     HTTPRoute/parent  accepted  kgateway.dev/kgateway
   Delegation parents:   HTTPRoute/parent
   Delegation children:  <none>
-  Backends:             Service/example
+  Backends:             example

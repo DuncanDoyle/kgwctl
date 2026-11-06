@@ -8,17 +8,28 @@
       "namespace": "default",
       "name": "to-missing",
       "creationTimestamp": "X",
-      "age": "10d",
       "generation": 1
     },
     "spec": {
       "rules": [
         {
           "matches": [
-            "PathPrefix /"
+            {
+              "path": {
+                "type": "PathPrefix",
+                "value": "/"
+              }
+            }
           ],
           "backendRefs": [
-            "Service/example:8080 weight 1"
+            {
+              "group": "",
+              "kind": "Service",
+              "namespace": "default",
+              "name": "example",
+              "port": 8080,
+              "weight": 1
+            }
           ]
         }
       ]
@@ -28,10 +39,20 @@
       "resolved": false,
       "declared": {
         "parentRefs": [
-          "Gateway/kgateway-system/missing"
+          {
+            "group": "gateway.networking.k8s.io",
+            "kind": "Gateway",
+            "namespace": "kgateway-system",
+            "name": "missing"
+          }
         ],
         "backendRefs": [
-          "Service/example"
+          {
+            "group": "",
+            "kind": "Service",
+            "namespace": "default",
+            "name": "example"
+          }
         ]
       }
     }

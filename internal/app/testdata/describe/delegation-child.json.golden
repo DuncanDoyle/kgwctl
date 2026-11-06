@@ -9,24 +9,41 @@
       "name": "child-a",
       "install": "kgateway-system/kgateway",
       "creationTimestamp": "X",
-      "age": "10d",
       "generation": 1
     },
     "spec": {
       "rules": [
         {
           "matches": [
-            "PathPrefix /"
+            {
+              "path": {
+                "type": "PathPrefix",
+                "value": "/"
+              }
+            }
           ],
           "backendRefs": [
-            "Service/example:8080 weight 1"
+            {
+              "group": "",
+              "kind": "Service",
+              "namespace": "default",
+              "name": "example",
+              "port": 8080,
+              "weight": 1
+            }
           ]
         }
       ]
     },
     "conditions": [
       {
-        "scope": "parent HTTPRoute/parent",
+        "scope": "parent",
+        "ref": {
+          "group": "gateway.networking.k8s.io",
+          "kind": "HTTPRoute",
+          "namespace": "default",
+          "name": "parent"
+        },
         "controller": "kgateway.dev/kgateway",
         "conditions": [
           {
@@ -62,10 +79,20 @@
         }
       ],
       "delegationParents": [
-        "HTTPRoute/parent"
+        {
+          "group": "gateway.networking.k8s.io",
+          "kind": "HTTPRoute",
+          "namespace": "default",
+          "name": "parent"
+        }
       ],
       "backends": [
-        "Service/example"
+        {
+          "group": "",
+          "kind": "Service",
+          "namespace": "default",
+          "name": "example"
+        }
       ]
     }
   }

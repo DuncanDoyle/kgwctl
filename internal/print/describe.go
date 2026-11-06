@@ -7,18 +7,22 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/DuncanDoyle/kgateway-ui/pkg/objects"
+
 	"github.com/DuncanDoyle/kgwctl/internal/view"
 )
 
 // DescribeText writes v in kubectl-describe style, with the sections of design §3.2.
+// Refs print relative to the object's namespace.
 func DescribeText(w io.Writer, v *view.DescribeView) error {
 	b := &strings.Builder{}
+	ns := v.Object.Namespace
 	writeObject(b, v.Object)
 	if v.Spec != nil {
-		writeSpec(b, v.Spec)
+		writeSpec(b, v.Spec, ns)
 	}
-	writeConditions(b, v.Conditions)
-	writeRelations(b, v.Relations, v.Object.Namespace)
+	writeConditions(b, v.Conditions, ns)
+	writeRelations(b, v.Relations, ns)
 	if len(v.Incomplete) > 0 {
 		b.WriteString("Incomplete inputs:\n")
 		for _, in := range v.Incomplete {
@@ -60,7 +64,7 @@ func writeObject(b *strings.Builder, o view.ObjectInfo) {
 	table(b, "", rows)
 }
 
-func writeSpec(b *strings.Builder, s *view.SpecSummary) {
+func writeSpec(b *strings.Builder, s *view.SpecSummary, ns string) {
 	b.WriteString("Spec:\n")
 	var rows [][]string
 	if s.Class != "" {
@@ -69,22 +73,18 @@ func writeSpec(b *strings.Builder, s *view.SpecSummary) {
 	if len(s.Addresses) > 0 {
 		rows = append(rows, []string{"Addresses:", strings.Join(s.Addresses, ", ")})
 	}
-	if s.Parent != "" {
-		rows = append(rows, []string{"Parent:", s.Parent})
+	if s.Parent != nil {
+		rows = append(rows, []string{"Parent:", view.ParentName(*s.Parent, ns)})
 	}
 	if s.Listeners == nil {
-		hosts := "*"
-		if len(s.Hostnames) > 0 {
-			hosts = strings.Join(s.Hostnames, ", ")
-		}
-		rows = append(rows, []string{"Hostnames:", hosts})
+		rows = append(rows, []string{"Hostnames:", or(strings.Join(s.Hostnames, ", "), "*")})
 	}
 	table(b, "  ", rows)
 	if s.Listeners != nil {
 		b.WriteString("  Listeners:\n")
 		ls := [][]string{{"NAME", "PORT", "PROTOCOL", "HOSTNAME", "TLS", "ALLOWED ROUTES"}}
 		for _, l := range s.Listeners {
-			ls = append(ls, []string{l.Name, strconv.Itoa(int(l.Port)), l.Protocol, or(l.Hostname, "*"), or(l.TLS, "-"), l.AllowedRoutes})
+			ls = append(ls, []string{l.Name, strconv.Itoa(int(l.Port)), l.Protocol, or(l.Hostname, "*"), or(l.TLSMode, "-"), allowedRoutes(l.AllowedRoutes)})
 		}
 		table(b, "    ", ls)
 		return
@@ -99,12 +99,80 @@ func writeSpec(b *strings.Builder, s *view.SpecSummary) {
 		if r.Name != "" {
 			name += " (" + r.Name + ")"
 		}
+		var ms, fs, bs []string
+		for _, m := range r.Matches {
+			ms = append(ms, match(m))
+		}
+		for _, f := range r.Filters {
+			s := f.Type
+			if f.Target != nil {
+				s += " " + view.RefName(*f.Target, ns, "")
+			}
+			fs = append(fs, s)
+		}
+		for _, br := range r.BackendRefs {
+			bs = append(bs, backendRef(br, ns))
+		}
 		fmt.Fprintf(b, "    %s:\n", name)
-		table(b, "      ", [][]string{{"Matches:", list(r.Matches)}, {"Filters:", list(r.Filters)}, {"Backends:", list(r.BackendRefs)}})
+		table(b, "      ", [][]string{{"Matches:", list(ms)}, {"Filters:", list(fs)}, {"Backends:", list(bs)}})
 	}
 }
 
-func writeConditions(b *strings.Builder, bs []view.ConditionBlock) {
+func allowedRoutes(a view.AllowedRoutes) string {
+	s := "from " + a.From
+	if a.Selector != "" {
+		s += " " + a.Selector
+	}
+	var ks []string
+	for _, k := range a.Kinds {
+		ks = append(ks, k.Kind)
+	}
+	if len(ks) > 0 {
+		s += ", kinds " + strings.Join(ks, ",")
+	}
+	return s
+}
+
+func match(m view.MatchSpec) string {
+	var parts []string
+	if m.Path != nil {
+		parts = append(parts, m.Path.Type+" "+m.Path.Value)
+	}
+	for _, h := range m.Headers {
+		parts = append(parts, fmt.Sprintf("header %s %s %s", h.Name, h.Type, h.Value))
+	}
+	for _, q := range m.QueryParams {
+		parts = append(parts, fmt.Sprintf("query %s %s %s", q.Name, q.Type, q.Value))
+	}
+	if m.Method != "" {
+		parts = append(parts, "method "+m.Method)
+	}
+	return strings.Join(parts, " ")
+}
+
+// backendRef is a backend as get prints it, with port and weight, or a delegation.
+func backendRef(br view.BackendRefSpec, ns string) string {
+	if d := br.Delegation; d != nil {
+		target := d.Name
+		if d.Mode == "label" {
+			target = "label " + d.Label
+		}
+		if d.Namespace != ns {
+			target = d.Namespace + "/" + target
+		}
+		return fmt.Sprintf("delegate (%s) %s", d.Mode, target)
+	}
+	s := view.RefName(br.Ref, ns, "Service")
+	if br.Port != 0 {
+		s += ":" + strconv.Itoa(int(br.Port))
+	}
+	if br.Weight != nil {
+		s += fmt.Sprintf(" weight %d", *br.Weight)
+	}
+	return s
+}
+
+func writeConditions(b *strings.Builder, bs []view.ConditionBlock, ns string) {
 	if len(bs) == 0 {
 		b.WriteString("Conditions:  <none>\n")
 		return
@@ -112,6 +180,12 @@ func writeConditions(b *strings.Builder, bs []view.ConditionBlock) {
 	b.WriteString("Conditions:\n")
 	for _, c := range bs {
 		head := c.Scope
+		switch {
+		case c.Listener != "":
+			head += " " + c.Listener
+		case c.Ref != nil:
+			head += " " + view.ParentName(*c.Ref, ns)
+		}
 		if c.Controller != "" {
 			head += " (" + c.Controller + ")"
 		}
@@ -142,51 +216,127 @@ func writeRelations(b *strings.Builder, r view.Relations, ns string) {
 		return
 	case r.Unknown != "":
 		fmt.Fprintf(b, "Relations unknown (%s)\n", r.Unknown)
-	case !r.Resolved:
-	case r.Of == view.RelationsGateway:
-		b.WriteString("Relations:\n")
-		if len(r.AttachedRoutes) == 0 {
-			b.WriteString("  Attached routes:  <none>\n")
-		} else {
-			b.WriteString("  Attached routes:\n")
-			var rows [][]string
-			for _, l := range r.AttachedRoutes {
-				rows = append(rows, []string{"listener " + l.Listener + ":", strings.Join(l.Routes, ", ")})
-			}
-			table(b, "    ", rows)
-		}
-		if len(r.NotAccepted) == 0 {
-			b.WriteString("  Not accepted:  <none>\n")
-		} else {
-			b.WriteString("  Not accepted:\n")
-			rows := [][]string{{"ROUTE", "LISTENER", "ATTACHMENT", "CONDITION"}}
-			for _, n := range r.NotAccepted {
-				rows = append(rows, []string{n.Route, or(n.Listener, "-"), n.Attachment, or(n.Condition, "-")})
-			}
-			table(b, "    ", rows)
-		}
-		table(b, "  ", [][]string{{"ListenerSets:", list(r.ListenerSets)}})
-		return
-	default:
-		b.WriteString("Relations:\n")
-		writeParents(b, "Parents:", r.Parents, ns)
-		rows := [][]string{}
-		if len(r.DuplicateParents) > 0 {
-			rows = append(rows, []string{"Duplicate parentRefs:", list(r.DuplicateParents)})
-		}
-		rows = append(rows, []string{"Delegation parents:", list(r.DelegationParents)}, []string{"Delegation children:", list(r.DelegationChildren)},
-			[]string{"Backends:", list(r.Backends)})
-		table(b, "  ", rows)
-		return
-	}
-	if d := r.Declared; d != nil {
-		b.WriteString("Declared references (not resolved):\n")
-		rows := [][]string{{"Parent refs:", list(d.ParentRefs)}}
+		// Parent states come from status, so they still print (Ruling R33).
 		if r.Of == view.RelationsRoute {
-			rows = append(rows, []string{"Backend refs:", list(d.BackendRefs)})
+			writeParents(b, "Parents:", r.Parents, ns)
 		}
-		table(b, "  ", rows)
+		return
+	case r.Resolved == nil || !*r.Resolved:
+		writeDeclared(b, r, ns)
+		return
 	}
+	b.WriteString("Relations:\n")
+	if r.Of == view.RelationsRoute {
+		writeParents(b, "Parents:", r.Parents, ns)
+		var rows [][]string
+		if len(r.DuplicateParents) > 0 {
+			var ds []string
+			for _, p := range r.DuplicateParents {
+				ds = append(ds, view.ParentName(p, ns))
+			}
+			rows = append(rows, []string{"Duplicate parentRefs:", list(ds)})
+		}
+		var ps, cs []string
+		for _, p := range r.DelegationParents {
+			ps = append(ps, view.RefName(p, ns, ""))
+		}
+		for _, c := range r.DelegationChildren {
+			s := view.RefName(c.Ref, ns, "")
+			if c.Declared {
+				s += " (declared)"
+			}
+			cs = append(cs, s)
+		}
+		rows = append(rows, []string{"Delegation parents:", list(ps)}, []string{"Delegation children:", list(cs)},
+			[]string{"Backends:", list(backends(r.Backends, ns))})
+		table(b, "  ", rows)
+		return
+	}
+	if len(r.AttachedRoutes) == 0 {
+		b.WriteString("  Attached routes:  <none>\n")
+	} else {
+		b.WriteString("  Attached routes:\n")
+		rows := [][]string{{"LISTENER", "ROUTES"}}
+		for _, l := range r.AttachedRoutes {
+			var rs []string
+			for _, rt := range l.Routes {
+				rs = append(rs, view.RefName(rt, ns, ""))
+			}
+			rows = append(rows, []string{listener(l.Parent, l.Listener, r.Of, ns), strings.Join(rs, ", ")})
+		}
+		table(b, "    ", rows)
+	}
+	writeLinks(b, "Not accepted:", r.NotAccepted, ns)
+	writeLinks(b, "Pending:", r.Pending, ns)
+	if r.Of == view.RelationsGateway {
+		var ls []string
+		for _, l := range r.ListenerSets {
+			ls = append(ls, view.RefName(l, ns, ""))
+		}
+		table(b, "  ", [][]string{{"ListenerSets:", list(ls)}})
+	}
+}
+
+// listener names a listener; one of a ListenerSet under a Gateway carries the ListenerSet, an unknown one is "-".
+func listener(parent objects.Ref, name, of, ns string) string {
+	name = or(name, "-")
+	if of == view.RelationsGateway && parent.Kind != "Gateway" {
+		return view.RefName(parent, ns, "") + ":" + name
+	}
+	return name
+}
+
+// writeLinks writes route links that are not accepted, with the deciding condition or pending reason.
+func writeLinks(b *strings.Builder, heading string, ls []view.RouteLink, ns string) {
+	if len(ls) == 0 {
+		fmt.Fprintf(b, "  %s  <none>\n", heading)
+		return
+	}
+	fmt.Fprintf(b, "  %s\n", heading)
+	rows := [][]string{{"ROUTE", "PARENT REF", "ATTACHMENT", "CONDITION"}}
+	for _, l := range ls {
+		cond := l.Pending
+		if c := l.Condition; c != nil {
+			cond = fmt.Sprintf("%s=%s (%s)", c.Type, c.Status, c.Reason)
+			if c.Message != "" {
+				cond += ": " + c.Message
+			}
+		}
+		rows = append(rows, []string{view.RefName(l.Route, ns, ""), view.ParentName(l.ParentRef, ns), l.Attachment, or(cond, "-")})
+	}
+	table(b, "    ", rows)
+}
+
+// writeDeclared writes an unresolved object's declared references; a Gateway declares none.
+func writeDeclared(b *strings.Builder, r view.Relations, ns string) {
+	d := r.Declared
+	if d == nil {
+		b.WriteString("Relations:  not resolved (no owning install)\n")
+		return
+	}
+	b.WriteString("Declared references (not resolved):\n")
+	var ps []string
+	for _, p := range d.ParentRefs {
+		ps = append(ps, view.ParentName(p, ns))
+	}
+	rows := [][]string{{"Parent refs:", list(ps)}}
+	if r.Of == view.RelationsRoute {
+		rows = append(rows, []string{"Backend refs:", list(backends(d.BackendRefs, ns))})
+	}
+	table(b, "  ", rows)
+}
+
+// backends formats backends as get does, Service kind left out.
+func backends(bs []view.Backend, ns string) []string {
+	var out []string
+	for _, x := range bs {
+		s := view.RefName(x.Ref, ns, "Service")
+		if x.Mirror {
+			s += " (mirror)"
+		}
+		out = append(out, s)
+	}
+	return out
 }
 
 // writeParents writes parent or ancestor states under heading, as get counts them.

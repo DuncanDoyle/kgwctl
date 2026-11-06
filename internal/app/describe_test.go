@@ -31,11 +31,13 @@ func TestDescribe(t *testing.T) {
 		rules    func(p *testenv.Proxy)
 		// warn is a substring stderr must contain; "" means stderr must be empty.
 		warn string
-		// want are substrings the text output must contain.
-		want []string
+		// want are substrings the text output must contain; absent must not appear.
+		want, absent []string
 	}{
 		{name: "gateway", fixtures: base, args: []string{"describe", "gw", "http", "-n", "kgateway-system"},
-			want: []string{"Listeners:", "Attached routes:", "HTTPRoute/default/example", "Not accepted:", "NotAllowedByListeners", "ListenerSets:"}},
+			want: []string{"Listeners:", "Attached routes:", "HTTPRoute/default/example", "Not accepted:", "NotAllowedByListeners", "Pending:", "ListenerSets:"}},
+		{name: "listenerset", fixtures: base, args: []string{"describe", "ls", "extra", "-n", "kgateway-system"},
+			want: []string{"Parent:", "Pending:", "HTTPRoute/via-extra"}, absent: []string{"ListenerSets:"}},
 		{name: "route-mixed-parents", fixtures: []string{healthyFixture, mixedFixture}, args: []string{"describe", "hr", "mixed", "-n", "mixed"},
 			want: []string{"example.com/other", "no status", "stale", "other"}},
 		{name: "route-missing-parent", fixtures: []string{healthyFixture, orphansFixture}, args: []string{"describe", "hr", "to-missing", "-n", "default"},
@@ -49,9 +51,9 @@ func TestDescribe(t *testing.T) {
 		{name: "gateway-parameters", fixtures: []string{healthyFixture, orphansFixture}, args: []string{"describe", "gwp", "params", "-n", "default"},
 			want: []string{"Conditions:"}},
 		{name: "other-controller-all", fixtures: []string{healthyFixture, otherFixture}, args: []string{"describe", "gw", "edge", "-n", "other", "--all-controllers"},
-			want: []string{"Declared references (not resolved):"}},
+			want: []string{"Relations:  not resolved (no owning install)"}},
 		{name: "pods-denied", fixtures: base, args: []string{"describe", "hr", "example", "-n", "default"}, rules: deny("pods"),
-			warn: "Warning: pods: denied", want: []string{"Incomplete inputs:", "pods: denied"}},
+			warn: "Warning: pods: denied", want: []string{"Incomplete inputs:", "pods: denied", "Parents:"}},
 		{name: "namespaces-denied", fixtures: base, args: []string{"describe", "gw", "http", "-n", "kgateway-system"}, rules: deny("namespaces"),
 			warn: "Warning: namespaces: denied", want: []string{"Relations unknown (namespaces: denied)", "Conditions:"}},
 	}
@@ -79,6 +81,11 @@ func TestDescribe(t *testing.T) {
 						for _, w := range tc.want {
 							if !strings.Contains(r.stdout, w) {
 								t.Errorf("text output lacks %q:\n%s", w, r.stdout)
+							}
+						}
+						for _, a := range tc.absent {
+							if strings.Contains(r.stdout, a) {
+								t.Errorf("text output has %q:\n%s", a, r.stdout)
 							}
 						}
 					case "json":

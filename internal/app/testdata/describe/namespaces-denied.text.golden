@@ -21,7 +21,5 @@ Conditions:
     Programmed    True    Programmed    -        2026-01-01T00:00:00Z  1
     ResolvedRefs  True    ResolvedRefs  -        2026-01-01T00:00:00Z  1
 Relations unknown (namespaces: denied)
-Declared references (not resolved):
-  Parent refs:  <none>
 Incomplete inputs:
   namespaces: denied: namespaces is forbidden (injected by testenv)

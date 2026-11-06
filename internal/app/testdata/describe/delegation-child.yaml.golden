@@ -12,9 +12,13 @@ item:
       status: "True"
       type: ResolvedRefs
     controller: kgateway.dev/kgateway
-    scope: parent HTTPRoute/parent
+    ref:
+      group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: parent
+      namespace: default
+    scope: parent
   object:
-    age: 10d
     creationTimestamp: "X"
     generation: 1
     group: gateway.networking.k8s.io
@@ -24,9 +28,15 @@ item:
     namespace: default
   relations:
     backends:
-    - Service/example
+    - group: ""
+      kind: Service
+      name: example
+      namespace: default
     delegationParents:
-    - HTTPRoute/parent
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: parent
+      namespace: default
     parents:
     - controller: kgateway.dev/kgateway
       parent:
@@ -40,8 +50,15 @@ item:
   spec:
     rules:
     - backendRefs:
-      - Service/example:8080 weight 1
+      - group: ""
+        kind: Service
+        name: example
+        namespace: default
+        port: 8080
+        weight: 1
       matches:
-      - PathPrefix /
+      - path:
+          type: PathPrefix
+          value: /
 kind: Describe
 schemaVersion: kgwctl.kgateway.dev/v1alpha1

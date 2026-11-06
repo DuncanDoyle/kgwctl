@@ -9,12 +9,17 @@
       "name": "route-policy",
       "install": "kgateway-system/kgateway",
       "creationTimestamp": "X",
-      "age": "10d",
       "generation": 1
     },
     "conditions": [
       {
-        "scope": "ancestor Gateway/kgateway-system/http",
+        "scope": "ancestor",
+        "ref": {
+          "group": "gateway.networking.k8s.io",
+          "kind": "Gateway",
+          "namespace": "kgateway-system",
+          "name": "http"
+        },
         "controller": "kgateway.dev/kgateway",
         "conditions": [
           {
@@ -28,7 +33,6 @@
       }
     ],
     "relations": {
-      "resolved": false,
       "ancestors": [
         {
           "parent": {

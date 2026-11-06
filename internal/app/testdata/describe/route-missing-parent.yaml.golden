@@ -1,7 +1,6 @@
 item:
   conditions: []
   object:
-    age: 10d
     creationTimestamp: "X"
     generation: 1
     group: gateway.networking.k8s.io
@@ -11,15 +10,28 @@ item:
   relations:
     declared:
       backendRefs:
-      - Service/example
+      - group: ""
+        kind: Service
+        name: example
+        namespace: default
       parentRefs:
-      - Gateway/kgateway-system/missing
+      - group: gateway.networking.k8s.io
+        kind: Gateway
+        name: missing
+        namespace: kgateway-system
     resolved: false
   spec:
     rules:
     - backendRefs:
-      - Service/example:8080 weight 1
+      - group: ""
+        kind: Service
+        name: example
+        namespace: default
+        port: 8080
+        weight: 1
       matches:
-      - PathPrefix /
+      - path:
+          type: PathPrefix
+          value: /
 kind: Describe
 schemaVersion: kgwctl.kgateway.dev/v1alpha1

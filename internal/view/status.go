@@ -28,13 +28,18 @@ func ObjectCondition(obj *unstructured.Unstructured, condType string) string {
 	switch {
 	case c == nil:
 		return cellNoStatus
-	// Ruling R25: Unknown never observed is a pending default, not stale status.
-	case objects.IsStale(obj, *c) && (c.Status != metav1.ConditionUnknown || c.ObservedGeneration != 0):
+	case StaleCondition(obj, *c):
 		return cellStale
 	case c.Status == metav1.ConditionTrue, c.Reason == "":
 		return string(c.Status)
 	}
 	return fmt.Sprintf("%s (%s)", c.Status, c.Reason)
+}
+
+// StaleCondition reports whether c of obj renders as stale: behind
+// metadata.generation, except Unknown never observed (Ruling R25).
+func StaleCondition(obj *unstructured.Unstructured, c metav1.Condition) bool {
+	return objects.IsStale(obj, c) && (c.Status != metav1.ConditionUnknown || c.ObservedGeneration != 0)
 }
 
 // ParentState is the state of one route parent or policy ancestor (design §3.1).

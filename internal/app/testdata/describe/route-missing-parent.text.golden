@@ -11,8 +11,8 @@ Spec:
     rule 0:
       Matches:   PathPrefix /
       Filters:   <none>
-      Backends:  Service/example:8080 weight 1
+      Backends:  example:8080 weight 1
 Conditions:  <none>
 Declared references (not resolved):
   Parent refs:   Gateway/kgateway-system/missing
-  Backend refs:  Service/example
+  Backend refs:  example

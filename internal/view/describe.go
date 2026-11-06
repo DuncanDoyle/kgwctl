@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"fmt"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -20,12 +19,13 @@ import (
 )
 
 // DescribeView is one object in full: the output of describe (design §3.2).
+// Its JSON form is structured; refs are absolute (Ruling R32).
 type DescribeView struct {
 	Object ObjectInfo `json:"object"`
 	// Spec is nil for kinds without a typed view.
 	Spec       *SpecSummary     `json:"spec,omitempty"`
 	Conditions []ConditionBlock `json:"conditions"`
-	// Relations is empty for kinds that have none.
+	// Relations is omitted for kinds that have none.
 	Relations Relations `json:"relations,omitzero"`
 	// Incomplete are the inputs the relations depend on that are not ok (design §6.3).
 	Incomplete []load.Input `json:"incomplete,omitempty"`
@@ -42,20 +42,21 @@ type ObjectInfo struct {
 	// InstallUnknown names the ownership inputs that are not ok.
 	InstallUnknown    string `json:"installUnknown,omitempty"`
 	CreationTimestamp string `json:"creationTimestamp"`
-	Age               string `json:"age"`
-	Generation        int64  `json:"generation"`
+	// Age is for text output only.
+	Age        string `json:"-"`
+	Generation int64  `json:"generation"`
 	// ObservedGeneration is status.observedGeneration, else the newest of the object's conditions; 0 when none.
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 }
 
 // SpecSummary is the spec of a Gateway, ListenerSet or HTTPRoute.
 type SpecSummary struct {
-	Class     string         `json:"class,omitempty"`
-	Addresses []string       `json:"addresses,omitempty"`
-	Parent    string         `json:"parent,omitempty"`
-	Hostnames []string       `json:"hostnames,omitempty"`
-	Listeners []ListenerSpec `json:"listeners,omitempty"`
-	Rules     []RuleSpec     `json:"rules,omitempty"`
+	Class     string             `json:"class,omitempty"`
+	Addresses []string           `json:"addresses,omitempty"`
+	Parent    *objects.ParentRef `json:"parent,omitempty"`
+	Hostnames []string           `json:"hostnames,omitempty"`
+	Listeners []ListenerSpec     `json:"listeners,omitempty"`
+	Rules     []RuleSpec         `json:"rules,omitempty"`
 }
 
 // ListenerSpec is one spec listener.
@@ -64,25 +65,88 @@ type ListenerSpec struct {
 	Port     int32  `json:"port,omitempty"`
 	Protocol string `json:"protocol"`
 	Hostname string `json:"hostname,omitempty"`
-	// TLS is the TLS mode; "" without a TLS block.
-	TLS           string `json:"tls,omitempty"`
-	AllowedRoutes string `json:"allowedRoutes"`
+	// TLSMode is "" without a TLS block.
+	TLSMode       string        `json:"tlsMode,omitempty"`
+	AllowedRoutes AllowedRoutes `json:"allowedRoutes"`
+}
+
+// AllowedRoutes is a listener's allowedRoutes, with defaults applied.
+type AllowedRoutes struct {
+	From string `json:"from"`
+	// Selector is the namespace label selector in kubectl's string form.
+	Selector string              `json:"selector,omitempty"`
+	Kinds    []objects.GroupKind `json:"kinds,omitempty"`
 }
 
 // RuleSpec is one HTTPRoute rule.
 type RuleSpec struct {
-	Name        string   `json:"name,omitempty"`
-	Matches     []string `json:"matches,omitempty"`
-	Filters     []string `json:"filters,omitempty"`
-	BackendRefs []string `json:"backendRefs,omitempty"`
+	Name        string           `json:"name,omitempty"`
+	Matches     []MatchSpec      `json:"matches,omitempty"`
+	Filters     []FilterSpec     `json:"filters,omitempty"`
+	BackendRefs []BackendRefSpec `json:"backendRefs,omitempty"`
 }
+
+// MatchSpec is one rule match.
+type MatchSpec struct {
+	Path        *ValueMatch `json:"path,omitempty"`
+	Headers     []KeyMatch  `json:"headers,omitempty"`
+	QueryParams []KeyMatch  `json:"queryParams,omitempty"`
+	Method      string      `json:"method,omitempty"`
+}
+
+// ValueMatch is a path match.
+type ValueMatch struct {
+	Type  string `json:"type"`
+	Value string `json:"value"`
+}
+
+// KeyMatch is a header or query parameter match.
+type KeyMatch struct {
+	Type  string `json:"type"`
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+// FilterSpec is one rule filter; Target is set for ExtensionRef and RequestMirror.
+type FilterSpec struct {
+	Type   string       `json:"type"`
+	Target *objects.Ref `json:"target,omitempty"`
+}
+
+// BackendRefSpec is one rule backendRef: a backend, or a delegation to child routes.
+type BackendRefSpec struct {
+	objects.Ref
+	Port int32 `json:"port,omitempty"`
+	// Weight is nil when the spec leaves it to the default.
+	Weight     *int32          `json:"weight,omitempty"`
+	Delegation *DelegationSpec `json:"delegation,omitempty"`
+}
+
+// DelegationSpec is a delegation backendRef: mode name, wildcard or label.
+type DelegationSpec struct {
+	Mode      string `json:"mode"`
+	Namespace string `json:"namespace"`
+	Name      string `json:"name,omitempty"`
+	Label     string `json:"label,omitempty"`
+}
+
+// Condition block scopes.
+const (
+	ScopeObject   = "object"
+	ScopeListener = "listener"
+	ScopeParent   = "parent"
+	ScopeAncestor = "ancestor"
+)
 
 // ConditionBlock is one status block and the controller that wrote it.
 type ConditionBlock struct {
-	// Scope is "object", "listener <name>", "parent <ref>" or "ancestor <ref>".
-	Scope      string         `json:"scope"`
-	Controller string         `json:"controller,omitempty"`
-	Conditions []ConditionRow `json:"conditions"`
+	// Scope is ScopeObject, ScopeListener, ScopeParent or ScopeAncestor.
+	Scope string `json:"scope"`
+	// Listener names a listener block; Ref is a parent or ancestor block's ref.
+	Listener   string             `json:"listener,omitempty"`
+	Ref        *objects.ParentRef `json:"ref,omitempty"`
+	Controller string             `json:"controller,omitempty"`
+	Conditions []ConditionRow     `json:"conditions"`
 }
 
 // ConditionRow is one condition.
@@ -93,67 +157,96 @@ type ConditionRow struct {
 	Message            string `json:"message,omitempty"`
 	LastTransition     string `json:"lastTransition,omitempty"`
 	ObservedGeneration int64  `json:"observedGeneration"`
-	// Stale follows ObjectCondition: behind metadata.generation, unless Unknown and never observed.
+	// Stale follows StaleCondition.
 	Stale bool `json:"stale,omitempty"`
 }
 
 // Relations are what the object relates to (design §3.2).
 type Relations struct {
-	// Resolved is set when the owning install's explore index has the object.
-	Resolved bool `json:"resolved"`
-	// Unknown names the index inputs that are not ok; the relations are then not resolved.
+	// Resolved is set for Gateways, ListenerSets and routes: whether the owning install's index has the object.
+	Resolved *bool `json:"resolved,omitempty"`
+	// Unknown names the index inputs that are not ok; index-derived relations are then absent.
 	Unknown string `json:"unknown,omitempty"`
 	// Parents are a route's parents with their states, as get counts them.
 	Parents []ParentSummary `json:"parents,omitempty"`
 	// DuplicateParents are spec parentRefs written more than once.
-	DuplicateParents []string `json:"duplicateParents,omitempty"`
-	// AttachedRoutes and NotAccepted are a Gateway's or ListenerSet's routes.
+	DuplicateParents []objects.ParentRef `json:"duplicateParents,omitempty"`
+	// AttachedRoutes, NotAccepted and Pending are a Gateway's or ListenerSet's routes.
 	AttachedRoutes []ListenerRoutes `json:"attachedRoutes,omitempty"`
-	NotAccepted    []RouteRef       `json:"notAccepted,omitempty"`
-	ListenerSets   []string         `json:"listenerSets,omitempty"`
+	// NotAccepted are the links the controller rejected: the set get counts as "not accepted" (Ruling R30).
+	NotAccepted []RouteLink `json:"notAccepted,omitempty"`
+	// Pending are the links without a current status from the install: pending, unwatched or declared.
+	Pending      []RouteLink   `json:"pending,omitempty"`
+	ListenerSets []objects.Ref `json:"listenerSets,omitempty"`
 	// DelegationParents and DelegationChildren are a route's delegation edges.
-	DelegationParents  []string `json:"delegationParents,omitempty"`
-	DelegationChildren []string `json:"delegationChildren,omitempty"`
-	Backends           []string `json:"backends,omitempty"`
+	DelegationParents  []objects.Ref     `json:"delegationParents,omitempty"`
+	DelegationChildren []DelegationChild `json:"delegationChildren,omitempty"`
+	Backends           []Backend         `json:"backends,omitempty"`
 	// Ancestors are a policy's status.ancestors; targets are not resolved (E7).
 	Ancestors []ParentSummary `json:"ancestors,omitempty"`
-	// Declared is set when the relations are not resolved: what the spec names.
+	// Declared is what an unresolved route or ListenerSet's spec names.
 	Declared *DeclaredRefs `json:"declared,omitempty"`
-	// Of says which relations apply: RelationsGateway, RelationsRoute or RelationsPolicy.
+	// Of says which relations apply, for text output.
 	Of string `json:"-"`
+}
+
+// IsZero reports whether r has nothing for JSON, so omitzero drops it.
+func (r Relations) IsZero() bool {
+	return r.Resolved == nil && r.Unknown == "" && len(r.Parents) == 0 && len(r.Ancestors) == 0 && r.Declared == nil
 }
 
 // Relation shapes, by the described object's kind.
 const (
-	RelationsGateway = "gateway"
-	RelationsRoute   = "route"
-	RelationsPolicy  = "policy"
+	RelationsGateway     = "gateway"
+	RelationsListenerSet = "listenerset"
+	RelationsRoute       = "route"
+	RelationsPolicy      = "policy"
 )
 
-// ListenerRoutes are the routes attached to one listener.
+// ListenerRoutes are the routes attached to one listener of Parent.
 type ListenerRoutes struct {
-	// Listener is the listener name, "<ListenerSet>:<name>" through a ListenerSet, or "*" when not known.
-	Listener string   `json:"listener"`
-	Routes   []string `json:"routes"`
+	// Parent is the Gateway or ListenerSet the listener belongs to.
+	Parent objects.Ref `json:"parent"`
+	// Listener is "" when the index does not place the routes on a listener.
+	Listener string        `json:"listener,omitempty"`
+	Routes   []objects.Ref `json:"routes"`
 }
 
-// RouteRef is a route that names the object but is not accepted on it.
-type RouteRef struct {
-	Route      string `json:"route"`
-	Listener   string `json:"listener,omitempty"`
-	Attachment string `json:"attachment"`
-	// Condition is the deciding condition, or why the status is pending.
-	Condition string `json:"condition,omitempty"`
+// RouteLink is one parentRef of a route to the described object that is not accepted.
+type RouteLink struct {
+	Route      objects.Ref       `json:"route"`
+	ParentRef  objects.ParentRef `json:"parentRef"`
+	Attachment string            `json:"attachment"`
+	// Condition is the library's deciding condition; Pending is why the status is not current.
+	Condition *Condition `json:"condition,omitempty"`
+	Pending   string     `json:"pending,omitempty"`
 }
 
-// DeclaredRefs are the references an object's spec makes, not resolved.
+// Condition is a condition's deciding fields.
+type Condition struct {
+	Type    string `json:"type"`
+	Status  string `json:"status"`
+	Reason  string `json:"reason,omitempty"`
+	Message string `json:"message,omitempty"`
+}
+
+// DelegationChild is a child route; Declared marks a candidate with no reported edge.
+type DelegationChild struct {
+	objects.Ref
+	Declared bool `json:"declared,omitempty"`
+}
+
+// Backend is a backend a route sends or mirrors to.
+type Backend struct {
+	objects.Ref
+	Mirror bool `json:"mirror,omitempty"`
+}
+
+// DeclaredRefs are the references a spec makes, not resolved.
 type DeclaredRefs struct {
-	ParentRefs  []string `json:"parentRefs,omitempty"`
-	BackendRefs []string `json:"backendRefs,omitempty"`
+	ParentRefs  []objects.ParentRef `json:"parentRefs,omitempty"`
+	BackendRefs []Backend           `json:"backendRefs,omitempty"`
 }
-
-// listenerUnknown is the listener of an accepted link the index does not place.
-const listenerUnknown = "*"
 
 // Describe returns the view of object name of target t in namespace ns ("" for any), AGE at now.
 // It shows the object even when get would hide it (Ruling R29).
@@ -229,12 +322,12 @@ func specSummary(k kinds.Served, u *unstructured.Unstructured) *SpecSummary {
 		return &SpecSummary{Class: gv.Class, Addresses: gv.SpecAddresses, Listeners: listenerSpecs(gv.Listeners)}
 	case k.Category == kinds.CategoryListenerSet:
 		lv := objects.DecodeListenerSet(u)
-		return &SpecSummary{Parent: refName(lv.Parent.Ref(), u.GetNamespace(), ""), Listeners: listenerSpecs(lv.Listeners)}
+		return &SpecSummary{Parent: &lv.Parent, Listeners: listenerSpecs(lv.Listeners)}
 	case k.Group == objects.GatewayAPIGroup && k.Kind == "HTTPRoute":
 		hv := objects.DecodeHTTPRoute(u)
 		s := &SpecSummary{Hostnames: hv.Hostnames}
 		for _, rl := range hv.Rules {
-			s.Rules = append(s.Rules, ruleSpec(rl, u.GetNamespace()))
+			s.Rules = append(s.Rules, ruleSpec(rl))
 		}
 		return s
 	}
@@ -245,102 +338,73 @@ func listenerSpecs(ls []objects.Listener) []ListenerSpec {
 	out := make([]ListenerSpec, 0, len(ls))
 	for _, l := range ls {
 		s := ListenerSpec{Name: l.Name, Port: l.Port, Protocol: l.Protocol, Hostname: l.Hostname,
-			AllowedRoutes: "from " + l.AllowedRoutes.Namespaces.From}
+			AllowedRoutes: AllowedRoutes{From: l.AllowedRoutes.Namespaces.From, Kinds: l.AllowedRoutes.Kinds}}
 		if sel := l.AllowedRoutes.Namespaces.Selector; sel != nil {
-			s.AllowedRoutes += " " + metav1.FormatLabelSelector(sel)
-		}
-		var gks []string
-		for _, gk := range l.AllowedRoutes.Kinds {
-			gks = append(gks, gk.Kind)
-		}
-		if len(gks) > 0 {
-			s.AllowedRoutes += ", kinds " + strings.Join(gks, ",")
+			s.AllowedRoutes.Selector = metav1.FormatLabelSelector(sel)
 		}
 		if l.TLS != nil {
-			s.TLS = l.TLS.Mode
+			s.TLSMode = l.TLS.Mode
 		}
 		out = append(out, s)
 	}
 	return out
 }
 
-func ruleSpec(rl objects.Rule, ns string) RuleSpec {
+func keyMatches(in []objects.KeyMatch) []KeyMatch {
+	var out []KeyMatch
+	for _, k := range in {
+		out = append(out, KeyMatch{Type: k.Type, Name: k.Name, Value: k.Value})
+	}
+	return out
+}
+
+func ruleSpec(rl objects.Rule) RuleSpec {
 	s := RuleSpec{Name: rl.Name}
 	for _, m := range rl.Matches {
-		var parts []string
+		ms := MatchSpec{Headers: keyMatches(m.Headers), QueryParams: keyMatches(m.QueryParams), Method: m.Method}
 		if m.Path != nil {
-			parts = append(parts, m.Path.Type+" "+m.Path.Value)
+			ms.Path = &ValueMatch{Type: m.Path.Type, Value: m.Path.Value}
 		}
-		for _, h := range m.Headers {
-			parts = append(parts, fmt.Sprintf("header %s %s %s", h.Name, h.Type, h.Value))
-		}
-		for _, q := range m.QueryParams {
-			parts = append(parts, fmt.Sprintf("query %s %s %s", q.Name, q.Type, q.Value))
-		}
-		if m.Method != "" {
-			parts = append(parts, "method "+m.Method)
-		}
-		s.Matches = append(s.Matches, strings.Join(parts, ", "))
+		s.Matches = append(s.Matches, ms)
 	}
 	for _, fl := range rl.Filters {
-		s.Filters = append(s.Filters, filterName(fl, ns))
+		fs := FilterSpec{Type: fl.Type, Target: fl.ExtensionRef}
+		if fl.Mirror != nil {
+			fs.Target = &fl.Mirror.Backend
+		}
+		s.Filters = append(s.Filters, fs)
 	}
 	for _, b := range rl.BackendRefs {
-		s.BackendRefs = append(s.BackendRefs, backendRef(b, ns))
-	}
-	return s
-}
-
-func filterName(fl objects.Filter, ns string) string {
-	switch {
-	case fl.Mirror != nil:
-		return fl.Type + " " + refName(fl.Mirror.Backend, ns, "Service")
-	case fl.ExtensionRef != nil:
-		return fl.Type + " " + refName(*fl.ExtensionRef, ns, "")
-	}
-	return fl.Type
-}
-
-func backendRef(b objects.BackendRef, ns string) string {
-	if d := b.Delegation; d != nil {
-		target := d.Name
-		if d.Mode == objects.DelegationLabel {
-			target = "label " + d.Label
+		bs := BackendRefSpec{Ref: b.Ref, Port: b.Port}
+		if !b.WeightDefaulted {
+			bs.Weight = new(b.Weight)
 		}
-		if d.Namespace != ns {
-			target = d.Namespace + "/" + target
+		if d := b.Delegation; d != nil {
+			bs = BackendRefSpec{Delegation: &DelegationSpec{Mode: string(d.Mode), Namespace: d.Namespace, Name: d.Name, Label: d.Label}}
 		}
-		return fmt.Sprintf("delegate (%s) %s", d.Mode, target)
-	}
-	s := refName(b.Ref, ns, "")
-	if b.Port != 0 {
-		s += ":" + strconv.Itoa(int(b.Port))
-	}
-	if !b.WeightDefaulted {
-		s += fmt.Sprintf(" weight %d", b.Weight)
+		s.BackendRefs = append(s.BackendRefs, bs)
 	}
 	return s
 }
 
 // conditionBlocks returns the object's conditions, then one block per listener, parent or ancestor entry.
 func conditionBlocks(k kinds.Served, u *unstructured.Unstructured) []ConditionBlock {
-	ns := u.GetNamespace()
 	out := []ConditionBlock{}
 	if cs := objects.Conditions(u); len(cs) > 0 || k.Category != kinds.CategoryRoute && k.Category != kinds.CategoryPolicy {
-		out = append(out, ConditionBlock{Scope: "object", Conditions: conditionRows(u, cs)})
+		out = append(out, ConditionBlock{Scope: ScopeObject, Conditions: conditionRows(u, cs)})
 	}
 	switch k.Category {
 	case kinds.CategoryGateway, kinds.CategoryListenerSet:
 		for _, l := range objects.GatewayListeners(u) {
-			out = append(out, ConditionBlock{Scope: "listener " + l.Name, Conditions: conditionRows(u, l.Conditions)})
+			out = append(out, ConditionBlock{Scope: ScopeListener, Listener: l.Name, Conditions: conditionRows(u, l.Conditions)})
 		}
 	case kinds.CategoryRoute:
 		for _, p := range objects.RouteParents(u) {
-			out = append(out, ConditionBlock{Scope: "parent " + ParentName(p.ParentRef, ns), Controller: p.ControllerName, Conditions: conditionRows(u, p.Conditions)})
+			out = append(out, ConditionBlock{Scope: ScopeParent, Ref: &p.ParentRef, Controller: p.ControllerName, Conditions: conditionRows(u, p.Conditions)})
 		}
 	case kinds.CategoryPolicy:
 		for _, a := range objects.PolicyAncestors(u) {
-			out = append(out, ConditionBlock{Scope: "ancestor " + ParentName(a.AncestorRef, ns), Controller: a.ControllerName, Conditions: conditionRows(u, a.Conditions)})
+			out = append(out, ConditionBlock{Scope: ScopeAncestor, Ref: &a.AncestorRef, Controller: a.ControllerName, Conditions: conditionRows(u, a.Conditions)})
 		}
 	}
 	return out
@@ -349,8 +413,8 @@ func conditionBlocks(k kinds.Served, u *unstructured.Unstructured) []ConditionBl
 func conditionRows(u *unstructured.Unstructured, cs []metav1.Condition) []ConditionRow {
 	out := make([]ConditionRow, 0, len(cs))
 	for _, c := range cs {
-		row := ConditionRow{Type: c.Type, Status: string(c.Status), Reason: c.Reason, Message: c.Message, ObservedGeneration: c.ObservedGeneration,
-			Stale: objects.IsStale(u, c) && (c.Status != metav1.ConditionUnknown || c.ObservedGeneration != 0)}
+		row := ConditionRow{Type: c.Type, Status: string(c.Status), Reason: c.Reason, Message: c.Message,
+			ObservedGeneration: c.ObservedGeneration, Stale: StaleCondition(u, c)}
 		if !c.LastTransitionTime.IsZero() {
 			row.LastTransition = c.LastTransitionTime.UTC().Format(time.RFC3339)
 		}
@@ -361,12 +425,12 @@ func conditionRows(u *unstructured.Unstructured, cs []metav1.Condition) []Condit
 
 // ParentName is a parent or ancestor ref as "Kind/[namespace/]name[:section][:port]", seen from ns.
 func ParentName(p objects.ParentRef, ns string) string {
-	s := refName(p.Ref(), ns, "")
+	s := RefName(p.Ref(), ns, "")
 	if p.SectionName != "" {
 		s += ":" + p.SectionName
 	}
 	if p.Port != 0 {
-		s += ":" + strconv.Itoa(int(p.Port))
+		s += fmt.Sprintf(":%d", p.Port)
 	}
 	return s
 }
@@ -377,187 +441,188 @@ func relations(r *load.Result, f *Filter, k kinds.Served, u *unstructured.Unstru
 	switch k.Category {
 	case kinds.CategoryPolicy:
 		return Relations{Of: RelationsPolicy, Ancestors: PolicyAncestors(f, u, "Accepted")}, nil
-	case kinds.CategoryGateway, kinds.CategoryListenerSet:
+	case kinds.CategoryGateway:
 		rel.Of = RelationsGateway
+	case kinds.CategoryListenerSet:
+		rel.Of = RelationsListenerSet
 	case kinds.CategoryRoute:
 		rel.Of = RelationsRoute
 	default:
 		return rel, nil
 	}
+	resolved := false
+	rel.Resolved = &resolved
 	if f.indexDown != "" {
 		rel.Unknown = f.indexDown
-		rel.Declared = declared(k, u)
-		var in []load.Input
-		for _, gvr := range indexInputs(r.Served) {
-			if x, ok := r.Inputs[gvr]; ok && x.State != load.StateOK && !slices.ContainsFunc(in, func(y load.Input) bool { return y.Resource == x.Resource }) {
-				in = append(in, x)
-			}
+		// Parent states come from status; RouteParents degrades the index-only states (Ruling R33).
+		if k.Category == kinds.CategoryRoute {
+			rel.Parents, rel.DuplicateParents = RouteParents(r, f, u, "Accepted"), duplicateParents(u)
 		}
-		slices.SortFunc(in, func(a, b load.Input) int { return cmp.Compare(a.Resource, b.Resource) })
-		return rel, in
+		return rel, indexIncomplete(r)
 	}
 	ref := objects.RefOf(u)
 	var ix *explore.Index
 	if i, ok := f.installOfRef(ref); ok {
 		ix = r.Model.Installs[i].Index
 	}
-	ns := u.GetNamespace()
 	switch {
 	case ix == nil:
 	case k.Category == kinds.CategoryGateway:
 		if id, ok := ix.FindGateway(ref); ok {
 			gw := ix.Gateways[id]
-			rel.Resolved = true
-			rel.AttachedRoutes, rel.NotAccepted = listenerRoutes(ix, gw.Routes, ref, gw.View.Listeners, ns)
+			resolved = true
+			rel.AttachedRoutes, rel.NotAccepted, rel.Pending = listenerRoutes(ix, gw.Routes, ref, gw.View.Listeners)
 			for _, l := range gw.ListenerSets {
-				rel.ListenerSets = append(rel.ListenerSets, refName(ix.ListenerSets[l].Ref, ns, ""))
+				rel.ListenerSets = append(rel.ListenerSets, ix.ListenerSets[l].Ref)
 			}
 		}
 	case k.Category == kinds.CategoryListenerSet:
 		if id, ok := ix.FindListenerSet(ref); ok {
 			ls := ix.ListenerSets[id]
-			rel.Resolved = true
-			rel.AttachedRoutes, rel.NotAccepted = listenerRoutes(ix, ls.Routes, ref, ls.View.Listeners, ns)
+			resolved = true
+			rel.AttachedRoutes, rel.NotAccepted, rel.Pending = listenerRoutes(ix, ls.Routes, ref, ls.View.Listeners)
 		}
 	default:
 		if id, ok := ix.Row(ref); ok {
-			rr := ix.Routes[id]
-			rel.Resolved = true
-			rel.Parents = RouteParents(r, f, u, "Accepted")
-			rel.DuplicateParents = duplicateParents(u)
-			for _, p := range rr.ParentRoutes {
-				rel.DelegationParents = append(rel.DelegationParents, refName(p, ns, ""))
-			}
+			resolved = true
+			rel.Parents, rel.DuplicateParents = RouteParents(r, f, u, "Accepted"), duplicateParents(u)
+			rel.DelegationParents = ix.Routes[id].ParentRoutes
 			for _, c := range ix.ByParentRoute[ref] {
-				rel.DelegationChildren = append(rel.DelegationChildren, refName(ix.Routes[c].Ref, ns, ""))
+				rel.DelegationChildren = append(rel.DelegationChildren, DelegationChild{Ref: ix.Routes[c].Ref})
 			}
 			for _, c := range ix.Declared[ref] {
-				rel.DelegationChildren = append(rel.DelegationChildren, refName(ix.Routes[c].Ref, ns, "")+" (declared)")
+				rel.DelegationChildren = append(rel.DelegationChildren, DelegationChild{Ref: ix.Routes[c].Ref, Declared: true})
 			}
-			rel.Backends = backendNames(k, u)
+			rel.Backends = backendList(k, u)
 		}
 	}
-	if !rel.Resolved {
-		rel.Declared = declared(k, u)
+	if resolved {
+		return rel, nil
+	}
+	// Unresolved: only what the spec declares (design §3.2); a Gateway declares no references.
+	switch k.Category {
+	case kinds.CategoryListenerSet:
+		rel.Declared = &DeclaredRefs{ParentRefs: []objects.ParentRef{objects.ListenerSetParent(u)}}
+	case kinds.CategoryRoute:
+		rel.Declared = &DeclaredRefs{ParentRefs: objects.RouteParentRefs(u), BackendRefs: backendList(k, u)}
 	}
 	return rel, nil
 }
 
-// listenerRoutes groups the links of rows ids to target by listener: accepted ones as attached, the rest as not accepted.
-func listenerRoutes(ix *explore.Index, ids []explore.RowID, target objects.Ref, spec []objects.Listener, ns string) ([]ListenerRoutes, []RouteRef) {
-	attached := map[string][]string{}
-	var notAccepted []RouteRef
+// indexIncomplete lists the index inputs that are not ok, once each by resource.
+func indexIncomplete(r *load.Result) []load.Input {
+	var in []load.Input
+	for _, gvr := range indexInputs(r.Served) {
+		if x, ok := r.Inputs[gvr]; ok && x.State != load.StateOK && !slices.ContainsFunc(in, func(y load.Input) bool { return y.Resource == x.Resource }) {
+			in = append(in, x)
+		}
+	}
+	slices.SortFunc(in, func(a, b load.Input) int { return cmp.Compare(a.Resource, b.Resource) })
+	return in
+}
+
+// listenerKey is one listener of a Gateway or ListenerSet; listener "" is not known.
+type listenerKey struct {
+	parent   objects.Ref
+	listener string
+}
+
+// listenerRoutes sorts the links of rows ids to target: accepted ones by listener,
+// rejected ones as not accepted, the rest as pending (Ruling R30).
+func listenerRoutes(ix *explore.Index, ids []explore.RowID, target objects.Ref, spec []objects.Listener) ([]ListenerRoutes, []RouteLink, []RouteLink) {
+	attached := map[listenerKey][]objects.Ref{}
+	var notAccepted, pending []RouteLink
 	for _, id := range ids {
 		rr := ix.Routes[id]
-		name := refName(rr.Ref, ns, "")
 		for _, l := range rr.Parents {
 			if l.Target != target && (l.Via == nil || *l.Via != target) {
 				continue
 			}
-			ls := linkListeners(ix, id, l, target, ns)
 			if l.Attachment == explore.AttachmentAccepted {
-				for _, li := range ls {
-					if !slices.Contains(attached[li], name) {
-						attached[li] = append(attached[li], name)
+				for _, li := range linkListeners(ix, id, l) {
+					k := listenerKey{l.Target, li}
+					if !slices.Contains(attached[k], rr.Ref) {
+						attached[k] = append(attached[k], rr.Ref)
 					}
 				}
 				continue
 			}
-			rf := RouteRef{Route: name, Listener: strings.Join(ls, ","), Attachment: string(l.Attachment)}
-			switch {
-			case l.Cond != nil:
-				rf.Condition = fmt.Sprintf("%s=%s (%s)", l.Cond.Type, l.Cond.Status, l.Cond.Reason)
-				if l.Cond.Message != "" {
-					rf.Condition += ": " + l.Cond.Message
-				}
-			case l.Pending != "":
-				rf.Condition = l.Pending
+			rl := RouteLink{Route: rr.Ref, ParentRef: l.Ref, Attachment: string(l.Attachment), Pending: l.Pending}
+			if c := l.Cond; c != nil {
+				rl.Condition = &Condition{Type: c.Type, Status: string(c.Status), Reason: c.Reason, Message: c.Message}
 			}
-			notAccepted = append(notAccepted, rf)
+			if l.Attachment == explore.AttachmentNotAccepted {
+				notAccepted = append(notAccepted, rl)
+			} else {
+				pending = append(pending, rl)
+			}
 		}
 	}
-	// Spec listeners first, in spec order, then ListenerSet listeners and unknown ones by name.
-	var order []string
-	for _, l := range spec {
-		if _, ok := attached[l.Name]; ok {
-			order = append(order, l.Name)
+	// The target's own listeners first, in spec order; then by parent and name, unknown last.
+	rank := func(k listenerKey) int {
+		if k.parent == target {
+			if i := slices.IndexFunc(spec, func(l objects.Listener) bool { return l.Name == k.listener }); i >= 0 {
+				return i
+			}
 		}
+		return len(spec)
 	}
-	var rest []string
-	for li := range attached {
-		if !slices.Contains(order, li) {
-			rest = append(rest, li)
-		}
+	keys := make([]listenerKey, 0, len(attached))
+	for k := range attached {
+		keys = append(keys, k)
 	}
-	slices.Sort(rest)
+	slices.SortFunc(keys, func(a, b listenerKey) int {
+		return cmp.Or(cmp.Compare(rank(a), rank(b)), a.parent.Compare(b.parent), cmp.Compare(boolInt(a.listener == ""), boolInt(b.listener == "")), cmp.Compare(a.listener, b.listener))
+	})
 	var out []ListenerRoutes
-	for _, li := range append(order, rest...) {
-		out = append(out, ListenerRoutes{Listener: li, Routes: attached[li]})
+	for _, k := range keys {
+		out = append(out, ListenerRoutes{Parent: k.parent, Listener: k.listener, Routes: attached[k]})
 	}
-	return out, notAccepted
+	return out, notAccepted, pending
 }
 
-// linkListeners names the listeners of target that link l lands on: its sectionName, else the index's computed hits.
-func linkListeners(ix *explore.Index, id explore.RowID, l explore.ParentLink, target objects.Ref, ns string) []string {
-	prefix := ""
-	if l.Target != target {
-		prefix = refName(l.Target, ns, "") + ":"
+func boolInt(b bool) int {
+	if b {
+		return 1
 	}
+	return 0
+}
+
+// linkListeners names the listeners link l lands on: its sectionName, else the index's computed hits, else "".
+func linkListeners(ix *explore.Index, id explore.RowID, l explore.ParentLink) []string {
 	if l.Ref.SectionName != "" {
-		return []string{prefix + l.Ref.SectionName}
+		return []string{l.Ref.SectionName}
 	}
 	var out []string
 	if fs := ix.Facts(id, l); fs != nil {
 		for _, h := range fs.Listeners {
-			out = append(out, prefix+h.Listener)
+			out = append(out, h.Listener)
 		}
 	}
 	if len(out) == 0 {
-		return []string{prefix + listenerUnknown}
+		return []string{""}
 	}
 	return out
 }
 
 // duplicateParents lists the spec parentRefs written more than once after defaults (design §3.1).
-func duplicateParents(u *unstructured.Unstructured) []string {
+func duplicateParents(u *unstructured.Unstructured) []objects.ParentRef {
 	ps := objects.RouteParentRefs(u)
-	var out []string
+	var out []objects.ParentRef
 	for i, p := range ps {
-		if slices.Contains(ps[:i], p) {
-			if s := ParentName(p, u.GetNamespace()); !slices.Contains(out, s) {
-				out = append(out, s)
-			}
+		if slices.Contains(ps[:i], p) && !slices.Contains(out, p) {
+			out = append(out, p)
 		}
 	}
 	return out
 }
 
-// declared is what u's spec names: parentRefs and backendRefs, unresolved.
-func declared(k kinds.Served, u *unstructured.Unstructured) *DeclaredRefs {
-	d := &DeclaredRefs{}
-	ns := u.GetNamespace()
-	switch k.Category {
-	case kinds.CategoryListenerSet:
-		d.ParentRefs = []string{ParentName(objects.ListenerSetParent(u), ns)}
-	case kinds.CategoryRoute:
-		for _, p := range objects.RouteParentRefs(u) {
-			d.ParentRefs = append(d.ParentRefs, ParentName(p, ns))
-		}
-		d.BackendRefs = backendNames(k, u)
-	}
-	return d
-}
-
-// backendNames lists route u's distinct backends, mirrors marked.
-func backendNames(k kinds.Served, u *unstructured.Unstructured) []string {
-	var out []string
+// backendList lists route u's distinct backends; delegation refs are not backends.
+func backendList(k kinds.Served, u *unstructured.Unstructured) []Backend {
+	var out []Backend
 	for _, t := range backendTargets(k, u) {
-		s := refName(t.Ref, u.GetNamespace(), "")
-		if t.Mirror {
-			s += " (mirror)"
-		}
-		if !slices.Contains(out, s) {
-			out = append(out, s)
+		if b := (Backend{Ref: t.Ref, Mirror: t.Mirror}); !slices.Contains(out, b) {
+			out = append(out, b)
 		}
 	}
 	return out

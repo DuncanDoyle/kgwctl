@@ -8,7 +8,6 @@
       "namespace": "other",
       "name": "edge",
       "creationTimestamp": "X",
-      "age": "10d",
       "generation": 1
     },
     "spec": {
@@ -18,7 +17,9 @@
           "name": "http",
           "port": 8080,
           "protocol": "HTTP",
-          "allowedRoutes": "from Same"
+          "allowedRoutes": {
+            "from": "Same"
+          }
         }
       ]
     },
@@ -46,8 +47,7 @@
       }
     ],
     "relations": {
-      "resolved": false,
-      "declared": {}
+      "resolved": false
     }
   }
 }

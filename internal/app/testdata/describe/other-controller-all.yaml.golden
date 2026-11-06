@@ -15,7 +15,6 @@ item:
       type: Programmed
     scope: object
   object:
-    age: 10d
     creationTimestamp: "X"
     generation: 1
     group: gateway.networking.k8s.io
@@ -23,12 +22,12 @@ item:
     name: edge
     namespace: other
   relations:
-    declared: {}
     resolved: false
   spec:
     class: other
     listeners:
-    - allowedRoutes: from Same
+    - allowedRoutes:
+        from: Same
       name: http
       port: 8080
       protocol: HTTP

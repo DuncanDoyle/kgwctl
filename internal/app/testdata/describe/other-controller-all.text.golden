@@ -15,5 +15,4 @@ Conditions:
     TYPE        STATUS   REASON   MESSAGE                 LAST TRANSITION       OBSERVED GEN
     Accepted    Unknown  Pending  Waiting for controller  1970-01-01T00:00:00Z  0
     Programmed  Unknown  Pending  Waiting for controller  1970-01-01T00:00:00Z  0
-Declared references (not resolved):
-  Parent refs:  <none>
+Relations:  not resolved (no owning install)

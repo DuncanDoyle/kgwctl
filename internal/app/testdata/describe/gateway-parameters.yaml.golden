@@ -3,7 +3,6 @@ item:
   - conditions: []
     scope: object
   object:
-    age: 10d
     creationTimestamp: "X"
     generation: 1
     group: gateway.kgateway.dev

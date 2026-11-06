@@ -8,7 +8,6 @@
       "namespace": "default",
       "name": "params",
       "creationTimestamp": "X",
-      "age": "10d",
       "generation": 1
     },
     "conditions": [

@@ -12,7 +12,12 @@ item:
       status: "True"
       type: ResolvedRefs
     controller: kgateway.dev/kgateway
-    scope: parent Gateway/a
+    ref:
+      group: gateway.networking.k8s.io
+      kind: Gateway
+      name: a
+      namespace: mixed
+    scope: parent
   - conditions:
     - lastTransition: "2026-01-01T00:00:00Z"
       observedGeneration: 0
@@ -27,7 +32,12 @@ item:
       status: "True"
       type: ResolvedRefs
     controller: kgateway.dev/kgateway
-    scope: parent Gateway/c
+    ref:
+      group: gateway.networking.k8s.io
+      kind: Gateway
+      name: c
+      namespace: mixed
+    scope: parent
   - conditions:
     - lastTransition: "2026-01-01T00:00:00Z"
       observedGeneration: 1
@@ -40,9 +50,13 @@ item:
       status: "True"
       type: ResolvedRefs
     controller: example.com/other
-    scope: parent Gateway/d
+    ref:
+      group: gateway.networking.k8s.io
+      kind: Gateway
+      name: d
+      namespace: mixed
+    scope: parent
   object:
-    age: 10d
     creationTimestamp: "X"
     generation: 1
     group: gateway.networking.k8s.io
@@ -85,6 +99,8 @@ item:
   spec:
     rules:
     - matches:
-      - PathPrefix /
+      - path:
+          type: PathPrefix
+          value: /
 kind: Describe
 schemaVersion: kgwctl.kgateway.dev/v1alpha1

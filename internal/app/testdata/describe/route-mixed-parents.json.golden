@@ -9,21 +9,31 @@
       "name": "mixed",
       "install": "kgateway-system/kgateway",
       "creationTimestamp": "X",
-      "age": "10d",
       "generation": 1
     },
     "spec": {
       "rules": [
         {
           "matches": [
-            "PathPrefix /"
+            {
+              "path": {
+                "type": "PathPrefix",
+                "value": "/"
+              }
+            }
           ]
         }
       ]
     },
     "conditions": [
       {
-        "scope": "parent Gateway/a",
+        "scope": "parent",
+        "ref": {
+          "group": "gateway.networking.k8s.io",
+          "kind": "Gateway",
+          "namespace": "mixed",
+          "name": "a"
+        },
         "controller": "kgateway.dev/kgateway",
         "conditions": [
           {
@@ -43,7 +53,13 @@
         ]
       },
       {
-        "scope": "parent Gateway/c",
+        "scope": "parent",
+        "ref": {
+          "group": "gateway.networking.k8s.io",
+          "kind": "Gateway",
+          "namespace": "mixed",
+          "name": "c"
+        },
         "controller": "kgateway.dev/kgateway",
         "conditions": [
           {
@@ -65,7 +81,13 @@
         ]
       },
       {
-        "scope": "parent Gateway/d",
+        "scope": "parent",
+        "ref": {
+          "group": "gateway.networking.k8s.io",
+          "kind": "Gateway",
+          "namespace": "mixed",
+          "name": "d"
+        },
         "controller": "example.com/other",
         "conditions": [
           {

@@ -9,7 +9,6 @@
       "name": "http",
       "installUnknown": "namespaces: denied",
       "creationTimestamp": "X",
-      "age": "10d",
       "generation": 1,
       "observedGeneration": 1
     },
@@ -20,7 +19,9 @@
           "name": "http",
           "port": 8080,
           "protocol": "HTTP",
-          "allowedRoutes": "from All"
+          "allowedRoutes": {
+            "from": "All"
+          }
         }
       ]
     },
@@ -45,7 +46,8 @@
         ]
       },
       {
-        "scope": "listener http",
+        "scope": "listener",
+        "listener": "http",
         "conditions": [
           {
             "type": "Accepted",
@@ -73,8 +75,7 @@
     ],
     "relations": {
       "resolved": false,
-      "unknown": "namespaces: denied",
-      "declared": {}
+      "unknown": "namespaces: denied"
     },
     "incomplete": [
       {

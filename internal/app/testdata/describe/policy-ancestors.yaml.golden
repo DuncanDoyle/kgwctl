@@ -7,9 +7,13 @@ item:
       status: "True"
       type: Accepted
     controller: kgateway.dev/kgateway
-    scope: ancestor Gateway/kgateway-system/http
+    ref:
+      group: gateway.networking.k8s.io
+      kind: Gateway
+      name: http
+      namespace: kgateway-system
+    scope: ancestor
   object:
-    age: 10d
     creationTimestamp: "X"
     generation: 1
     group: gateway.kgateway.dev
@@ -27,6 +31,5 @@ item:
         namespace: kgateway-system
       reason: Accepted
       state: accepted
-    resolved: false
 kind: Describe
 schemaVersion: kgwctl.kgateway.dev/v1alpha1

@@ -22,10 +22,13 @@ Conditions:
     ResolvedRefs  True    ResolvedRefs  -        2026-01-01T00:00:00Z  1
 Relations:
   Attached routes:
-    listener http:  HTTPRoute/default/example
+    LISTENER  ROUTES
+    http      HTTPRoute/default/example
   Not accepted:
-    ROUTE                       LISTENER                ATTACHMENT    CONDITION
-    HTTPRoute/default/rejected  http                    not-accepted  Accepted=False (NotAllowedByListeners): hostname rejected.example.com matches no listener
-    HTTPRoute/via-extra         ListenerSet/extra:*     pending       no status from the controller
-    HTTPRoute/via-extra-x       XListenerSet/extra-x:*  pending       no status from the controller
+    ROUTE                       PARENT REF         ATTACHMENT    CONDITION
+    HTTPRoute/default/rejected  Gateway/http:http  not-accepted  Accepted=False (NotAllowedByListeners): hostname rejected.example.com matches no listener
+  Pending:
+    ROUTE                  PARENT REF            ATTACHMENT  CONDITION
+    HTTPRoute/via-extra    ListenerSet/extra     pending     no status from the controller
+    HTTPRoute/via-extra-x  XListenerSet/extra-x  pending     no status from the controller
   ListenerSets:  ListenerSet/extra, XListenerSet/extra-x

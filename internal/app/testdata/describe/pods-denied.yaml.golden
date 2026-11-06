@@ -12,13 +12,17 @@ item:
       status: "True"
       type: ResolvedRefs
     controller: kgateway.dev/kgateway
-    scope: parent Gateway/kgateway-system/http
+    ref:
+      group: gateway.networking.k8s.io
+      kind: Gateway
+      name: http
+      namespace: kgateway-system
+    scope: parent
   incomplete:
   - input: pods
     reason: pods is forbidden (injected by testenv)
     state: denied
   object:
-    age: 10d
     creationTimestamp: "X"
     generation: 1
     group: gateway.networking.k8s.io
@@ -27,18 +31,29 @@ item:
     name: example
     namespace: default
   relations:
-    declared:
-      backendRefs:
-      - Service/example
-      parentRefs:
-      - Gateway/kgateway-system/http
+    parents:
+    - controller: kgateway.dev/kgateway
+      parent:
+        group: gateway.networking.k8s.io
+        kind: Gateway
+        name: http
+        namespace: kgateway-system
+      reason: Accepted
+      state: accepted
     resolved: false
     unknown: 'pods: denied'
   spec:
     rules:
     - backendRefs:
-      - Service/example:8080 weight 1
+      - group: ""
+        kind: Service
+        name: example
+        namespace: default
+        port: 8080
+        weight: 1
       matches:
-      - PathPrefix /
+      - path:
+          type: PathPrefix
+          value: /
 kind: Describe
 schemaVersion: kgwctl.kgateway.dev/v1alpha1
