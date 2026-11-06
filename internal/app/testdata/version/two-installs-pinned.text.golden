@@ -1,0 +1,6 @@
+Client:  kgwctl v0.1.0 (a1b2c3d, go1.26.0)
+Install: kgw-a/kgateway
+  Controller: v2.5.0 (1/1 replicas)
+  Proxies:
+    team-a/web  v2.5.0  1 pod
+Gateway API CRDs: v1.7.0 (standard)

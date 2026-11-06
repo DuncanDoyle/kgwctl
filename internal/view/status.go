@@ -37,7 +37,8 @@ func ObjectCondition(obj *unstructured.Unstructured, condType string) string {
 }
 
 // StaleCondition reports whether c of obj renders as stale: behind
-// metadata.generation, except Unknown never observed (Ruling R25).
+// metadata.generation, except Unknown never observed (Ruling R25). Object
+// conditions and per-parent entries both use it (D-012).
 func StaleCondition(obj *unstructured.Unstructured, c metav1.Condition) bool {
 	return objects.IsStale(obj, c) && (c.Status != metav1.ConditionUnknown || c.ObservedGeneration != 0)
 }
@@ -167,7 +168,7 @@ func entrySummary(obj *unstructured.Unstructured, p objects.ParentRef, e entry, 
 	}
 	ps.Reason = c.Reason
 	switch {
-	case objects.IsStale(obj, *c):
+	case StaleCondition(obj, *c):
 		ps.State = StateStale
 	case c.Status == metav1.ConditionTrue:
 		ps.State = StateAccepted

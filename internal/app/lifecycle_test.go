@@ -1,14 +1,24 @@
 package app_test
 
 import (
+	"encoding/pem"
 	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/DuncanDoyle/kgateway-ui/pkg/install"
+	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
 	"github.com/DuncanDoyle/kgwctl/internal/testenv"
 )
@@ -174,6 +184,61 @@ func TestBinaryDeps(t *testing.T) {
 		if strings.HasPrefix(pkg, "sigs.k8s.io/controller-runtime") ||
 			pkg == "github.com/DuncanDoyle/kgateway-ui/pkg/app" || strings.HasPrefix(pkg, "github.com/DuncanDoyle/kgateway-ui/pkg/app/") {
 			t.Errorf("binary depends on %s", pkg)
+		}
+	}
+}
+
+// TestExecPluginHangsPastDeadline: client-go runs exec credential plugins with
+// no context, so the command must stop waiting for one at its deadline.
+func TestExecPluginHangsPastDeadline(t *testing.T) {
+	env := newEnv(t, testenv.Options{})
+	dir := t.TempDir()
+	pidFile := filepath.Join(dir, "pid")
+	script := filepath.Join(dir, "hang.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho $$ > "+pidFile+"\nexec sleep 30\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Stop the plugin this test started, by its PID.
+	t.Cleanup(func() {
+		if b, err := os.ReadFile(pidFile); err == nil {
+			if pid, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil {
+				_ = syscall.Kill(pid, syscall.SIGKILL)
+			}
+		}
+	})
+	// client-go reads user credentials only for TLS servers, so a TLS front sits before the proxy.
+	target, err := url.Parse(env.Proxies[0].URL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	front := httptest.NewTLSServer(httputil.NewSingleHostReverseProxy(target))
+	t.Cleanup(front.Close)
+	kc, err := clientcmd.LoadFromFile(env.Kubeconfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range kc.Clusters {
+		c.Server = front.URL
+		c.CertificateAuthorityData = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: front.Certificate().Raw})
+	}
+	for _, ai := range kc.AuthInfos {
+		ai.Exec = &clientcmdapi.ExecConfig{APIVersion: "client.authentication.k8s.io/v1", Command: script, InteractiveMode: clientcmdapi.NeverExecInteractiveMode}
+	}
+	execEnv := *env
+	execEnv.Kubeconfig = filepath.Join(dir, "kubeconfig")
+	if err := clientcmd.WriteToFile(*kc, execEnv.Kubeconfig); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"version"}, {"get", "gw", "-A"}} {
+		r := runCmd(t, &execEnv, append(args, "--request-timeout", "1s")...)
+		if r.code != 1 || r.stdout != "" {
+			t.Errorf("%v: exit %d, stdout %q; want 1 and empty", args, r.code, r.stdout)
+		}
+		if r.stderr != "Error: timed out during discovery\n" {
+			t.Errorf("%v: stderr = %q, want the discovery timeout", args, r.stderr)
+		}
+		if r.took > 2*time.Second {
+			t.Errorf("%v: returned after %v, want within 2s of start", args, r.took)
 		}
 	}
 }

@@ -72,11 +72,15 @@ type CRDVersion struct {
 // gatewayCRD is the CRD whose bundle label wins a tie, as in the library's skew check.
 const gatewayCRD = "gateways.gateway.networking.k8s.io"
 
-// Version builds the version view of b and, when r is not nil, of the cluster r loaded.
-func Version(b BuildInfo, r *load.Result) VersionView {
+// Version builds the version view of b and, when r is not nil, of the cluster
+// r loaded, narrowed to the --install install f selects.
+func Version(b BuildInfo, r *load.Result, f *Filter) (VersionView, error) {
 	v := VersionView{Client: b}
 	if r == nil {
-		return v
+		return v, nil
+	}
+	if err := f.pinErr(); err != nil {
+		return VersionView{}, err
 	}
 	// Ownership inputs enumerate each install's Gateways (§6.3).
 	detect := []schema.GroupVersionResource{cache.NamespacesGVR, cache.DeploymentsGVR, cache.PodsGVR}
@@ -95,14 +99,16 @@ func Version(b BuildInfo, r *load.Result) VersionView {
 
 	ownersDown := unavailable(r, owners)
 	proxyPods, watched := r.Inputs[cache.ProxyPodsGVR]
-	for _, im := range r.Model.Installs {
-		v.Installs = append(v.Installs, installVersion(im, r.Inputs[cache.PodsGVR], ownersDown, proxyPods, watched))
+	for i, im := range r.Model.Installs {
+		if f.selected < 0 || i == f.selected {
+			v.Installs = append(v.Installs, installVersion(im, r.Inputs[cache.PodsGVR], ownersDown, proxyPods, watched))
+		}
 	}
 	if len(v.Installs) == 0 {
 		v.InstallsUnknown = unavailable(r, detect)
 	}
 	v.GatewayAPICRDs = crdVersion(r)
-	return v
+	return v, nil
 }
 
 // installVersion builds im's entry; pods is the controller Pod input.

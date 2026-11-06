@@ -6,6 +6,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -102,57 +103,71 @@ func TestProxyDelaysOnlyMatchingSelector(t *testing.T) {
 	if sel == "" {
 		t.Fatal("ProxyPodSelector returned no selector for the upstream registry")
 	}
-	hits := env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindAcquire, Resource: "pods", LabelSelector: sel}, testenv.Action{Delay: time.Second})
-	start := time.Now()
+	// Proxy Pods are held until controller Pods settle, so only the order is checked.
+	release := make(chan struct{})
+	unhold := sync.OnceFunc(func() { close(release) })
+	t.Cleanup(unhold)
+	hits := env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindAcquire, Resource: "pods", LabelSelector: sel}, testenv.Action{Until: release})
 	ca := startCache(t, env)
 
-	// Record when each Pod input first reports OK.
-	var podsAt, proxyAt time.Duration
-	for (podsAt == 0 || proxyAt == 0) && time.Since(start) < 10*time.Second {
-		acc := ca.Snapshot().Access
-		if podsAt == 0 && acc[cache.PodsGVR].OK {
-			podsAt = time.Since(start)
-		}
-		if proxyAt == 0 && acc[cache.ProxyPodsGVR].OK {
-			proxyAt = time.Since(start)
-		}
-		time.Sleep(5 * time.Millisecond)
+	eventually(t, "controller Pods to settle", func() bool { return ca.Snapshot().Access[cache.PodsGVR].OK })
+	if ca.Snapshot().Access[cache.ProxyPodsGVR].OK {
+		t.Fatal("proxy Pods settled while their request was held")
 	}
-	if podsAt == 0 || podsAt >= 300*time.Millisecond {
-		t.Fatalf("controller Pods settled after %v, want < 300ms", podsAt)
-	}
-	if proxyAt < time.Second {
-		t.Fatalf("proxy Pods settled after %v, want >= 1s", proxyAt)
-	}
+	unhold()
+	eventually(t, "proxy Pods to settle", func() bool { return ca.Snapshot().Access[cache.ProxyPodsGVR].OK })
 	if hits.N() == 0 {
-		t.Fatal("delay rule never matched")
+		t.Fatal("hold rule never matched")
 	}
 }
 
-// TestProxySelectorMatch checks that a rule with a label selector delays only
+// TestProxySelectorMatch checks that a rule with a label selector holds only
 // requests carrying that selector.
 func TestProxySelectorMatch(t *testing.T) {
 	env := testenv.New(t, testenv.Options{})
 	sel := "app.kubernetes.io/component=proxy,app.kubernetes.io/managed-by=kgateway"
-	hits := env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindAcquire, Resource: "pods", LabelSelector: sel}, testenv.Action{Delay: time.Second})
+	release := make(chan struct{})
+	unhold := sync.OnceFunc(func() { close(release) })
+	t.Cleanup(unhold)
+	hits := env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindAcquire, Resource: "pods", LabelSelector: sel}, testenv.Action{Until: release})
 	c := clients(t, env)
-
-	timeList := func(selector string) time.Duration {
-		start := time.Now()
-		if _, err := c.Kube.CoreV1().Pods("").List(t.Context(), metav1.ListOptions{LabelSelector: selector}); err != nil {
-			t.Fatal(err)
-		}
-		return time.Since(start)
+	list := func(ctx context.Context, selector string) error {
+		_, err := c.Kube.CoreV1().Pods("").List(ctx, metav1.ListOptions{LabelSelector: selector})
+		return err
 	}
-	if d := timeList("kgateway=kgateway"); d >= 300*time.Millisecond {
-		t.Fatalf("unmatched selector took %v, want < 300ms", d)
+
+	// The bound only stops a wrongly held request from hanging the test.
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	if err := list(ctx, "kgateway=kgateway"); err != nil || hits.N() != 0 {
+		t.Fatalf("unmatched selector: err %v, hits %d; want it answered, not held", err, hits.N())
 	}
 	// Same selector in another order: the proxy compares parsed selectors.
-	if d := timeList("app.kubernetes.io/managed-by=kgateway,app.kubernetes.io/component=proxy"); d < time.Second {
-		t.Fatalf("matched selector took %v, want >= 1s", d)
+	done := make(chan error, 1)
+	go func() {
+		done <- list(t.Context(), "app.kubernetes.io/managed-by=kgateway,app.kubernetes.io/component=proxy")
+	}()
+	eventually(t, "the matched request to be held", func() bool { return hits.N() == 1 })
+	select {
+	case err := <-done:
+		t.Fatalf("matched selector returned while held: %v", err)
+	default:
 	}
-	if hits.N() != 1 {
-		t.Fatalf("hits = %d, want 1", hits.N())
+	unhold()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+// eventually fails the test unless cond holds within 10s; the bound is a hang guard, not a timing check.
+func eventually(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 

@@ -122,7 +122,7 @@ func Load(ctx context.Context, c Clients, reg *extension.Registry, needs Needs) 
 		return nil, err
 	}
 	dc := &memoDiscovery{dc: Discovery(ctx, c.Discovery), seen: map[string]answer{}}
-	served, err := kinds.Resolve(dc, reg.Kinds)
+	served, err := resolveServed(ctx, dc, reg.Kinds)
 	if err != nil {
 		// Classified from ctx: request errors can lose the deadline cause mid-stream.
 		if ctx.Err() != nil {
@@ -180,6 +180,26 @@ func Load(ctx context.Context, c Clients, reg *extension.Registry, needs Needs) 
 	}
 	m := engine.New(cfg.Engine).Compute()
 	return &Result{Model: m, Served: cfg.Engine.Served, Inputs: inputs}, nil
+}
+
+// resolveServed runs discovery so Load can return at ctx's end: client-go runs
+// exec credential plugins without a context. A goroutine left waiting on a plugin ends when it exits.
+func resolveServed(ctx context.Context, dc kinds.DiscoveryClient, ds []kinds.Descriptor) ([]kinds.Served, error) {
+	type result struct {
+		served []kinds.Served
+		err    error
+	}
+	done := make(chan result, 1)
+	go func() {
+		served, err := kinds.Resolve(dc, ds)
+		done <- result{served, err}
+	}()
+	select {
+	case r := <-done:
+		return r.served, r.err
+	case <-ctx.Done():
+		return nil, context.Cause(ctx)
+	}
 }
 
 // metricsInterval only satisfies setup.Build: no metrics are collected, so the

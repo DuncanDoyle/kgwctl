@@ -1,0 +1,21 @@
+item:
+  client:
+    commit: a1b2c3d
+    goVersion: go1.26.0
+    name: kgwctl
+    version: v0.1.0
+  gatewayAPICRDs:
+    bundleVersion: v1.7.0
+    channel: standard
+  installs:
+  - controller: 2.5.0
+    display: kgw-a/kgateway
+    id: kgw-a.kgateway
+    proxies:
+    - gateway: team-a/web
+      pods: 1
+      version: 2.5.0
+    ready: 1
+    replicas: 1
+kind: Version
+schemaVersion: kgwctl.kgateway.dev/v1alpha1

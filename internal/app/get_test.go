@@ -337,3 +337,21 @@ func TestGetOwnershipUnknown(t *testing.T) {
 		t.Errorf("stderr = %q, want the ownership warning", r.stderr)
 	}
 }
+
+// TestGetAllControllersKeepsInputWarnings: --all-controllers drops only the
+// hiding explanation; an unreadable ownership input still warns.
+func TestGetAllControllersKeepsInputWarnings(t *testing.T) {
+	env := newEnv(t, testenv.Options{Fixtures: []string{healthyFixture, otherFixture}})
+	env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindAcquire, Resource: "deployments.apps"}, testenv.Action{Status: http.StatusForbidden})
+	r := runCmd(t, env, "get", "tp", "-A", "--all-controllers")
+	if r.code != 0 {
+		t.Fatalf("exit %d, stderr %q", r.code, r.stderr)
+	}
+	onlyWarnings(t, r.stderr)
+	if !strings.Contains(r.stderr, "Warning: ownership unknown (deployments: denied)") {
+		t.Errorf("stderr = %q, want the ownership warning", r.stderr)
+	}
+	if strings.Contains(r.stderr, "showing objects of all controllers") {
+		t.Errorf("stderr = %q, want no hiding explanation under --all-controllers", r.stderr)
+	}
+}

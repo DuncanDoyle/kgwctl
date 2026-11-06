@@ -75,7 +75,7 @@ Append-only. Newest at the bottom. Supersede, don't edit.
 - ROUTES is the library's linked-route count for the Gateway plus ` (n not accepted)`; `-` marks an object no install indexes.
 - The policy ANCESTORS denominator counts each distinct ancestorRef once, even when two controllers write it.
 - For a parent with only foreign status entries, the owning install's index state (`unwatched`, `declared`) wins over `other`.
-- A condition with no `observedGeneration` and status Unknown renders `Unknown (<Reason>)`, not `<stale>`.
+- A condition with no `observedGeneration` and status Unknown is never stale: an object condition renders `Unknown (<Reason>)`, not `<stale>`, and the same rule applies to per-parent and per-ancestor entries.
 - `get <kind> <name>` bypasses the hiding rule. With several kinds and a name, a kind without the object fails the command: exit 1, empty stdout.
 - `--install` naming no detected install is exit 1 when ownership inputs are ok; otherwise a warning, and nothing is hidden.
 - Overlapping kind arguments (`ls,xlistenersets`) list each object once; the alias table wins.

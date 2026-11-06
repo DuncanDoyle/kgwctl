@@ -26,15 +26,28 @@ func newVersionCmd(reg *extension.Registry, build BuildInfo) *cobra.Command {
 				return fmt.Errorf("invalid --output %q: want text, json or yaml", output)
 			}
 			var res *load.Result
+			var filter *view.Filter
 			if !client {
-				var err error
-				if res, err = loadVersion(cmd, reg); err != nil {
+				f, err := FlagsFrom(cmd)
+				if err != nil {
 					return err
 				}
+				if res, err = loadVersion(cmd, f, reg); err != nil {
+					return err
+				}
+				filter, _ = view.NewFilter(res, view.Scope{Install: f.Install, AllControllers: true})
 			}
-			v := view.Version(build, res)
+			v, err := view.Version(build, res, filter)
+			if err != nil {
+				return err
+			}
 			for _, in := range v.Incomplete {
 				warn(cmd.ErrOrStderr(), in)
+			}
+			if filter != nil {
+				if w := filter.PinIgnored(); w != "" {
+					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: %s\n", w)
+				}
 			}
 			if output == print.FormatText {
 				return print.VersionText(cmd.OutOrStdout(), v)
@@ -48,11 +61,7 @@ func newVersionCmd(reg *extension.Registry, build BuildInfo) *cobra.Command {
 }
 
 // loadVersion loads the cluster the global flags select, waiting for proxy Pods and CRDs too (§4.1).
-func loadVersion(cmd *cobra.Command, reg *extension.Registry) (*load.Result, error) {
-	f, err := FlagsFrom(cmd)
-	if err != nil {
-		return nil, err
-	}
+func loadVersion(cmd *cobra.Command, f *Flags, reg *extension.Registry) (*load.Result, error) {
 	rc, _, err := f.RESTConfig()
 	if err != nil {
 		return nil, err
