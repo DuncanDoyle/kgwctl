@@ -50,3 +50,4 @@ n/a
 - 2026-11-05 Sub-phase 1.2 closed: Codex review 5 findings fixed (351a9f7); D-012 records the `get` details settled in implementation.
 - 2026-11-06 krp's library is renamed `xdsview` (v0.3.0, program `6ca3662`); E1/E5 consumers (Phase 3) use the new module path.
 - 2026-11-06 Sub-phase 1.3 closed: Codex review 4 findings fixed (0ca5cad, 7b1fce1, dc4eea0); D-013 records the `describe` details.
+- 2026-11-06 Two suite flakes fixed at root at the 1.3 close (timing assert in internal/load; klog SetLogger race in tests); see phase-1.3-complete.md.

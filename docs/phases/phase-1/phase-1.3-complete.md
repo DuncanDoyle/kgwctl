@@ -40,5 +40,10 @@ none
 - The JSON schema is now a contract. Adding fields is fine; renaming or removing one bumps `schemaVersion`.
 - The envelope fields are documented but not reflection-checked. Enum values in `docs/output.md` are not tested.
 
+## Test fixes at close
+Two intermittent failures in the full suite, outside 1.3's own code, were fixed at their root before the merge:
+- `TestLoadWaitsForProxyPods` asserted that core inputs settle within 300ms; under `-race` with parallel packages they took about 1.1s. The test now holds proxy Pods until the core-settled hook releases them, so it checks order, not time.
+- A klog data race: `Execute` set klog's logger on first call, while an earlier test's watch goroutines read it. `internal/quiet.Klog` now sets it once, called by `Execute` and at the start of `testenv.Run`. Production is unchanged: `Execute` still runs before any goroutine.
+
 ## Deferred / open
 - Small overlap with `get` remains: backend lists and parent names, about 10 lines. It is not worth a round.
