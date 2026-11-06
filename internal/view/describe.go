@@ -12,6 +12,7 @@ import (
 	"github.com/DuncanDoyle/kgateway-ui/pkg/objects"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/duration"
 
 	"github.com/DuncanDoyle/kgwctl/internal/load"
@@ -27,7 +28,7 @@ type DescribeView struct {
 	Conditions []ConditionBlock `json:"conditions"`
 	// Relations is omitted for kinds that have none.
 	Relations Relations `json:"relations,omitzero"`
-	// Incomplete are the inputs the relations depend on that are not ok (design §6.3).
+	// Incomplete are the inputs the install and relations depend on that are not ok (design §6.3).
 	Incomplete []load.Input `json:"incomplete,omitempty"`
 }
 
@@ -290,7 +291,8 @@ func Describe(r *load.Result, f *Filter, t resolve.Target, ns, name string, now 
 	}
 	k, u := found[0].k, found[0].u
 	v := &DescribeView{Object: objectInfo(r, f, k, u, now), Spec: specSummary(k, u), Conditions: conditionBlocks(k, u)}
-	v.Relations, v.Incomplete = relations(r, f, k, u)
+	v.Relations = relations(r, f, k, u)
+	v.Incomplete = incomplete(r, k)
 	return v, nil
 }
 
@@ -437,11 +439,11 @@ func ParentName(p objects.ParentRef, ns string) string {
 }
 
 // relations resolves u's relations from the owning install's index, or falls back to what u declares.
-func relations(r *load.Result, f *Filter, k kinds.Served, u *unstructured.Unstructured) (Relations, []load.Input) {
+func relations(r *load.Result, f *Filter, k kinds.Served, u *unstructured.Unstructured) Relations {
 	var rel Relations
 	switch k.Category {
 	case kinds.CategoryPolicy:
-		return Relations{Of: RelationsPolicy, Ancestors: PolicyAncestors(f, u, "Accepted")}, nil
+		return Relations{Of: RelationsPolicy, Ancestors: PolicyAncestors(f, u, "Accepted")}
 	case kinds.CategoryGateway:
 		rel.Of = RelationsGateway
 	case kinds.CategoryListenerSet:
@@ -449,7 +451,7 @@ func relations(r *load.Result, f *Filter, k kinds.Served, u *unstructured.Unstru
 	case kinds.CategoryRoute:
 		rel.Of = RelationsRoute
 	default:
-		return rel, nil
+		return rel
 	}
 	// Resolved stays nil while index inputs are down: nobody knows (Ruling R33).
 	if f.indexDown != "" {
@@ -458,7 +460,7 @@ func relations(r *load.Result, f *Filter, k kinds.Served, u *unstructured.Unstru
 		if k.Category == kinds.CategoryRoute {
 			rel.Parents, rel.DuplicateParents = RouteParents(r, f, u, "Accepted"), duplicateParents(u)
 		}
-		return rel, indexIncomplete(r)
+		return rel
 	}
 	resolved := false
 	rel.Resolved = &resolved
@@ -499,7 +501,7 @@ func relations(r *load.Result, f *Filter, k kinds.Served, u *unstructured.Unstru
 		}
 	}
 	if resolved {
-		return rel, nil
+		return rel
 	}
 	// Unresolved: only what the spec declares (design §3.2); a Gateway declares no references.
 	switch k.Category {
@@ -508,13 +510,21 @@ func relations(r *load.Result, f *Filter, k kinds.Served, u *unstructured.Unstru
 	case kinds.CategoryRoute:
 		rel.Declared = &DeclaredRefs{ParentRefs: objects.RouteParentRefs(u), BackendRefs: backendList(k, u)}
 	}
-	return rel, nil
+	return rel
 }
 
-// indexIncomplete lists the index inputs that are not ok, once each by resource.
-func indexIncomplete(r *load.Result) []load.Input {
+// incomplete lists the inputs that are not ok among those k's output depends on: ownership
+// inputs for an attributed kind, index inputs for a Gateway, ListenerSet or route.
+func incomplete(r *load.Result, k kinds.Served) []load.Input {
+	var gvrs []schema.GroupVersionResource
+	switch {
+	case k.Category == kinds.CategoryGateway, k.Category == kinds.CategoryListenerSet, k.Category == kinds.CategoryRoute:
+		gvrs = indexInputs(r.Served)
+	case attributed(k.Category):
+		gvrs = ownershipInputs(r.Served)
+	}
 	var in []load.Input
-	for _, gvr := range indexInputs(r.Served) {
+	for _, gvr := range gvrs {
 		if x, ok := r.Inputs[gvr]; ok && x.State != load.StateOK && !slices.ContainsFunc(in, func(y load.Input) bool { return y.Resource == x.Resource }) {
 			in = append(in, x)
 		}

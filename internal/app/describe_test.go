@@ -158,3 +158,29 @@ func TestDescribeErrors(t *testing.T) {
 		})
 	}
 }
+
+// Ownership inputs reach incomplete and stderr for every attributed kind, not only through relations.
+func TestDescribeOwnershipDown(t *testing.T) {
+	env := newEnv(t, testenv.Options{Fixtures: []string{healthyFixture, listenerSetsFixture, describeFixture}})
+	env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindAcquire, Resource: "namespaces"}, testenv.Action{Status: http.StatusForbidden})
+	for _, args := range [][]string{{"describe", "tp", "route-policy", "-n", "default"}, {"describe", "gwc", "kgateway"}} {
+		r := runCmd(t, env, append(args, "-o", "json")...)
+		if r.code != 0 {
+			t.Fatalf("%v: exit %d, stderr %q", args, r.code, r.stderr)
+		}
+		if !strings.Contains(r.stderr, "Warning: namespaces: denied") {
+			t.Errorf("%v: stderr = %q, want the namespaces warning", args, r.stderr)
+		}
+		var e struct {
+			Item struct {
+				Incomplete []struct{ Input, State string }
+			}
+		}
+		if err := json.Unmarshal([]byte(r.stdout), &e); err != nil {
+			t.Fatal(err)
+		}
+		if len(e.Item.Incomplete) != 1 || e.Item.Incomplete[0].Input != "namespaces" || e.Item.Incomplete[0].State != "denied" {
+			t.Errorf("%v: incomplete = %+v, want namespaces denied", args, e.Item.Incomplete)
+		}
+	}
+}
