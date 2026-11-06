@@ -37,7 +37,7 @@ Adding a field is not a breaking change, so readers must ignore unknown fields. 
 | `spec` | SpecSummary | Typed spec summary; absent for kinds without one. |
 | `conditions` | ConditionBlock[] | Status blocks: the object's own first, then one per listener, parent or ancestor entry. Always present. |
 | `relations` | Relations | What the object relates to; absent for kinds that have none. |
-| `incomplete` | Input[] | Inputs the relations depend on that are not `ok`. Absent when all are. |
+| `incomplete` | Input[] | Inputs the install and relations depend on that are not `ok`: ownership inputs for an attributed kind, explore index inputs for a Gateway, ListenerSet or route. Absent when all are `ok`. |
 
 ### ObjectInfo
 
@@ -81,7 +81,7 @@ Adding a field is not a breaking change, so readers must ignore unknown fields. 
 |---|---|---|
 | `from` | string | `Same`, `All` or `Selector`. |
 | `selector` | string | Namespace selector when `from` is `Selector`. |
-| `kinds` | GroupKind[] | Allowed route kinds; absent when unrestricted. |
+| `kinds` | GroupKind[] | Allowed route kinds as written; absent when the spec sets no explicit restriction. The protocol's default kinds still apply. |
 
 ### GroupKind
 
@@ -213,7 +213,7 @@ Gateway relations list one row per parent link. `attachedRoutes`, `notAccepted` 
 | Field | Type | Meaning |
 |---|---|---|
 | `parent` | Ref | The Gateway or ListenerSet. |
-| `listener` | string | Listener name; absent for routes attached to the whole parent. |
+| `listener` | string | Listener name; absent when the listener is not known (no `sectionName` and no computed listener). |
 | `routes` | Ref[] | Attached routes. Always present. |
 
 ### RouteLink
