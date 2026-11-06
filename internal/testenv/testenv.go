@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DuncanDoyle/kgwctl/internal/quiet"
 	"github.com/go-logr/logr"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -75,8 +76,10 @@ var shared struct {
 }
 
 // Run runs the package's tests and then stops its envtest. Call it from
-// TestMain: os.Exit(testenv.Run(m)).
+// TestMain: os.Exit(testenv.Run(m)). It silences klog first, as Execute does,
+// so no test's watch goroutine can race a later Execute.
 func Run(m *testing.M) int {
+	quiet.Klog()
 	code := m.Run()
 	shared.mu.Lock()
 	defer shared.mu.Unlock()

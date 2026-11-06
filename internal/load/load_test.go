@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -141,21 +142,18 @@ func TestLoadWatchDenied(t *testing.T) {
 func TestLoadWaitsForProxyPods(t *testing.T) {
 	env := testenv.New(t, testenv.Options{Fixtures: []string{healthy}})
 	sel := testenv.ProxyPodSelector(extension.New())
-	env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindAcquire, Resource: "pods", LabelSelector: sel}, testenv.Action{Delay: 300 * time.Millisecond})
-	var settledAt time.Duration
-	start := time.Now()
-	t.Cleanup(load.SetCoreSettledHook(func() { settledAt = time.Since(start) }))
+	// Proxy Pods are held until core settles, so Load must settle core first and still wait for them.
+	release := make(chan struct{})
+	held := env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindAcquire, Resource: "pods", LabelSelector: sel}, testenv.Action{Until: release})
+	var once sync.Once
+	t.Cleanup(load.SetCoreSettledHook(func() { once.Do(func() { close(release) }) }))
 
 	r := mustLoad(t, env, 10*time.Second, load.Needs{ProxyPods: true})
-	took := time.Since(start)
+	if held.N() == 0 {
+		t.Fatal("the proxy Pod request was never held")
+	}
 	if in := input(t, r, cache.ProxyPodsGVR); in.State != load.StateOK {
 		t.Fatalf("proxy pods = %+v, want ok", in)
-	}
-	if settledAt == 0 || settledAt >= 300*time.Millisecond {
-		t.Fatalf("core inputs settled at %v, want < 300ms", settledAt)
-	}
-	if took < 300*time.Millisecond {
-		t.Fatalf("Load returned after %v, before the 300ms proxy Pod delay", took)
 	}
 }
 
