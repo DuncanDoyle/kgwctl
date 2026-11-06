@@ -1,0 +1,32 @@
+item:
+  conditions: []
+  object:
+    creationTimestamp: "X"
+    generation: 1
+    group: gateway.networking.k8s.io
+    install: kgateway-system/kgateway
+    kind: HTTPRoute
+    name: label-parent
+    namespace: default
+  relations:
+    parents:
+    - parent:
+        group: gateway.networking.k8s.io
+        kind: Gateway
+        name: http
+        namespace: kgateway-system
+      state: no status
+    resolved: true
+  spec:
+    rules:
+    - backendRefs:
+      - delegation:
+          label: team-b
+          mode: label
+          namespace: default
+      matches:
+      - path:
+          type: PathPrefix
+          value: /team-b
+kind: Describe
+schemaVersion: kgwctl.kgateway.dev/v1alpha1

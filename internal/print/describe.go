@@ -114,7 +114,8 @@ func writeSpec(b *strings.Builder, s *view.SpecSummary, ns string) {
 			bs = append(bs, backendRef(br, ns))
 		}
 		fmt.Fprintf(b, "    %s:\n", name)
-		table(b, "      ", [][]string{{"Matches:", list(ms)}, {"Filters:", list(fs)}, {"Backends:", list(bs)}})
+		// Matches are ORed, so they are split by "|", not ",".
+		table(b, "      ", [][]string{{"Matches:", orNone(strings.Join(ms, " | "))}, {"Filters:", list(fs)}, {"Backends:", list(bs)}})
 	}
 }
 
@@ -147,15 +148,19 @@ func match(m view.MatchSpec) string {
 	if m.Method != "" {
 		parts = append(parts, "method "+m.Method)
 	}
-	return strings.Join(parts, " ")
+	return strings.Join(parts, "; ")
 }
 
 // backendRef is a backend as get prints it, with port and weight, or a delegation.
 func backendRef(br view.BackendRefSpec, ns string) string {
 	if d := br.Delegation; d != nil {
+		// Name mode names a route, wildcard mode takes every route, label mode a label value.
 		target := d.Name
-		if d.Mode == "label" {
-			target = "label " + d.Label
+		switch d.Mode {
+		case "wildcard":
+			target = "*"
+		case "label":
+			target = d.Label
 		}
 		if d.Namespace != ns {
 			target = d.Namespace + "/" + target

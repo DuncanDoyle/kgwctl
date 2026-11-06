@@ -1,0 +1,52 @@
+{
+  "schemaVersion": "kgwctl.kgateway.dev/v1alpha1",
+  "kind": "Describe",
+  "item": {
+    "object": {
+      "kind": "HTTPRoute",
+      "group": "gateway.networking.k8s.io",
+      "namespace": "default",
+      "name": "wildcard-parent",
+      "install": "kgateway-system/kgateway",
+      "creationTimestamp": "X",
+      "generation": 1
+    },
+    "spec": {
+      "rules": [
+        {
+          "matches": [
+            {
+              "path": {
+                "type": "PathPrefix",
+                "value": "/team-a"
+              }
+            }
+          ],
+          "backendRefs": [
+            {
+              "delegation": {
+                "mode": "wildcard",
+                "namespace": "team-a"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "conditions": [],
+    "relations": {
+      "resolved": true,
+      "parents": [
+        {
+          "parent": {
+            "group": "gateway.networking.k8s.io",
+            "kind": "Gateway",
+            "namespace": "kgateway-system",
+            "name": "http"
+          },
+          "state": "no status"
+        }
+      ]
+    }
+  }
+}

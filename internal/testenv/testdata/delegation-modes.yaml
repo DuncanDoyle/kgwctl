@@ -1,0 +1,41 @@
+# Applied after healthy.yaml: HTTPRoutes delegating by wildcard (every route
+# in team-a) and by label (routes labelled team-b), with no status yet.
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: wildcard-parent
+  namespace: default
+spec:
+  parentRefs:
+    - name: http
+      namespace: kgateway-system
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /team-a
+      backendRefs:
+        - group: gateway.networking.k8s.io
+          kind: HTTPRoute
+          name: "*"
+          namespace: team-a
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: label-parent
+  namespace: default
+spec:
+  parentRefs:
+    - name: http
+      namespace: kgateway-system
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /team-b
+      backendRefs:
+        - group: delegation.kgateway.dev
+          kind: label
+          name: team-b

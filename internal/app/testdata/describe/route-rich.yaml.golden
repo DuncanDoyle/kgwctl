@@ -1,0 +1,96 @@
+item:
+  conditions:
+  - conditions:
+    - lastTransition: "2026-01-01T00:00:00Z"
+      message: hostname rejected.example.com matches no listener
+      observedGeneration: 1
+      reason: NotAllowedByListeners
+      status: "False"
+      type: Accepted
+    - lastTransition: "2026-01-01T00:00:00Z"
+      observedGeneration: 1
+      reason: ResolvedRefs
+      status: "True"
+      type: ResolvedRefs
+    controller: kgateway.dev/kgateway
+    ref:
+      group: gateway.networking.k8s.io
+      kind: Gateway
+      name: http
+      namespace: kgateway-system
+      sectionName: http
+    scope: parent
+  object:
+    creationTimestamp: "X"
+    generation: 1
+    group: gateway.networking.k8s.io
+    install: kgateway-system/kgateway
+    kind: HTTPRoute
+    name: rejected
+    namespace: default
+  relations:
+    backends:
+    - group: ""
+      kind: Service
+      mirror: true
+      name: api-shadow
+      namespace: default
+    - group: ""
+      kind: Service
+      name: api
+      namespace: default
+    - group: ""
+      kind: Service
+      name: api-canary
+      namespace: default
+    parents:
+    - controller: kgateway.dev/kgateway
+      parent:
+        group: gateway.networking.k8s.io
+        kind: Gateway
+        name: http
+        namespace: kgateway-system
+        sectionName: http
+      reason: NotAllowedByListeners
+      state: rejected
+    resolved: true
+  spec:
+    hostnames:
+    - rejected.example.com
+    rules:
+    - backendRefs:
+      - group: ""
+        kind: Service
+        name: api
+        namespace: default
+        port: 8080
+        weight: 90
+      - group: ""
+        kind: Service
+        name: api-canary
+        namespace: default
+        port: 8080
+        weight: 10
+      filters:
+      - type: RequestHeaderModifier
+      - target:
+          group: ""
+          kind: Service
+          name: api-shadow
+          namespace: default
+        type: RequestMirror
+      matches:
+      - headers:
+        - name: x-team
+          type: Exact
+          value: a
+        method: GET
+        path:
+          type: PathPrefix
+          value: /api
+        queryParams:
+        - name: version
+          type: RegularExpression
+          value: v[12]
+kind: Describe
+schemaVersion: kgwctl.kgateway.dev/v1alpha1

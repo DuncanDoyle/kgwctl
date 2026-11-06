@@ -11,6 +11,7 @@ import (
 
 const (
 	describeFixture     = "../testenv/testdata/describe.yaml"
+	delegationModes     = "../testenv/testdata/delegation-modes.yaml"
 	sameNameLSFixture   = "../testenv/testdata/listenersets-same-name.yaml"
 	describeEnvelopeTag = "kgwctl.kgateway.dev/v1alpha1"
 )
@@ -46,6 +47,12 @@ func TestDescribe(t *testing.T) {
 			want: []string{"Delegation parents:", "HTTPRoute/parent"}},
 		{name: "delegation-parent", fixtures: []string{healthyFixture, delegationFixture}, args: []string{"describe", "hr", "parent", "-n", "default"},
 			want: []string{"delegate (name) child-a", "Delegation children:  HTTPRoute/child-a", "Backends:             <none>"}},
+		{name: "route-rich", fixtures: base, args: []string{"describe", "hr", "rejected", "-n", "default"},
+			want: []string{"PathPrefix /api; header x-team Exact a; query version RegularExpression v[12]; method GET", "RequestMirror Service/api-shadow", "api:8080 weight 90"}},
+		{name: "delegation-wildcard", fixtures: []string{healthyFixture, delegationModes}, args: []string{"describe", "hr", "wildcard-parent", "-n", "default"},
+			want: []string{"delegate (wildcard) team-a/*"}},
+		{name: "delegation-label", fixtures: []string{healthyFixture, delegationModes}, args: []string{"describe", "hr", "label-parent", "-n", "default"},
+			want: []string{"delegate (label) team-b"}},
 		{name: "policy-ancestors", fixtures: base, args: []string{"describe", "tp", "route-policy", "-n", "default"},
 			want: []string{"ancestor Gateway/kgateway-system/http", "Ancestors (from status):"}},
 		{name: "policy-none", fixtures: []string{healthyFixture, orphansFixture}, args: []string{"describe", "tp", "no-ancestors", "-n", "default"},
