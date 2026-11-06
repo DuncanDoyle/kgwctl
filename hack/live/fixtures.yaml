@@ -1,0 +1,116 @@
+# Live-check fixtures, all in namespace "live":
+#   gateway "web" (healthy, uses GatewayParameters "web-params"),
+#   route "healthy" (accepted, backend resolves),
+#   route "orphan" (parent Gateway "missing" does not exist),
+#   route "bad-backend" (backendRef to a Service that does not exist),
+#   TrafficPolicy "healthy-policy" targeting route "healthy".
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: live
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: GatewayParameters
+metadata:
+  name: web-params
+  namespace: live
+spec:
+  kube:
+    deployment:
+      replicas: 1
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: web
+  namespace: live
+spec:
+  gatewayClassName: kgateway
+  infrastructure:
+    parametersRef:
+      group: gateway.kgateway.dev
+      kind: GatewayParameters
+      name: web-params
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 8080
+      allowedRoutes:
+        namespaces:
+          from: Same
+---
+# Backend Service for route "healthy"; no Pods needed for ResolvedRefs.
+apiVersion: v1
+kind: Service
+metadata:
+  name: echo
+  namespace: live
+spec:
+  selector:
+    app: echo
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: healthy
+  namespace: live
+spec:
+  parentRefs:
+    - name: web
+  hostnames:
+    - healthy.example.com
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: echo
+          port: 8080
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: orphan
+  namespace: live
+spec:
+  parentRefs:
+    - name: missing
+  hostnames:
+    - orphan.example.com
+  rules:
+    - backendRefs:
+        - name: echo
+          port: 8080
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: bad-backend
+  namespace: live
+spec:
+  parentRefs:
+    - name: web
+  hostnames:
+    - bad.example.com
+  rules:
+    - backendRefs:
+        - name: does-not-exist
+          port: 8080
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: healthy-policy
+  namespace: live
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: healthy
+  timeouts:
+    request: 10s

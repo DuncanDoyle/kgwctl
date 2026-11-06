@@ -4,7 +4,7 @@
 Phase: 1 — Foundation and resource inspection
 Base: 779c421e8d8ed8a4a71847c5cc29bc61ffedbd09
 Docs: docs/phases/phase-1/
-Status: design approved 2026-11-05 (D-010); 1.1–1.3 complete; implementation sub-phase 1.4
+Status: design approved 2026-11-05 (D-010); 1.1–1.4 complete; phase review
 
 ### Queue
 - [x] Q1 Owner reviews roadmap and decisions D-001–D-008 — approved 2026-11-04
@@ -16,7 +16,7 @@ Status: design approved 2026-11-05 (D-010); 1.1–1.3 complete; implementation s
 - [x] Q7 Sub-phase 1.1 — foundation — phase-1.1-complete.md; kgateway-ui v0.3.0
 - [x] Q8 Sub-phase 1.2 — `get` — phase-1.2-complete.md; reviews/1.2-codex.md; D-012
 - [x] Q9 Sub-phase 1.3 — `describe` — phase-1.3-complete.md; reviews/1.3-codex.md; D-013
-- [ ] Q10 Sub-phase 1.4 — live check, scale, docs ← CURRENT — branch duncandoyle/phase1Live
+- [x] Q10 Sub-phase 1.4 — live check, scale, docs — phase-1.4-complete.md
 - [x] Q11 Maintainer proposal (P-005): not filed, deferred by the owner (D-011)
 
 ### Exit gates
@@ -28,16 +28,7 @@ Status: design approved 2026-11-05 (D-010); 1.1–1.3 complete; implementation s
 - [ ] phase-1-complete.md written, roadmap updated, tracked items closed
 
 ## Sub-phase
-Sub-phase: 1.4 — Live check, scale, docs
-Kind: planned
-Base: 7702558a410baa6e5389574532dc10fc23e3f586
-Brief: docs/phases/phase-1/phase-1.4-brief.md
-
-### Allowed work
-Plan Tasks 1.4.1–1.4.3.
-
-### Not allowed
-Command behaviour changes; design changes without a decisions.md entry and owner approval.
+n/a
 
 ## Program
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
