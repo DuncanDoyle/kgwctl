@@ -4,7 +4,7 @@
 Phase: 1 — Foundation and resource inspection
 Base: 779c421e8d8ed8a4a71847c5cc29bc61ffedbd09
 Docs: docs/phases/phase-1/
-Status: design approved 2026-11-05 (D-010); 1.1–1.4 complete; phase review
+Status: design approved 2026-11-05 (D-010); 1.1–1.4 complete; phase review done (reviews/phase-codex.md); stabilization sub-phase 1.5
 
 ### Queue
 - [x] Q1 Owner reviews roadmap and decisions D-001–D-008 — approved 2026-11-04
@@ -18,17 +18,33 @@ Status: design approved 2026-11-05 (D-010); 1.1–1.4 complete; phase review
 - [x] Q9 Sub-phase 1.3 — `describe` — phase-1.3-complete.md; reviews/1.3-codex.md; D-013
 - [x] Q10 Sub-phase 1.4 — live check, scale, docs — phase-1.4-complete.md
 - [x] Q11 Maintainer proposal (P-005): not filed, deferred by the owner (D-011)
+- [ ] Q12 (P1) exec credential plugin can hold a command past --request-timeout — src: reviews/phase-codex.md#1
+- [ ] Q13 (P1) version ignores --install — src: reviews/phase-codex.md#2
+- [ ] Q14 (P2) --all-controllers suppresses input-failure warnings — src: reviews/phase-codex.md#3
+- [ ] Q15 (P2) parent entries and condition rows disagree on stale — src: reviews/phase-codex.md#4
+- [ ] Q16 (P2) README overstates incomplete output; `all` wording — src: reviews/phase-codex.md#5
+- [ ] Q17 (P3) testenv timing asserts — src: reviews/phase-codex.md#6
+- [ ] Q18 (P4) pkg/cli doc: Execute replaces klog's logger — src: reviews/phase-codex.md#7
 
 ### Exit gates
 - [ ] tests/vet pass (observed)
 - [ ] all queue items done or deferred
 - [x] design+plan cross-model review + triage: docs/phases/phase-1/reviews/design-codex.md … design-r4-codex.md
-- [ ] phase cross-model review + triage: docs/phases/phase-1/reviews/phase-codex.md
+- [x] phase cross-model review + triage: docs/phases/phase-1/reviews/phase-codex.md
 - [ ] decisions.md / design / plan in sync with code
 - [ ] phase-1-complete.md written, roadmap updated, tracked items closed
 
 ## Sub-phase
-n/a
+Sub-phase: 1.5 — Phase review fixes
+Kind: stabilization
+Base: e6a8ef4
+Brief: docs/phases/phase-1/phase-1.5-brief.md
+
+### Allowed work
+Bug fixes, missing designed behaviour, tests and docs for Q12–Q18.
+
+### Not allowed
+New features, architecture changes, new dependencies.
 
 ## Program
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
@@ -40,7 +56,8 @@ n/a
 - Consumers: none
 
 ## Carry-over (deferred to later phases)
-- n/a
+- Phase 2: `check` keeps one engine across recomputes so grace periods and holds mature; `load.Load` returns a model only (reviews/phase-codex.md#8).
+- Phase 2: a narrow `pkg/cli` facade for vendor cluster commands — flags, REST config, deadline, load (reviews/phase-codex.md#9, D-009 follow-up).
 
 ## Notes
 - GitHub repo: https://github.com/DuncanDoyle/kgwctl (`kgwctl` remains a working name, D-006).
