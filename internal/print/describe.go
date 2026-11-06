@@ -354,8 +354,13 @@ func writeParents(b *strings.Builder, heading string, ps []view.ParentSummary, n
 	var rows [][]string
 	for _, p := range ps {
 		state := string(p.State)
-		if p.State == view.StateRejected && p.Reason != "" {
+		switch {
+		case p.Reason == "":
+		case p.State == view.StateRejected:
 			state += ": " + p.Reason
+		// An entry with an Unknown condition counts as no status; its reason says why.
+		case p.State == view.StateNoStatus:
+			state += " (" + p.Reason + ")"
 		}
 		rows = append(rows, []string{view.ParentName(p.Parent, ns), state, or(p.Controller, "-")})
 	}

@@ -221,14 +221,25 @@ func TestUnknownNeverObservedNotStale(t *testing.T) {
 	if err := json.Unmarshal([]byte(r.stdout), &v); err != nil {
 		t.Fatal(err)
 	}
-	if ps := v.Item.Relations.Parents; len(ps) != 1 || ps[0].State == "stale" || ps[0].Reason != "Pending" {
-		t.Errorf("relations.parents = %+v, want one non-stale parent with reason Pending", ps)
+	if ps := v.Item.Relations.Parents; len(ps) != 1 || ps[0].State != "no status" || ps[0].Reason != "Pending" {
+		t.Errorf("relations.parents = %+v, want one no status parent with reason Pending", ps)
 	}
+	found := 0
 	for _, b := range v.Item.Conditions {
 		for _, c := range b.Conditions {
-			if b.Scope == "parent" && c.Type == "Accepted" && (c.Stale || c.Status != "Unknown" || c.Reason != "Pending") {
-				t.Errorf("parent Accepted condition = %+v, want Unknown (Pending), not stale", c)
+			if b.Scope == "parent" && c.Type == "Accepted" {
+				found++
+				if c.Stale || c.Status != "Unknown" || c.Reason != "Pending" {
+					t.Errorf("parent Accepted condition = %+v, want Unknown (Pending), not stale", c)
+				}
 			}
 		}
+	}
+	if found != 1 {
+		t.Errorf("found %d parent Accepted conditions, want 1", found)
+	}
+	r = runCmd(t, env, "describe", "hr", "pending", "-n", "pending")
+	if r.code != 0 || !strings.Contains(r.stdout, "no status (Pending)") || strings.Contains(r.stdout, "stale") {
+		t.Errorf("describe text: exit %d, stdout %q; want the parent as no status (Pending)", r.code, r.stdout)
 	}
 }
