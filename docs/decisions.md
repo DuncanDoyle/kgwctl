@@ -81,3 +81,14 @@ Append-only. Newest at the bottom. Supersede, don't edit.
 - Overlapping kind arguments (`ls,xlistenersets`) list each object once; the alias table wins.
 **Alternatives:** kubectl-style partial output for multi-kind named lookups — rejected: stdout stays empty on every error (§8).
 **Consequences:** Design §3.1 and §6.2 updated to match. `describe` (1.3) reuses the same cells.
+
+## D-013 — `describe` details settled during sub-phase 1.3 (2026-11-06, phase 1) — our call, owner may override
+**Context:** Implementing `describe` and freezing its JSON schema raised cases design §3.2 left open. Each was ruled during implementation (SDD ledger R29–R33) and checked by task reviews and the Codex sub-phase review.
+**Decision:**
+- `describe <kind> <name>` shows an object even when `get` would hide it; without an owning install, its relations are the declared form.
+- A Gateway's notAccepted list is the rejected set `get` counts; pending, unwatched and declared links are a separate pending list.
+- The Describe JSON item is structured: absolute ref objects, conditions as fields, booleans for declared and mirror. An unknown listener is omitted. Age is text-only.
+- With index inputs down, parent states still come from status, relations show as unknown, and `resolved` is absent. Ownership-input failures reach `incomplete` for every attributed kind.
+**Alternatives:** Display strings in JSON (as text prints them) — rejected: JSON is the stable interface (§8).
+**Consequences:** `docs/output.md` documents the schema; `TestOutputDocMatchesSchema` keeps it in step with the Go types.
+
