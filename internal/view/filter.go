@@ -53,14 +53,18 @@ type Filter struct {
 }
 
 // NewFilter returns the Filter of s over r, and stderr warnings saying why
-// nothing is hidden, unless s.AllControllers asked for that.
+// nothing is hidden. With s.AllControllers, only unreadable inputs are warned about.
 func NewFilter(r *load.Result, s Scope) (*Filter, []string) {
 	f := &Filter{r: r, scope: s, selected: -1, ours: map[string]bool{}, owners: map[objects.Ref][]int{},
 		classes: map[string]*unstructured.Unstructured{}, hidden: map[objects.Ref]bool{}}
 	var warns []string
-	warn := func(format string, a ...any) {
-		if !s.AllControllers {
-			warns = append(warns, fmt.Sprintf(format, a...)+"; showing objects of all controllers")
+	// --all-controllers drops the hiding explanation, never an unreadable input.
+	warn := func(input bool, format string, a ...any) {
+		switch msg := fmt.Sprintf(format, a...); {
+		case !s.AllControllers:
+			warns = append(warns, msg+"; showing objects of all controllers")
+		case input:
+			warns = append(warns, msg)
 		}
 	}
 	installs := r.Model.Installs
@@ -69,7 +73,7 @@ func NewFilter(r *load.Result, s Scope) (*Filter, []string) {
 	f.indexDown = unavailable(r, indexInputs(r.Served))
 	pinned, err := install.ParsePinned(s.Install)
 	if err != nil {
-		warn("%v", err)
+		warn(false, "%v", err)
 	} else if pinned != "" {
 		f.selected = slices.IndexFunc(installs, func(im engine.InstallModel) bool { return im.Resolved.ID() == pinned })
 	}
@@ -92,11 +96,11 @@ func NewFilter(r *load.Result, s Scope) (*Filter, []string) {
 	}
 	switch {
 	case !f.known:
-		warn("ownership unknown (%s)", down)
+		warn(true, "ownership unknown (%s)", down)
 	case len(installs) == 0:
-		warn("no kgateway install detected")
+		warn(false, "no kgateway install detected")
 	case pinMissing && err == nil:
-		warn("install %q not detected", s.Install)
+		warn(false, "install %q not detected", s.Install)
 	}
 	f.hide = !s.AllControllers && f.known && len(installs) > 0 && !pinMissing
 	if f.hide {
