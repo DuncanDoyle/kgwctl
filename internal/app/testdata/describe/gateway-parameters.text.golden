@@ -1,0 +1,9 @@
+Name:                 params
+Namespace:            default
+Kind:                 GatewayParameters.gateway.kgateway.dev
+Install:              <none>
+Age:                  10d
+Generation:           1
+Observed generation:  <none>
+Conditions:
+  object:  <no status>

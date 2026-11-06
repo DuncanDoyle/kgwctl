@@ -1,0 +1,14 @@
+Name:                 route-policy
+Namespace:            default
+Kind:                 TrafficPolicy.gateway.kgateway.dev
+Install:              kgateway-system/kgateway
+Age:                  10d
+Generation:           1
+Observed generation:  <none>
+Conditions:
+  ancestor Gateway/kgateway-system/http (kgateway.dev/kgateway):
+    TYPE      STATUS  REASON    MESSAGE  LAST TRANSITION       OBSERVED GEN
+    Accepted  True    Accepted  -        2026-01-01T00:00:00Z  1
+Relations:
+  Ancestors (from status):
+    Gateway/kgateway-system/http  accepted  kgateway.dev/kgateway

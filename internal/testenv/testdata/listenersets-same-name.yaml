@@ -1,0 +1,28 @@
+# Applied after healthy.yaml, with the XListenerSet CRD installed: a
+# ListenerSet and an XListenerSet both named kgateway-system/same.
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: ListenerSet
+metadata:
+  name: same
+  namespace: kgateway-system
+spec:
+  parentRef:
+    name: http
+  listeners:
+    - name: same
+      protocol: HTTP
+      port: 8083
+---
+apiVersion: gateway.networking.x-k8s.io/v1alpha1
+kind: XListenerSet
+metadata:
+  name: same
+  namespace: kgateway-system
+spec:
+  parentRef:
+    name: http
+  listeners:
+    - name: same-x
+      protocol: HTTP
+      port: 8084

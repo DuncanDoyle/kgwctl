@@ -10,7 +10,7 @@ import (
 
 // TestExitCodeMatrix pins that every output format of a command exits the same way, and prints nothing to stdout on error (§8).
 func TestExitCodeMatrix(t *testing.T) {
-	// version needs discovery, so its error cases fault discovery; get faults the httproutes input.
+	// version needs discovery, so its error cases fault discovery; get and describe fault the httproutes input.
 	getFault := func(a testenv.Action) func(p *testenv.Proxy) {
 		return func(p *testenv.Proxy) {
 			p.Rule(testenv.Match{Kind: testenv.KindAcquire, Resource: httpRoutes}, a)
@@ -34,6 +34,7 @@ func TestExitCodeMatrix(t *testing.T) {
 	}{
 		{name: "get", formats: getFormats, fault: getFault, args: []string{"get", "hr", "-A"}},
 		{name: "version", formats: []string{"text", "json", "yaml"}, fault: versionFault, args: []string{"version"}},
+		{name: "describe", formats: describeFormats, fault: getFault, args: []string{"describe", "hr", "example", "-n", "default"}},
 	}
 	cases := []struct {
 		name   string
@@ -45,8 +46,11 @@ func TestExitCodeMatrix(t *testing.T) {
 	}{
 		{name: "success", want: 0},
 		{name: "not-found", want: 1, args: func(c string) []string {
-			if c == "get" {
+			switch c {
+			case "get":
 				return []string{"get", "gw", "missing", "-n", "kgateway-system"}
+			case "describe":
+				return []string{"describe", "gw", "missing", "-n", "kgateway-system"}
 			}
 			return nil
 		}},

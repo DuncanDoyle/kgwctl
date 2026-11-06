@@ -1,0 +1,25 @@
+Name:                 example
+Namespace:            default
+Kind:                 HTTPRoute.gateway.networking.k8s.io
+Install:              unknown (pods: denied)
+Age:                  10d
+Generation:           1
+Observed generation:  <none>
+Spec:
+  Hostnames:  *
+  Rules:
+    rule 0:
+      Matches:   PathPrefix /
+      Filters:   <none>
+      Backends:  Service/example:8080 weight 1
+Conditions:
+  parent Gateway/kgateway-system/http (kgateway.dev/kgateway):
+    TYPE          STATUS  REASON        MESSAGE  LAST TRANSITION       OBSERVED GEN
+    Accepted      True    Accepted      -        2026-01-01T00:00:00Z  1
+    ResolvedRefs  True    ResolvedRefs  -        2026-01-01T00:00:00Z  1
+Relations unknown (pods: denied)
+Declared references (not resolved):
+  Parent refs:   Gateway/kgateway-system/http
+  Backend refs:  Service/example
+Incomplete inputs:
+  pods: denied: pods is forbidden (injected by testenv)

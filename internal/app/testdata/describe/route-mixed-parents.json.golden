@@ -1,0 +1,135 @@
+{
+  "schemaVersion": "kgwctl.kgateway.dev/v1alpha1",
+  "kind": "Describe",
+  "item": {
+    "object": {
+      "kind": "HTTPRoute",
+      "group": "gateway.networking.k8s.io",
+      "namespace": "mixed",
+      "name": "mixed",
+      "install": "kgateway-system/kgateway",
+      "creationTimestamp": "X",
+      "age": "10d",
+      "generation": 1
+    },
+    "spec": {
+      "rules": [
+        {
+          "matches": [
+            "PathPrefix /"
+          ]
+        }
+      ]
+    },
+    "conditions": [
+      {
+        "scope": "parent Gateway/a",
+        "controller": "kgateway.dev/kgateway",
+        "conditions": [
+          {
+            "type": "Accepted",
+            "status": "True",
+            "reason": "Accepted",
+            "lastTransition": "2026-01-01T00:00:00Z",
+            "observedGeneration": 1
+          },
+          {
+            "type": "ResolvedRefs",
+            "status": "True",
+            "reason": "ResolvedRefs",
+            "lastTransition": "2026-01-01T00:00:00Z",
+            "observedGeneration": 1
+          }
+        ]
+      },
+      {
+        "scope": "parent Gateway/c",
+        "controller": "kgateway.dev/kgateway",
+        "conditions": [
+          {
+            "type": "Accepted",
+            "status": "True",
+            "reason": "Accepted",
+            "lastTransition": "2026-01-01T00:00:00Z",
+            "observedGeneration": 0,
+            "stale": true
+          },
+          {
+            "type": "ResolvedRefs",
+            "status": "True",
+            "reason": "ResolvedRefs",
+            "lastTransition": "2026-01-01T00:00:00Z",
+            "observedGeneration": 0,
+            "stale": true
+          }
+        ]
+      },
+      {
+        "scope": "parent Gateway/d",
+        "controller": "example.com/other",
+        "conditions": [
+          {
+            "type": "Accepted",
+            "status": "True",
+            "reason": "Accepted",
+            "lastTransition": "2026-01-01T00:00:00Z",
+            "observedGeneration": 1
+          },
+          {
+            "type": "ResolvedRefs",
+            "status": "True",
+            "reason": "ResolvedRefs",
+            "lastTransition": "2026-01-01T00:00:00Z",
+            "observedGeneration": 1
+          }
+        ]
+      }
+    ],
+    "relations": {
+      "resolved": true,
+      "parents": [
+        {
+          "parent": {
+            "group": "gateway.networking.k8s.io",
+            "kind": "Gateway",
+            "namespace": "mixed",
+            "name": "a"
+          },
+          "state": "accepted",
+          "reason": "Accepted",
+          "controller": "kgateway.dev/kgateway"
+        },
+        {
+          "parent": {
+            "group": "gateway.networking.k8s.io",
+            "kind": "Gateway",
+            "namespace": "mixed",
+            "name": "b"
+          },
+          "state": "no status"
+        },
+        {
+          "parent": {
+            "group": "gateway.networking.k8s.io",
+            "kind": "Gateway",
+            "namespace": "mixed",
+            "name": "c"
+          },
+          "state": "stale",
+          "reason": "Accepted",
+          "controller": "kgateway.dev/kgateway"
+        },
+        {
+          "parent": {
+            "group": "gateway.networking.k8s.io",
+            "kind": "Gateway",
+            "namespace": "mixed",
+            "name": "d"
+          },
+          "state": "other",
+          "controller": "example.com/other"
+        }
+      ]
+    }
+  }
+}

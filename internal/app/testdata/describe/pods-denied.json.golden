@@ -1,0 +1,69 @@
+{
+  "schemaVersion": "kgwctl.kgateway.dev/v1alpha1",
+  "kind": "Describe",
+  "item": {
+    "object": {
+      "kind": "HTTPRoute",
+      "group": "gateway.networking.k8s.io",
+      "namespace": "default",
+      "name": "example",
+      "installUnknown": "pods: denied",
+      "creationTimestamp": "X",
+      "age": "10d",
+      "generation": 1
+    },
+    "spec": {
+      "rules": [
+        {
+          "matches": [
+            "PathPrefix /"
+          ],
+          "backendRefs": [
+            "Service/example:8080 weight 1"
+          ]
+        }
+      ]
+    },
+    "conditions": [
+      {
+        "scope": "parent Gateway/kgateway-system/http",
+        "controller": "kgateway.dev/kgateway",
+        "conditions": [
+          {
+            "type": "Accepted",
+            "status": "True",
+            "reason": "Accepted",
+            "lastTransition": "2026-01-01T00:00:00Z",
+            "observedGeneration": 1
+          },
+          {
+            "type": "ResolvedRefs",
+            "status": "True",
+            "reason": "ResolvedRefs",
+            "lastTransition": "2026-01-01T00:00:00Z",
+            "observedGeneration": 1
+          }
+        ]
+      }
+    ],
+    "relations": {
+      "resolved": false,
+      "unknown": "pods: denied",
+      "declared": {
+        "parentRefs": [
+          "Gateway/kgateway-system/http"
+        ],
+        "backendRefs": [
+          "Service/example"
+        ]
+      }
+    },
+    "incomplete": [
+      {
+        "input": "pods",
+        "state": "denied",
+        "reason": "pods is forbidden (injected by testenv)"
+      }
+    ]
+  }
+}

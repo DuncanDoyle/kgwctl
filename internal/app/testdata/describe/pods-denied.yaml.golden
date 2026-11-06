@@ -1,0 +1,44 @@
+item:
+  conditions:
+  - conditions:
+    - lastTransition: "2026-01-01T00:00:00Z"
+      observedGeneration: 1
+      reason: Accepted
+      status: "True"
+      type: Accepted
+    - lastTransition: "2026-01-01T00:00:00Z"
+      observedGeneration: 1
+      reason: ResolvedRefs
+      status: "True"
+      type: ResolvedRefs
+    controller: kgateway.dev/kgateway
+    scope: parent Gateway/kgateway-system/http
+  incomplete:
+  - input: pods
+    reason: pods is forbidden (injected by testenv)
+    state: denied
+  object:
+    age: 10d
+    creationTimestamp: "X"
+    generation: 1
+    group: gateway.networking.k8s.io
+    installUnknown: 'pods: denied'
+    kind: HTTPRoute
+    name: example
+    namespace: default
+  relations:
+    declared:
+      backendRefs:
+      - Service/example
+      parentRefs:
+      - Gateway/kgateway-system/http
+    resolved: false
+    unknown: 'pods: denied'
+  spec:
+    rules:
+    - backendRefs:
+      - Service/example:8080 weight 1
+      matches:
+      - PathPrefix /
+kind: Describe
+schemaVersion: kgwctl.kgateway.dev/v1alpha1

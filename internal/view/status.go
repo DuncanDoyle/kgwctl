@@ -57,13 +57,13 @@ var summaryOrder = []ParentState{StateRejected, StateStale, StateNoStatus, State
 // ParentSummary is the state of one route parent or policy ancestor for one condition type.
 type ParentSummary struct {
 	// Parent is the parentRef or ancestorRef, with defaults applied.
-	Parent objects.ParentRef
-	State  ParentState
+	Parent objects.ParentRef `json:"parent"`
+	State  ParentState       `json:"state"`
 	// Reason is the deciding condition's reason, when there is one.
-	Reason string
+	Reason string `json:"reason,omitempty"`
 	// Controller is the deciding entry's controller; for other, every
 	// controller that wrote an entry, sorted and comma-separated.
-	Controller string
+	Controller string `json:"controller,omitempty"`
 }
 
 // entry is one status entry for a parent: a route's status.parents or a policy's status.ancestors item.

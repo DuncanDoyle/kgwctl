@@ -1,0 +1,21 @@
+{
+  "schemaVersion": "kgwctl.kgateway.dev/v1alpha1",
+  "kind": "Describe",
+  "item": {
+    "object": {
+      "kind": "GatewayParameters",
+      "group": "gateway.kgateway.dev",
+      "namespace": "default",
+      "name": "params",
+      "creationTimestamp": "X",
+      "age": "10d",
+      "generation": 1
+    },
+    "conditions": [
+      {
+        "scope": "object",
+        "conditions": []
+      }
+    ]
+  }
+}

@@ -1,0 +1,15 @@
+item:
+  conditions: []
+  object:
+    age: 10d
+    creationTimestamp: "X"
+    generation: 1
+    group: gateway.kgateway.dev
+    install: kgateway-system/kgateway
+    kind: TrafficPolicy
+    name: no-ancestors
+    namespace: default
+  relations:
+    resolved: false
+kind: Describe
+schemaVersion: kgwctl.kgateway.dev/v1alpha1

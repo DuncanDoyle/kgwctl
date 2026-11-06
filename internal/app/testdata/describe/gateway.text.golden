@@ -1,0 +1,31 @@
+Name:                 http
+Namespace:            kgateway-system
+Kind:                 Gateway.gateway.networking.k8s.io
+Install:              kgateway-system/kgateway
+Age:                  10d
+Generation:           1
+Observed generation:  1
+Spec:
+  Class:  kgateway
+  Listeners:
+    NAME  PORT  PROTOCOL  HOSTNAME  TLS  ALLOWED ROUTES
+    http  8080  HTTP      *         -    from All
+Conditions:
+  object:
+    TYPE        STATUS  REASON      MESSAGE  LAST TRANSITION       OBSERVED GEN
+    Accepted    True    Accepted    -        2026-01-01T00:00:00Z  1
+    Programmed  True    Programmed  -        2026-01-01T00:00:00Z  1
+  listener http:
+    TYPE          STATUS  REASON        MESSAGE  LAST TRANSITION       OBSERVED GEN
+    Accepted      True    Accepted      -        2026-01-01T00:00:00Z  1
+    Programmed    True    Programmed    -        2026-01-01T00:00:00Z  1
+    ResolvedRefs  True    ResolvedRefs  -        2026-01-01T00:00:00Z  1
+Relations:
+  Attached routes:
+    listener http:  HTTPRoute/default/example
+  Not accepted:
+    ROUTE                       LISTENER                ATTACHMENT    CONDITION
+    HTTPRoute/default/rejected  http                    not-accepted  Accepted=False (NotAllowedByListeners): hostname rejected.example.com matches no listener
+    HTTPRoute/via-extra         ListenerSet/extra:*     pending       no status from the controller
+    HTTPRoute/via-extra-x       XListenerSet/extra-x:*  pending       no status from the controller
+  ListenerSets:  ListenerSet/extra, XListenerSet/extra-x

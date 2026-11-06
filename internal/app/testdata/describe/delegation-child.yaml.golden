@@ -1,0 +1,47 @@
+item:
+  conditions:
+  - conditions:
+    - lastTransition: "2026-01-01T00:00:00Z"
+      observedGeneration: 1
+      reason: Accepted
+      status: "True"
+      type: Accepted
+    - lastTransition: "2026-01-01T00:00:00Z"
+      observedGeneration: 1
+      reason: ResolvedRefs
+      status: "True"
+      type: ResolvedRefs
+    controller: kgateway.dev/kgateway
+    scope: parent HTTPRoute/parent
+  object:
+    age: 10d
+    creationTimestamp: "X"
+    generation: 1
+    group: gateway.networking.k8s.io
+    install: kgateway-system/kgateway
+    kind: HTTPRoute
+    name: child-a
+    namespace: default
+  relations:
+    backends:
+    - Service/example
+    delegationParents:
+    - HTTPRoute/parent
+    parents:
+    - controller: kgateway.dev/kgateway
+      parent:
+        group: gateway.networking.k8s.io
+        kind: HTTPRoute
+        name: parent
+        namespace: default
+      reason: Accepted
+      state: accepted
+    resolved: true
+  spec:
+    rules:
+    - backendRefs:
+      - Service/example:8080 weight 1
+      matches:
+      - PathPrefix /
+kind: Describe
+schemaVersion: kgwctl.kgateway.dev/v1alpha1

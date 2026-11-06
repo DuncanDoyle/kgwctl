@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "kgwctl.kgateway.dev/v1alpha1",
+  "kind": "Describe",
+  "item": {
+    "object": {
+      "kind": "TrafficPolicy",
+      "group": "gateway.kgateway.dev",
+      "namespace": "default",
+      "name": "no-ancestors",
+      "install": "kgateway-system/kgateway",
+      "creationTimestamp": "X",
+      "age": "10d",
+      "generation": 1
+    },
+    "conditions": [],
+    "relations": {
+      "resolved": false
+    }
+  }
+}

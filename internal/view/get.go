@@ -346,19 +346,24 @@ func hostnames(u *unstructured.Unstructured) string {
 
 // backends lists the distinct backends route u sends or mirrors to; delegation refs are not backends.
 func backends(k kinds.Served, u *unstructured.Unstructured) string {
+	var out []string
+	for _, t := range backendTargets(k, u) {
+		if s := refName(t.Ref, u.GetNamespace(), "Service"); !slices.Contains(out, s) {
+			out = append(out, s)
+		}
+	}
+	return orNone(strings.Join(out, ","))
+}
+
+// backendTargets are route u's backend and mirror targets, from the typed view for an HTTPRoute.
+func backendTargets(k kinds.Served, u *unstructured.Unstructured) []objects.BackendTarget {
 	var ts []objects.BackendTarget
 	if k.Group == objects.GatewayAPIGroup && k.Kind == "HTTPRoute" {
 		ts = objects.BackendTargets(objects.DecodeHTTPRoute(u))
 	} else {
 		ts = objects.RouteBackendTargets(u)
 	}
-	var out []string
-	for _, t := range ts {
-		if s := refName(t.Ref, u.GetNamespace(), "Service"); !slices.Contains(out, s) {
-			out = append(out, s)
-		}
-	}
-	return orNone(strings.Join(out, ","))
+	return ts
 }
 
 // parametersRef is a GatewayClass's spec.parametersRef as "Kind/[namespace/]name".

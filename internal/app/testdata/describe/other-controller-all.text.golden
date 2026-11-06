@@ -1,0 +1,19 @@
+Name:                 edge
+Namespace:            other
+Kind:                 Gateway.gateway.networking.k8s.io
+Install:              <none>
+Age:                  10d
+Generation:           1
+Observed generation:  <none>
+Spec:
+  Class:  other
+  Listeners:
+    NAME  PORT  PROTOCOL  HOSTNAME  TLS  ALLOWED ROUTES
+    http  8080  HTTP      *         -    from Same
+Conditions:
+  object:
+    TYPE        STATUS   REASON   MESSAGE                 LAST TRANSITION       OBSERVED GEN
+    Accepted    Unknown  Pending  Waiting for controller  1970-01-01T00:00:00Z  0
+    Programmed  Unknown  Pending  Waiting for controller  1970-01-01T00:00:00Z  0
+Declared references (not resolved):
+  Parent refs:  <none>
