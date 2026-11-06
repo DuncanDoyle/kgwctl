@@ -1,0 +1,36 @@
+Name:                 mixed
+Namespace:            mixed
+Kind:                 HTTPRoute.gateway.networking.k8s.io
+Install:              kgateway-system/kgateway
+Age:                  10d
+Generation:           1
+Observed generation:  <none>
+Spec:
+  Hostnames:  *
+  Rules:
+    rule 0:
+      Matches:   PathPrefix /
+      Filters:   <none>
+      Backends:  <none>
+Conditions:
+  parent Gateway/a (kgateway.dev/kgateway):
+    TYPE          STATUS  REASON        MESSAGE  LAST TRANSITION       OBSERVED GEN
+    Accepted      True    Accepted      -        2026-01-01T00:00:00Z  1
+    ResolvedRefs  True    ResolvedRefs  -        2026-01-01T00:00:00Z  1
+  parent Gateway/c (kgateway.dev/kgateway):
+    TYPE          STATUS  REASON        MESSAGE  LAST TRANSITION       OBSERVED GEN
+    Accepted      True    Accepted      -        2026-01-01T00:00:00Z  0 (stale)
+    ResolvedRefs  True    ResolvedRefs  -        2026-01-01T00:00:00Z  0 (stale)
+  parent Gateway/d (example.com/other):
+    TYPE          STATUS  REASON        MESSAGE  LAST TRANSITION       OBSERVED GEN
+    Accepted      True    Accepted      -        2026-01-01T00:00:00Z  1
+    ResolvedRefs  True    ResolvedRefs  -        2026-01-01T00:00:00Z  1
+Relations:
+  Parents:
+    Gateway/a  accepted   kgateway.dev/kgateway
+    Gateway/b  no status  -
+    Gateway/c  stale      kgateway.dev/kgateway
+    Gateway/d  other      example.com/other
+  Delegation parents:   <none>
+  Delegation children:  <none>
+  Backends:             <none>

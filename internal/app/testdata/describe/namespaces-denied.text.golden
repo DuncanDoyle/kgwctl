@@ -1,0 +1,25 @@
+Name:                 http
+Namespace:            kgateway-system
+Kind:                 Gateway.gateway.networking.k8s.io
+Install:              unknown (namespaces: denied)
+Age:                  10d
+Generation:           1
+Observed generation:  1
+Spec:
+  Class:  kgateway
+  Listeners:
+    NAME  PORT  PROTOCOL  HOSTNAME  TLS  ALLOWED ROUTES
+    http  8080  HTTP      *         -    from All
+Conditions:
+  object:
+    TYPE        STATUS  REASON      MESSAGE  LAST TRANSITION       OBSERVED GEN
+    Accepted    True    Accepted    -        2026-01-01T00:00:00Z  1
+    Programmed  True    Programmed  -        2026-01-01T00:00:00Z  1
+  listener http:
+    TYPE          STATUS  REASON        MESSAGE  LAST TRANSITION       OBSERVED GEN
+    Accepted      True    Accepted      -        2026-01-01T00:00:00Z  1
+    Programmed    True    Programmed    -        2026-01-01T00:00:00Z  1
+    ResolvedRefs  True    ResolvedRefs  -        2026-01-01T00:00:00Z  1
+Relations unknown (namespaces: denied)
+Incomplete inputs:
+  namespaces: denied: namespaces is forbidden (injected by testenv)

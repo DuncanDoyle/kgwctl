@@ -1,0 +1,21 @@
+Name:                 label-parent
+Namespace:            default
+Kind:                 HTTPRoute.gateway.networking.k8s.io
+Install:              kgateway-system/kgateway
+Age:                  10d
+Generation:           1
+Observed generation:  <none>
+Spec:
+  Hostnames:  *
+  Rules:
+    rule 0:
+      Matches:   PathPrefix /team-b
+      Filters:   <none>
+      Backends:  delegate (label) team-b
+Conditions:  <none>
+Relations:
+  Parents:
+    Gateway/kgateway-system/http  no status  -
+  Delegation parents:   <none>
+  Delegation children:  <none>
+  Backends:             <none>

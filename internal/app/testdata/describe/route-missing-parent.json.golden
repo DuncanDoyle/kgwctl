@@ -1,0 +1,60 @@
+{
+  "schemaVersion": "kgwctl.kgateway.dev/v1alpha1",
+  "kind": "Describe",
+  "item": {
+    "object": {
+      "kind": "HTTPRoute",
+      "group": "gateway.networking.k8s.io",
+      "namespace": "default",
+      "name": "to-missing",
+      "creationTimestamp": "X",
+      "generation": 1
+    },
+    "spec": {
+      "rules": [
+        {
+          "matches": [
+            {
+              "path": {
+                "type": "PathPrefix",
+                "value": "/"
+              }
+            }
+          ],
+          "backendRefs": [
+            {
+              "group": "",
+              "kind": "Service",
+              "namespace": "default",
+              "name": "example",
+              "port": 8080,
+              "weight": 1
+            }
+          ]
+        }
+      ]
+    },
+    "conditions": [],
+    "relations": {
+      "resolved": false,
+      "declared": {
+        "parentRefs": [
+          {
+            "group": "gateway.networking.k8s.io",
+            "kind": "Gateway",
+            "namespace": "kgateway-system",
+            "name": "missing"
+          }
+        ],
+        "backendRefs": [
+          {
+            "group": "",
+            "kind": "Service",
+            "namespace": "default",
+            "name": "example"
+          }
+        ]
+      }
+    }
+  }
+}

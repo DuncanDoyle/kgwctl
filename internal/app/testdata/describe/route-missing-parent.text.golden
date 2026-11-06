@@ -1,0 +1,18 @@
+Name:                 to-missing
+Namespace:            default
+Kind:                 HTTPRoute.gateway.networking.k8s.io
+Install:              <none>
+Age:                  10d
+Generation:           1
+Observed generation:  <none>
+Spec:
+  Hostnames:  *
+  Rules:
+    rule 0:
+      Matches:   PathPrefix /
+      Filters:   <none>
+      Backends:  example:8080 weight 1
+Conditions:  <none>
+Declared references (not resolved):
+  Parent refs:   Gateway/kgateway-system/missing
+  Backend refs:  example

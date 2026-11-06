@@ -203,7 +203,7 @@ func (g getter) cells(t resolve.Target, rw row) []string {
 		wide = []string{lsets}
 	case kinds.CategoryListenerSet:
 		p := objects.ListenerSetParent(u)
-		mid = []string{refName(p.Ref(), u.GetNamespace(), "Gateway"), ObjectCondition(u, "Accepted"),
+		mid = []string{RefName(p.Ref(), u.GetNamespace(), "Gateway"), ObjectCondition(u, "Accepted"),
 			ObjectCondition(u, "Programmed"), strconv.Itoa(listenerCount(u))}
 	case kinds.CategoryRoute:
 		mid = []string{hostnames(u), parentNames(objects.RouteParentRefs(u), u.GetNamespace()),
@@ -294,7 +294,7 @@ func (g getter) delegation(u *unstructured.Unstructured) string {
 	rr := ix.Routes[id]
 	var parts []string
 	for _, p := range rr.ParentRoutes {
-		parts = append(parts, "child of "+refName(p, u.GetNamespace(), "HTTPRoute"))
+		parts = append(parts, "child of "+RefName(p, u.GetNamespace(), "HTTPRoute"))
 	}
 	switch n := rr.Children; {
 	case n == 1:
@@ -305,8 +305,8 @@ func (g getter) delegation(u *unstructured.Unstructured) string {
 	return orNone(strings.Join(parts, ", "))
 }
 
-// refName is ref seen from namespace ns, "[Kind/][namespace/]name"; Kind is omitted when it is defKind.
-func refName(ref objects.Ref, ns, defKind string) string {
+// RefName is ref seen from namespace ns, "[Kind/][namespace/]name"; Kind is omitted when it is defKind.
+func RefName(ref objects.Ref, ns, defKind string) string {
 	s := ref.Name
 	if ref.Namespace != "" && ref.Namespace != ns {
 		s = ref.Namespace + "/" + s
@@ -321,7 +321,7 @@ func refName(ref objects.Ref, ns, defKind string) string {
 func parentNames(ps []objects.ParentRef, ns string) string {
 	var out []string
 	for _, p := range ps {
-		s := refName(p.Ref(), ns, "Gateway")
+		s := RefName(p.Ref(), ns, "Gateway")
 		if p.SectionName != "" {
 			s += ":" + p.SectionName
 		}
@@ -346,19 +346,24 @@ func hostnames(u *unstructured.Unstructured) string {
 
 // backends lists the distinct backends route u sends or mirrors to; delegation refs are not backends.
 func backends(k kinds.Served, u *unstructured.Unstructured) string {
+	var out []string
+	for _, t := range backendTargets(k, u) {
+		if s := RefName(t.Ref, u.GetNamespace(), "Service"); !slices.Contains(out, s) {
+			out = append(out, s)
+		}
+	}
+	return orNone(strings.Join(out, ","))
+}
+
+// backendTargets are route u's backend and mirror targets, from the typed view for an HTTPRoute.
+func backendTargets(k kinds.Served, u *unstructured.Unstructured) []objects.BackendTarget {
 	var ts []objects.BackendTarget
 	if k.Group == objects.GatewayAPIGroup && k.Kind == "HTTPRoute" {
 		ts = objects.BackendTargets(objects.DecodeHTTPRoute(u))
 	} else {
 		ts = objects.RouteBackendTargets(u)
 	}
-	var out []string
-	for _, t := range ts {
-		if s := refName(t.Ref, u.GetNamespace(), "Service"); !slices.Contains(out, s) {
-			out = append(out, s)
-		}
-	}
-	return orNone(strings.Join(out, ","))
+	return ts
 }
 
 // parametersRef is a GatewayClass's spec.parametersRef as "Kind/[namespace/]name".

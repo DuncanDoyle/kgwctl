@@ -1,0 +1,90 @@
+{
+  "schemaVersion": "kgwctl.kgateway.dev/v1alpha1",
+  "kind": "Describe",
+  "item": {
+    "object": {
+      "kind": "HTTPRoute",
+      "group": "gateway.networking.k8s.io",
+      "namespace": "default",
+      "name": "parent",
+      "install": "kgateway-system/kgateway",
+      "creationTimestamp": "X",
+      "generation": 1
+    },
+    "spec": {
+      "rules": [
+        {
+          "matches": [
+            {
+              "path": {
+                "type": "PathPrefix",
+                "value": "/"
+              }
+            }
+          ],
+          "backendRefs": [
+            {
+              "delegation": {
+                "mode": "name",
+                "namespace": "default",
+                "name": "child-a"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "conditions": [
+      {
+        "scope": "parent",
+        "ref": {
+          "group": "gateway.networking.k8s.io",
+          "kind": "Gateway",
+          "namespace": "kgateway-system",
+          "name": "http"
+        },
+        "controller": "kgateway.dev/kgateway",
+        "conditions": [
+          {
+            "type": "Accepted",
+            "status": "True",
+            "reason": "Accepted",
+            "lastTransition": "2026-01-01T00:00:00Z",
+            "observedGeneration": 1
+          },
+          {
+            "type": "ResolvedRefs",
+            "status": "True",
+            "reason": "ResolvedRefs",
+            "lastTransition": "2026-01-01T00:00:00Z",
+            "observedGeneration": 1
+          }
+        ]
+      }
+    ],
+    "relations": {
+      "resolved": true,
+      "parents": [
+        {
+          "parent": {
+            "group": "gateway.networking.k8s.io",
+            "kind": "Gateway",
+            "namespace": "kgateway-system",
+            "name": "http"
+          },
+          "state": "accepted",
+          "reason": "Accepted",
+          "controller": "kgateway.dev/kgateway"
+        }
+      ],
+      "delegationChildren": [
+        {
+          "group": "gateway.networking.k8s.io",
+          "kind": "HTTPRoute",
+          "namespace": "default",
+          "name": "child-a"
+        }
+      ]
+    }
+  }
+}

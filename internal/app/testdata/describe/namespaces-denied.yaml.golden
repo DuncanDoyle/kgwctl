@@ -1,0 +1,57 @@
+item:
+  conditions:
+  - conditions:
+    - lastTransition: "2026-01-01T00:00:00Z"
+      observedGeneration: 1
+      reason: Accepted
+      status: "True"
+      type: Accepted
+    - lastTransition: "2026-01-01T00:00:00Z"
+      observedGeneration: 1
+      reason: Programmed
+      status: "True"
+      type: Programmed
+    scope: object
+  - conditions:
+    - lastTransition: "2026-01-01T00:00:00Z"
+      observedGeneration: 1
+      reason: Accepted
+      status: "True"
+      type: Accepted
+    - lastTransition: "2026-01-01T00:00:00Z"
+      observedGeneration: 1
+      reason: Programmed
+      status: "True"
+      type: Programmed
+    - lastTransition: "2026-01-01T00:00:00Z"
+      observedGeneration: 1
+      reason: ResolvedRefs
+      status: "True"
+      type: ResolvedRefs
+    listener: http
+    scope: listener
+  incomplete:
+  - input: namespaces
+    reason: namespaces is forbidden (injected by testenv)
+    state: denied
+  object:
+    creationTimestamp: "X"
+    generation: 1
+    group: gateway.networking.k8s.io
+    installUnknown: 'namespaces: denied'
+    kind: Gateway
+    name: http
+    namespace: kgateway-system
+    observedGeneration: 1
+  relations:
+    unknown: 'namespaces: denied'
+  spec:
+    class: kgateway
+    listeners:
+    - allowedRoutes:
+        from: All
+      name: http
+      port: 8080
+      protocol: HTTP
+kind: Describe
+schemaVersion: kgwctl.kgateway.dev/v1alpha1

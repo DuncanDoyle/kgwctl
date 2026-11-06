@@ -1,0 +1,35 @@
+item:
+  conditions:
+  - conditions:
+    - lastTransition: "2026-01-01T00:00:00Z"
+      observedGeneration: 1
+      reason: Accepted
+      status: "True"
+      type: Accepted
+    controller: kgateway.dev/kgateway
+    ref:
+      group: gateway.networking.k8s.io
+      kind: Gateway
+      name: http
+      namespace: kgateway-system
+    scope: ancestor
+  object:
+    creationTimestamp: "X"
+    generation: 1
+    group: gateway.kgateway.dev
+    install: kgateway-system/kgateway
+    kind: TrafficPolicy
+    name: route-policy
+    namespace: default
+  relations:
+    ancestors:
+    - controller: kgateway.dev/kgateway
+      parent:
+        group: gateway.networking.k8s.io
+        kind: Gateway
+        name: http
+        namespace: kgateway-system
+      reason: Accepted
+      state: accepted
+kind: Describe
+schemaVersion: kgwctl.kgateway.dev/v1alpha1

@@ -1,0 +1,171 @@
+{
+  "schemaVersion": "kgwctl.kgateway.dev/v1alpha1",
+  "kind": "Describe",
+  "item": {
+    "object": {
+      "kind": "Gateway",
+      "group": "gateway.networking.k8s.io",
+      "namespace": "kgateway-system",
+      "name": "http",
+      "install": "kgateway-system/kgateway",
+      "creationTimestamp": "X",
+      "generation": 1,
+      "observedGeneration": 1
+    },
+    "spec": {
+      "class": "kgateway",
+      "listeners": [
+        {
+          "name": "http",
+          "port": 8080,
+          "protocol": "HTTP",
+          "allowedRoutes": {
+            "from": "All"
+          }
+        }
+      ]
+    },
+    "conditions": [
+      {
+        "scope": "object",
+        "conditions": [
+          {
+            "type": "Accepted",
+            "status": "True",
+            "reason": "Accepted",
+            "lastTransition": "2026-01-01T00:00:00Z",
+            "observedGeneration": 1
+          },
+          {
+            "type": "Programmed",
+            "status": "True",
+            "reason": "Programmed",
+            "lastTransition": "2026-01-01T00:00:00Z",
+            "observedGeneration": 1
+          }
+        ]
+      },
+      {
+        "scope": "listener",
+        "listener": "http",
+        "conditions": [
+          {
+            "type": "Accepted",
+            "status": "True",
+            "reason": "Accepted",
+            "lastTransition": "2026-01-01T00:00:00Z",
+            "observedGeneration": 1
+          },
+          {
+            "type": "Programmed",
+            "status": "True",
+            "reason": "Programmed",
+            "lastTransition": "2026-01-01T00:00:00Z",
+            "observedGeneration": 1
+          },
+          {
+            "type": "ResolvedRefs",
+            "status": "True",
+            "reason": "ResolvedRefs",
+            "lastTransition": "2026-01-01T00:00:00Z",
+            "observedGeneration": 1
+          }
+        ]
+      }
+    ],
+    "relations": {
+      "resolved": true,
+      "attachedRoutes": [
+        {
+          "parent": {
+            "group": "gateway.networking.k8s.io",
+            "kind": "Gateway",
+            "namespace": "kgateway-system",
+            "name": "http"
+          },
+          "listener": "http",
+          "routes": [
+            {
+              "group": "gateway.networking.k8s.io",
+              "kind": "HTTPRoute",
+              "namespace": "default",
+              "name": "example"
+            }
+          ]
+        }
+      ],
+      "notAccepted": [
+        {
+          "route": {
+            "group": "gateway.networking.k8s.io",
+            "kind": "HTTPRoute",
+            "namespace": "default",
+            "name": "rejected"
+          },
+          "parentRef": {
+            "group": "gateway.networking.k8s.io",
+            "kind": "Gateway",
+            "namespace": "kgateway-system",
+            "name": "http",
+            "sectionName": "http"
+          },
+          "attachment": "not-accepted",
+          "condition": {
+            "type": "Accepted",
+            "status": "False",
+            "reason": "NotAllowedByListeners",
+            "message": "hostname rejected.example.com matches no listener"
+          }
+        }
+      ],
+      "pending": [
+        {
+          "route": {
+            "group": "gateway.networking.k8s.io",
+            "kind": "HTTPRoute",
+            "namespace": "kgateway-system",
+            "name": "via-extra"
+          },
+          "parentRef": {
+            "group": "gateway.networking.k8s.io",
+            "kind": "ListenerSet",
+            "namespace": "kgateway-system",
+            "name": "extra"
+          },
+          "attachment": "pending",
+          "pending": "no status from the controller"
+        },
+        {
+          "route": {
+            "group": "gateway.networking.k8s.io",
+            "kind": "HTTPRoute",
+            "namespace": "kgateway-system",
+            "name": "via-extra-x"
+          },
+          "parentRef": {
+            "group": "gateway.networking.x-k8s.io",
+            "kind": "XListenerSet",
+            "namespace": "kgateway-system",
+            "name": "extra-x"
+          },
+          "attachment": "pending",
+          "pending": "no status from the controller"
+        }
+      ],
+      "listenerSets": [
+        {
+          "group": "gateway.networking.k8s.io",
+          "kind": "ListenerSet",
+          "namespace": "kgateway-system",
+          "name": "extra"
+        },
+        {
+          "group": "gateway.networking.x-k8s.io",
+          "kind": "XListenerSet",
+          "namespace": "kgateway-system",
+          "name": "extra-x"
+        }
+      ]
+    }
+  }
+}

@@ -9,7 +9,7 @@ A command-line tool for operators to inspect and troubleshoot kgateway installat
 ## Phases
 
 ### Phase 1 — Foundation and resource inspection
-**Status:** In progress — design approved 2026-11-05; 1.1 (foundation, `version`) and 1.2 (`get`) complete 2026-11-05
+**Status:** In progress — design approved 2026-11-05; 1.1 (foundation, `version`) 1.2 (`get`) complete 2026-11-05; 1.3 (`describe`) complete 2026-11-06
 **Docs:** `docs/phases/phase-1/`
 **Waits on:** none — E2 delivered in kgateway-ui v0.3.0
 

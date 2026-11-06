@@ -1,0 +1,51 @@
+{
+  "schemaVersion": "kgwctl.kgateway.dev/v1alpha1",
+  "kind": "Describe",
+  "item": {
+    "object": {
+      "kind": "TrafficPolicy",
+      "group": "gateway.kgateway.dev",
+      "namespace": "default",
+      "name": "route-policy",
+      "install": "kgateway-system/kgateway",
+      "creationTimestamp": "X",
+      "generation": 1
+    },
+    "conditions": [
+      {
+        "scope": "ancestor",
+        "ref": {
+          "group": "gateway.networking.k8s.io",
+          "kind": "Gateway",
+          "namespace": "kgateway-system",
+          "name": "http"
+        },
+        "controller": "kgateway.dev/kgateway",
+        "conditions": [
+          {
+            "type": "Accepted",
+            "status": "True",
+            "reason": "Accepted",
+            "lastTransition": "2026-01-01T00:00:00Z",
+            "observedGeneration": 1
+          }
+        ]
+      }
+    ],
+    "relations": {
+      "ancestors": [
+        {
+          "parent": {
+            "group": "gateway.networking.k8s.io",
+            "kind": "Gateway",
+            "namespace": "kgateway-system",
+            "name": "http"
+          },
+          "state": "accepted",
+          "reason": "Accepted",
+          "controller": "kgateway.dev/kgateway"
+        }
+      ]
+    }
+  }
+}

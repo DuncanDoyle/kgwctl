@@ -1,0 +1,147 @@
+{
+  "schemaVersion": "kgwctl.kgateway.dev/v1alpha1",
+  "kind": "Describe",
+  "item": {
+    "object": {
+      "kind": "HTTPRoute",
+      "group": "gateway.networking.k8s.io",
+      "namespace": "default",
+      "name": "rejected",
+      "install": "kgateway-system/kgateway",
+      "creationTimestamp": "X",
+      "generation": 1
+    },
+    "spec": {
+      "hostnames": [
+        "rejected.example.com"
+      ],
+      "rules": [
+        {
+          "matches": [
+            {
+              "path": {
+                "type": "PathPrefix",
+                "value": "/api"
+              },
+              "headers": [
+                {
+                  "type": "Exact",
+                  "name": "x-team",
+                  "value": "a"
+                }
+              ],
+              "queryParams": [
+                {
+                  "type": "RegularExpression",
+                  "name": "version",
+                  "value": "v[12]"
+                }
+              ],
+              "method": "GET"
+            }
+          ],
+          "filters": [
+            {
+              "type": "RequestHeaderModifier"
+            },
+            {
+              "type": "RequestMirror",
+              "target": {
+                "group": "",
+                "kind": "Service",
+                "namespace": "default",
+                "name": "api-shadow"
+              }
+            }
+          ],
+          "backendRefs": [
+            {
+              "group": "",
+              "kind": "Service",
+              "namespace": "default",
+              "name": "api",
+              "port": 8080,
+              "weight": 90
+            },
+            {
+              "group": "",
+              "kind": "Service",
+              "namespace": "default",
+              "name": "api-canary",
+              "port": 8080,
+              "weight": 10
+            }
+          ]
+        }
+      ]
+    },
+    "conditions": [
+      {
+        "scope": "parent",
+        "ref": {
+          "group": "gateway.networking.k8s.io",
+          "kind": "Gateway",
+          "namespace": "kgateway-system",
+          "name": "http",
+          "sectionName": "http"
+        },
+        "controller": "kgateway.dev/kgateway",
+        "conditions": [
+          {
+            "type": "Accepted",
+            "status": "False",
+            "reason": "NotAllowedByListeners",
+            "message": "hostname rejected.example.com matches no listener",
+            "lastTransition": "2026-01-01T00:00:00Z",
+            "observedGeneration": 1
+          },
+          {
+            "type": "ResolvedRefs",
+            "status": "True",
+            "reason": "ResolvedRefs",
+            "lastTransition": "2026-01-01T00:00:00Z",
+            "observedGeneration": 1
+          }
+        ]
+      }
+    ],
+    "relations": {
+      "resolved": true,
+      "parents": [
+        {
+          "parent": {
+            "group": "gateway.networking.k8s.io",
+            "kind": "Gateway",
+            "namespace": "kgateway-system",
+            "name": "http",
+            "sectionName": "http"
+          },
+          "state": "rejected",
+          "reason": "NotAllowedByListeners",
+          "controller": "kgateway.dev/kgateway"
+        }
+      ],
+      "backends": [
+        {
+          "group": "",
+          "kind": "Service",
+          "namespace": "default",
+          "name": "api-shadow",
+          "mirror": true
+        },
+        {
+          "group": "",
+          "kind": "Service",
+          "namespace": "default",
+          "name": "api"
+        },
+        {
+          "group": "",
+          "kind": "Service",
+          "namespace": "default",
+          "name": "api-canary"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,25 @@
+Name:                 rejected
+Namespace:            default
+Kind:                 HTTPRoute.gateway.networking.k8s.io
+Install:              kgateway-system/kgateway
+Age:                  10d
+Generation:           1
+Observed generation:  <none>
+Spec:
+  Hostnames:  rejected.example.com
+  Rules:
+    rule 0:
+      Matches:   PathPrefix /api; header x-team Exact a; query version RegularExpression v[12]; method GET
+      Filters:   RequestHeaderModifier, RequestMirror Service/api-shadow
+      Backends:  api:8080 weight 90, api-canary:8080 weight 10
+Conditions:
+  parent Gateway/kgateway-system/http:http (kgateway.dev/kgateway):
+    TYPE          STATUS  REASON                 MESSAGE                                            LAST TRANSITION       OBSERVED GEN
+    Accepted      False   NotAllowedByListeners  hostname rejected.example.com matches no listener  2026-01-01T00:00:00Z  1
+    ResolvedRefs  True    ResolvedRefs           -                                                  2026-01-01T00:00:00Z  1
+Relations:
+  Parents:
+    Gateway/kgateway-system/http:http  rejected: NotAllowedByListeners  kgateway.dev/kgateway
+  Delegation parents:   <none>
+  Delegation children:  <none>
+  Backends:             api-shadow (mirror), api, api-canary

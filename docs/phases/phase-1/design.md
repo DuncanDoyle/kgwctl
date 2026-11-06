@@ -128,9 +128,11 @@ Text output in kubectl-describe style. Sections:
      - A route gets its parents with attachment state, its delegation parents and children, and its backends.
    - **Not owned (unindexed):** for example a route whose parent doesn't exist, a route of another controller under `--all-controllers`, or any object when no install was detected. The CLI prints only what the object itself declares: parentRefs and backendRefs decoded from spec, and status entries decoded from status. The section is labelled "Declared references (not resolved)".
    - **Policies, either way:** their ancestors come from `status.ancestors` (`objects.PolicyAncestors`), labelled as status. The library does not resolve targets yet (E7).
-5. **Incomplete inputs:** the inputs the CLI could not read (§6.3) that affect this object's relations.
+5. **Incomplete inputs:** the inputs the CLI could not read (§6.3) that affect this object's install or relations.
 
-`-o json` and `-o yaml` emit the same content as a versioned document (§8).
+A Gateway's not-accepted routes are the rejected set `get` counts; pending links are listed separately. `describe` shows an object `get` would hide, when named (D-013).
+
+`-o json` and `-o yaml` emit the same content as a versioned, structured document (§8, `docs/output.md`, D-013).
 
 Phase 1 adds no attached or effective policy view. The library reads policy only through `status.ancestors` today (E7, Phase 5).
 

@@ -146,7 +146,7 @@ func (f *Flags) Context(parent context.Context) (context.Context, context.Cancel
 	return context.WithTimeout(parent, f.RequestTimeout)
 }
 
-// NewRoot builds the root command with the global flags, get, version,
+// NewRoot builds the root command with the global flags, get, describe, version,
 // completion and cfg.Commands.
 func NewRoot(cfg Config) *cobra.Command {
 	if cfg.Name == "" {
@@ -176,7 +176,7 @@ func NewRoot(cfg Config) *cobra.Command {
 	root.SetOut(cfg.Out)
 	root.SetErr(cfg.Err)
 	(&Flags{}).Bind(root.PersistentFlags())
-	root.AddCommand(newGetCmd(cfg.Registry, cfg.Now), newVersionCmd(cfg.Registry, cfg.Build))
+	root.AddCommand(newGetCmd(cfg.Registry, cfg.Now), newDescribeCmd(cfg.Registry, cfg.Now), newVersionCmd(cfg.Registry, cfg.Build))
 	root.AddCommand(cfg.Commands...)
 	return root
 }

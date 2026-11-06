@@ -1,0 +1,10 @@
+Name:                 no-ancestors
+Namespace:            default
+Kind:                 TrafficPolicy.gateway.kgateway.dev
+Install:              kgateway-system/kgateway
+Age:                  10d
+Generation:           1
+Observed generation:  <none>
+Conditions:  <none>
+Relations:
+  Ancestors (from status):  <none>

@@ -1,0 +1,53 @@
+item:
+  conditions:
+  - conditions:
+    - lastTransition: "1970-01-01T00:00:00Z"
+      message: Waiting for controller
+      observedGeneration: 0
+      reason: Pending
+      status: Unknown
+      type: Accepted
+    - lastTransition: "1970-01-01T00:00:00Z"
+      message: Waiting for controller
+      observedGeneration: 0
+      reason: Pending
+      status: Unknown
+      type: Programmed
+    scope: object
+  object:
+    creationTimestamp: "X"
+    generation: 1
+    group: gateway.networking.k8s.io
+    install: kgateway-system/kgateway
+    kind: ListenerSet
+    name: extra
+    namespace: kgateway-system
+  relations:
+    pending:
+    - attachment: pending
+      parentRef:
+        group: gateway.networking.k8s.io
+        kind: ListenerSet
+        name: extra
+        namespace: kgateway-system
+      pending: no status from the controller
+      route:
+        group: gateway.networking.k8s.io
+        kind: HTTPRoute
+        name: via-extra
+        namespace: kgateway-system
+    resolved: true
+  spec:
+    listeners:
+    - allowedRoutes:
+        from: Same
+      name: extra
+      port: 8081
+      protocol: HTTP
+    parent:
+      group: gateway.networking.k8s.io
+      kind: Gateway
+      name: http
+      namespace: kgateway-system
+kind: Describe
+schemaVersion: kgwctl.kgateway.dev/v1alpha1

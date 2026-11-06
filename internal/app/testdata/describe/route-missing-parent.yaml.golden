@@ -1,0 +1,37 @@
+item:
+  conditions: []
+  object:
+    creationTimestamp: "X"
+    generation: 1
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: to-missing
+    namespace: default
+  relations:
+    declared:
+      backendRefs:
+      - group: ""
+        kind: Service
+        name: example
+        namespace: default
+      parentRefs:
+      - group: gateway.networking.k8s.io
+        kind: Gateway
+        name: missing
+        namespace: kgateway-system
+    resolved: false
+  spec:
+    rules:
+    - backendRefs:
+      - group: ""
+        kind: Service
+        name: example
+        namespace: default
+        port: 8080
+        weight: 1
+      matches:
+      - path:
+          type: PathPrefix
+          value: /
+kind: Describe
+schemaVersion: kgwctl.kgateway.dev/v1alpha1

@@ -1,0 +1,87 @@
+{
+  "schemaVersion": "kgwctl.kgateway.dev/v1alpha1",
+  "kind": "Describe",
+  "item": {
+    "object": {
+      "kind": "Gateway",
+      "group": "gateway.networking.k8s.io",
+      "namespace": "kgateway-system",
+      "name": "http",
+      "installUnknown": "namespaces: denied",
+      "creationTimestamp": "X",
+      "generation": 1,
+      "observedGeneration": 1
+    },
+    "spec": {
+      "class": "kgateway",
+      "listeners": [
+        {
+          "name": "http",
+          "port": 8080,
+          "protocol": "HTTP",
+          "allowedRoutes": {
+            "from": "All"
+          }
+        }
+      ]
+    },
+    "conditions": [
+      {
+        "scope": "object",
+        "conditions": [
+          {
+            "type": "Accepted",
+            "status": "True",
+            "reason": "Accepted",
+            "lastTransition": "2026-01-01T00:00:00Z",
+            "observedGeneration": 1
+          },
+          {
+            "type": "Programmed",
+            "status": "True",
+            "reason": "Programmed",
+            "lastTransition": "2026-01-01T00:00:00Z",
+            "observedGeneration": 1
+          }
+        ]
+      },
+      {
+        "scope": "listener",
+        "listener": "http",
+        "conditions": [
+          {
+            "type": "Accepted",
+            "status": "True",
+            "reason": "Accepted",
+            "lastTransition": "2026-01-01T00:00:00Z",
+            "observedGeneration": 1
+          },
+          {
+            "type": "Programmed",
+            "status": "True",
+            "reason": "Programmed",
+            "lastTransition": "2026-01-01T00:00:00Z",
+            "observedGeneration": 1
+          },
+          {
+            "type": "ResolvedRefs",
+            "status": "True",
+            "reason": "ResolvedRefs",
+            "lastTransition": "2026-01-01T00:00:00Z",
+            "observedGeneration": 1
+          }
+        ]
+      }
+    ],
+    "relations": {
+      "unknown": "namespaces: denied"
+    },
+    "incomplete": [
+      {
+        "input": "namespaces",
+        "state": "denied",
+        "reason": "namespaces is forbidden (injected by testenv)"
+      }
+    ]
+  }
+}

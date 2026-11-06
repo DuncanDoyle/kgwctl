@@ -4,7 +4,7 @@
 Phase: 1 — Foundation and resource inspection
 Base: 779c421e8d8ed8a4a71847c5cc29bc61ffedbd09
 Docs: docs/phases/phase-1/
-Status: design approved 2026-11-05 (D-010); 1.1 and 1.2 complete; implementation sub-phase 1.3
+Status: design approved 2026-11-05 (D-010); 1.1–1.3 complete; next sub-phase 1.4
 
 ### Queue
 - [x] Q1 Owner reviews roadmap and decisions D-001–D-008 — approved 2026-11-04
@@ -15,7 +15,7 @@ Status: design approved 2026-11-05 (D-010); 1.1 and 1.2 complete; implementation
 - [x] Q6 File R1–R4 cross-repo issues in kgateway-ui (design §11) — DuncanDoyle/kgateway-ui#17–#20
 - [x] Q7 Sub-phase 1.1 — foundation — phase-1.1-complete.md; kgateway-ui v0.3.0
 - [x] Q8 Sub-phase 1.2 — `get` — phase-1.2-complete.md; reviews/1.2-codex.md; D-012
-- [ ] Q9 Sub-phase 1.3 — `describe` ← CURRENT — branch duncandoyle/phase1Describe
+- [x] Q9 Sub-phase 1.3 — `describe` — phase-1.3-complete.md; reviews/1.3-codex.md; D-013
 - [ ] Q10 Sub-phase 1.4 — live check, scale, docs
 - [x] Q11 Maintainer proposal (P-005): not filed, deferred by the owner (D-011)
 
@@ -28,16 +28,7 @@ Status: design approved 2026-11-05 (D-010); 1.1 and 1.2 complete; implementation
 - [ ] phase-1-complete.md written, roadmap updated, tracked items closed
 
 ## Sub-phase
-Sub-phase: 1.3 — `describe`
-Kind: planned
-Base: c18aae579bc634402c400cc7f3b42e70d92c3b32
-Brief: docs/phases/phase-1/phase-1.3-brief.md
-
-### Allowed work
-Features within the approved design (plan Tasks 1.3.1–1.3.2).
-
-### Not allowed
-Design changes without a decisions.md entry and owner approval.
+n/a
 
 ## Program
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
@@ -58,3 +49,4 @@ Design changes without a decisions.md entry and owner approval.
 - 2026-11-05 Blocker (a) resolved: kgateway-ui v0.3.0 tagged; go.mod uses it, CI workspace step dropped. Green with `-race` on Go 1.27.3 and 1.26.0. 1.1 closed.
 - 2026-11-05 Sub-phase 1.2 closed: Codex review 5 findings fixed (351a9f7); D-012 records the `get` details settled in implementation.
 - 2026-11-06 krp's library is renamed `xdsview` (v0.3.0, program `6ca3662`); E1/E5 consumers (Phase 3) use the new module path.
+- 2026-11-06 Sub-phase 1.3 closed: Codex review 4 findings fixed (0ca5cad, 7b1fce1, dc4eea0); D-013 records the `describe` details.

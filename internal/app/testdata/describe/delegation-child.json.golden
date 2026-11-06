@@ -1,0 +1,99 @@
+{
+  "schemaVersion": "kgwctl.kgateway.dev/v1alpha1",
+  "kind": "Describe",
+  "item": {
+    "object": {
+      "kind": "HTTPRoute",
+      "group": "gateway.networking.k8s.io",
+      "namespace": "default",
+      "name": "child-a",
+      "install": "kgateway-system/kgateway",
+      "creationTimestamp": "X",
+      "generation": 1
+    },
+    "spec": {
+      "rules": [
+        {
+          "matches": [
+            {
+              "path": {
+                "type": "PathPrefix",
+                "value": "/"
+              }
+            }
+          ],
+          "backendRefs": [
+            {
+              "group": "",
+              "kind": "Service",
+              "namespace": "default",
+              "name": "example",
+              "port": 8080,
+              "weight": 1
+            }
+          ]
+        }
+      ]
+    },
+    "conditions": [
+      {
+        "scope": "parent",
+        "ref": {
+          "group": "gateway.networking.k8s.io",
+          "kind": "HTTPRoute",
+          "namespace": "default",
+          "name": "parent"
+        },
+        "controller": "kgateway.dev/kgateway",
+        "conditions": [
+          {
+            "type": "Accepted",
+            "status": "True",
+            "reason": "Accepted",
+            "lastTransition": "2026-01-01T00:00:00Z",
+            "observedGeneration": 1
+          },
+          {
+            "type": "ResolvedRefs",
+            "status": "True",
+            "reason": "ResolvedRefs",
+            "lastTransition": "2026-01-01T00:00:00Z",
+            "observedGeneration": 1
+          }
+        ]
+      }
+    ],
+    "relations": {
+      "resolved": true,
+      "parents": [
+        {
+          "parent": {
+            "group": "gateway.networking.k8s.io",
+            "kind": "HTTPRoute",
+            "namespace": "default",
+            "name": "parent"
+          },
+          "state": "accepted",
+          "reason": "Accepted",
+          "controller": "kgateway.dev/kgateway"
+        }
+      ],
+      "delegationParents": [
+        {
+          "group": "gateway.networking.k8s.io",
+          "kind": "HTTPRoute",
+          "namespace": "default",
+          "name": "parent"
+        }
+      ],
+      "backends": [
+        {
+          "group": "",
+          "kind": "Service",
+          "namespace": "default",
+          "name": "example"
+        }
+      ]
+    }
+  }
+}

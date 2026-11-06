@@ -1,0 +1,35 @@
+item:
+  conditions:
+  - conditions:
+    - lastTransition: "1970-01-01T00:00:00Z"
+      message: Waiting for controller
+      observedGeneration: 0
+      reason: Pending
+      status: Unknown
+      type: Accepted
+    - lastTransition: "1970-01-01T00:00:00Z"
+      message: Waiting for controller
+      observedGeneration: 0
+      reason: Pending
+      status: Unknown
+      type: Programmed
+    scope: object
+  object:
+    creationTimestamp: "X"
+    generation: 1
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: edge
+    namespace: other
+  relations:
+    resolved: false
+  spec:
+    class: other
+    listeners:
+    - allowedRoutes:
+        from: Same
+      name: http
+      port: 8080
+      protocol: HTTP
+kind: Describe
+schemaVersion: kgwctl.kgateway.dev/v1alpha1
