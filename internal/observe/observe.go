@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"runtime/debug"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -19,7 +18,6 @@ import (
 	"github.com/DuncanDoyle/snellius/pkg/ctrlmetrics"
 	"github.com/DuncanDoyle/snellius/pkg/engine"
 	"github.com/DuncanDoyle/snellius/pkg/extension"
-	"github.com/DuncanDoyle/snellius/pkg/health"
 	"github.com/DuncanDoyle/snellius/pkg/setup"
 	"github.com/DuncanDoyle/snellius/pkg/trigger"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -84,11 +82,9 @@ func CollectorGVR(name string) schema.GroupVersionResource {
 type collectorState struct {
 	published bool
 	reported  bool              // published or failed at least once
-	failing   map[string]string // key -> reason of its latest Failing Fail
+	failing   map[string]string // key -> reason of its latest Fail, until it publishes again
 	returned  bool
 	err       string // Start's error or panic
-	// checks are the checks that read only this collector's keys.
-	checks []string
 }
 
 // Session is one running cache, engine and collector set.
@@ -103,11 +99,12 @@ type Session struct {
 
 	wg         sync.WaitGroup
 	done       chan struct{}
+	stopped    chan struct{} // closed when no more models can come
+	forwarded  chan struct{} // closed when the forwarder has exited
 	rearm      chan struct{}
 	discovered chan struct{}
 	changed    chan struct{}
 	out        chan *engine.Published
-	forward    sync.Once
 
 	mu   sync.Mutex
 	cond *sync.Cond // signals queue growth and ended
@@ -143,7 +140,7 @@ func Start(ctx context.Context, c load.Clients, reg *extension.Registry, o Optio
 		return nil, err
 	}
 	s := &Session{cancel: cancel, changes: cfg.Changes, clk: o.Clock, o: o, cols: map[string]*collectorState{},
-		done: make(chan struct{}), rearm: make(chan struct{}, 1), discovered: make(chan struct{}),
+		done: make(chan struct{}), stopped: make(chan struct{}), forwarded: make(chan struct{}), rearm: make(chan struct{}, 1), discovered: make(chan struct{}),
 		changed: make(chan struct{}, 1), out: make(chan *engine.Published)}
 	if s.clk == nil {
 		s.clk = clock.RealClock{}
@@ -161,7 +158,7 @@ func Start(ctx context.Context, c load.Clients, reg *extension.Registry, o Optio
 	for _, col := range cols {
 		name := col.Name()
 		s.names = append(s.names, name)
-		s.cols[name] = &collectorState{failing: map[string]string{}, checks: ownChecks(reg.Checks, name)}
+		s.cols[name] = &collectorState{failing: map[string]string{}}
 	}
 
 	s.ca.Start(sctx)
@@ -170,6 +167,7 @@ func Start(ctx context.Context, c load.Clients, reg *extension.Registry, o Optio
 	}
 	s.wg.Go(func() { s.timers(sctx) })
 	s.wg.Go(func() { s.eng.Run(sctx, o.MetricsInterval) })
+	go s.send()
 	go func() {
 		<-sctx.Done()
 		s.ca.Wait()
@@ -178,21 +176,11 @@ func Start(ctx context.Context, c load.Clients, reg *extension.Registry, o Optio
 		s.ended = true
 		s.cond.Broadcast()
 		s.mu.Unlock()
+		close(s.stopped)
+		<-s.forwarded
 		close(s.done)
 	}()
 	return s, nil
-}
-
-// ownChecks returns the checks whose collector keys all belong to collector name.
-func ownChecks(checks []health.Check, name string) []string {
-	var out []string
-	for _, c := range checks {
-		keys := c.Inputs().Collected
-		if len(keys) > 0 && !slices.ContainsFunc(keys, func(k string) bool { return !strings.HasPrefix(k, name+"/") }) {
-			out = append(out, c.Name())
-		}
-	}
-	return out
 }
 
 // runCollector runs col in a goroutine Stop joins, its Publish and Fail
@@ -212,11 +200,7 @@ func (s *Session) runCollector(ctx context.Context, col extension.Collector, sto
 			store.Fail(name+"/"+key, state, reason)
 			s.record(name, func(st *collectorState) {
 				st.reported = true
-				if state == collect.Failing {
-					st.failing[key] = reason
-				} else {
-					delete(st.failing, key)
-				}
+				st.failing[key] = reason
 			})
 		},
 	}
@@ -346,23 +330,21 @@ func (s *Session) signal() {
 // Current returns the latest published model, nil before the first.
 func (s *Session) Current() *engine.Published { return s.eng.Current() }
 
-// Models returns every published model in publication order. It is closed
-// after Stop once drained; a reader must drain it. Models are queued from
-// Start on, whether or not Models is called.
-func (s *Session) Models() <-chan *engine.Published {
-	s.forward.Do(func() { go s.send() })
-	return s.out
-}
+// Models returns every published model in publication order. Stop closes
+// it; models not yet received by then are dropped.
+func (s *Session) Models() <-chan *engine.Published { return s.out }
 
-// send moves queued models to out until the queue is empty and ended.
+// send moves queued models to out until the session ends, then drops the rest.
 func (s *Session) send() {
+	defer close(s.forwarded)
 	defer close(s.out)
 	for {
 		s.mu.Lock()
 		for len(s.queue) == 0 && !s.ended {
 			s.cond.Wait()
 		}
-		if len(s.queue) == 0 {
+		if s.ended {
+			s.queue = nil
 			s.mu.Unlock()
 			return
 		}
@@ -370,7 +352,10 @@ func (s *Session) send() {
 		s.queue[0] = nil
 		s.queue = s.queue[1:]
 		s.mu.Unlock()
-		s.out <- p
+		select {
+		case s.out <- p:
+		case <-s.stopped:
+		}
 	}
 }
 
@@ -421,15 +406,16 @@ func (s *Session) Inputs() map[schema.GroupVersionResource]load.Input {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, name := range s.names {
-		out[CollectorGVR(name)] = collectorInput(name, s.cols[name], p)
+		out[CollectorGVR(name)] = collectorInput(name, s.cols[name])
 	}
 	return out
 }
 
-// collectorInput is a collector's state: failed on an error, a Failing key or
-// its own checks reporting the input denied or failing; ok once it published,
-// failed or returned; loading before.
-func collectorInput(name string, st *collectorState, p *engine.Published) load.Input {
+// collectorInput is a collector's state from what its runner saw: failed after
+// a Fail or an error return, ok after a publish or a nil return, loading before.
+// A value that carries its own error, such as a refused scrape, reads ok here;
+// its checks report it.
+func collectorInput(name string, st *collectorState) load.Input {
 	in := load.Input{Resource: name, GVR: CollectorGVR(name), State: load.StateLoading}
 	switch {
 	case st.err != "":
@@ -441,36 +427,14 @@ func collectorInput(name string, st *collectorState, p *engine.Published) load.I
 		}
 		slices.Sort(keys)
 		in.State, in.Reason = load.StateFailed, st.failing[keys[0]]
-	case st.published:
-		in.State = load.StateOK
-		// A value can carry its own error, such as a scrape refused; its checks report it.
-		if reason := checksFailing(st.checks, p); reason != "" {
-			in.State, in.Reason = load.StateFailed, reason
-		}
-	case st.reported, st.returned:
+	case st.published, st.returned:
 		in.State = load.StateOK
 	}
 	return in
 }
 
-// checksFailing returns the error of the first of checks, over p's installs,
-// whose input is denied or failing; "" when none is.
-func checksFailing(checks []string, p *engine.Published) string {
-	if p == nil || len(checks) == 0 {
-		return ""
-	}
-	for _, im := range p.Model.Installs {
-		for _, r := range im.Health.Checks {
-			if slices.Contains(checks, r.Name) && (r.Unavailable == health.AvailDenied || r.Unavailable == health.AvailFailing) {
-				return r.Error
-			}
-		}
-	}
-	return ""
-}
-
 // Stop cancels the session and returns once the cache, the collectors and
-// the engine loop have exited. A compute in flight finishes on its own and is
+// the engine loop have exited and Models is closed. A compute in flight finishes on its own and is
 // dropped. Stop is idempotent.
 func (s *Session) Stop() {
 	s.cancel()

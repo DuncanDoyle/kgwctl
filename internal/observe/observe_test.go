@@ -236,18 +236,19 @@ func TestObservePodsProxyDenied(t *testing.T) {
 	s := start(t, env, reg, Options{})
 	waitComplete(t, s, 15*time.Second)
 
-	got := s.Inputs()[CollectorGVR(ctrlmetrics.CollectorName)]
-	if got.State != load.StateFailed || !strings.Contains(got.Reason, "403") {
-		t.Fatalf("metrics collector input = %+v, want failed with the 403 text", got)
-	}
 	names := checksReading(reg, ctrlmetrics.CollectorName)
 	if len(names) == 0 {
 		t.Fatal("no registered check reads the controller metrics")
 	}
 	for _, name := range names {
-		// Not OK and carrying the scrape error: a required check reports it as Error, an optional one also as Unavailable.
-		if r := checkResult(t, s.Current(), name); r.OK || !strings.Contains(r.Error, "403") {
+		// The refused scrape reaches the user through the check's result, never as a pass.
+		if r := checkResult(t, s.Current(), name); r.OK || !strings.Contains(r.Error+r.Detail, "403") {
 			t.Errorf("check %q = %+v; want not ok with the 403 text", name, r)
+		}
+	}
+	for _, f := range s.Current().Model.Installs[0].Health.Findings {
+		if f.Code == health.CodeXDSRejected || f.Code == health.CodeConfigWithheld {
+			t.Errorf("finding %s raised from metrics that were never read", f.Code)
 		}
 	}
 }
@@ -298,8 +299,7 @@ func TestObserveStopNoLeaks(t *testing.T) {
 		s.Stop()
 		s.Stop() // idempotent
 		if _, open := <-s.Models(); open {
-			for range s.Models() {
-			}
+			t.Fatal("Models() still open after Stop")
 		}
 	}
 	// The first run leaves the shared transport's idle connections behind.
@@ -428,12 +428,15 @@ func TestObserveModelsInOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var gotMu sync.Mutex
 	var got []uint64
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		for p := range s.Models() {
+			gotMu.Lock()
 			got = append(got, p.Model.Seq)
+			gotMu.Unlock()
 			time.Sleep(20 * time.Millisecond) // a slow reader
 		}
 	}()
@@ -448,6 +451,11 @@ func TestObserveModelsInOrder(t *testing.T) {
 		}
 		return n >= 20
 	})
+	eventually(t, "the slow reader to receive 20 models", func() bool {
+		gotMu.Lock()
+		defer gotMu.Unlock()
+		return len(got) >= 20
+	})
 	s.Stop()
 	select {
 	case <-done:
@@ -460,7 +468,8 @@ func TestObserveModelsInOrder(t *testing.T) {
 			want = append(want, ev.Published.Model.Seq)
 		}
 	}
-	if !slices.Equal(got, want) {
+	// Models not yet received at Stop are dropped, so got is a prefix of want.
+	if len(got) < 20 || !slices.Equal(got, want[:len(got)]) {
 		t.Fatalf("Models() delivered seqs %v, published %v", got, want)
 	}
 	if !slices.IsSorted(got) {
@@ -623,4 +632,48 @@ func TestObserveOutlivesRequestTimeout(t *testing.T) {
 			return u.GetName() == "late"
 		})
 	})
+}
+
+func TestObserveStopWithUnreadModels(t *testing.T) {
+	env := testenv.New(t, testenv.Options{Fixtures: []string{healthyFixture}})
+	l := hookLoop(t)
+	published := func() int {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		n := 0
+		for _, ev := range l.events {
+			if ev.Kind == engine.EvPublished {
+				n++
+			}
+		}
+		return n
+	}
+	run := func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		// A short interval publishes a model every 50ms; nobody reads Models().
+		s, err := Start(ctx, sessionClients(t, env, ctx), extension.New(), Options{Scraper: zeroScraper{}, MetricsInterval: 50 * time.Millisecond})
+		if err != nil {
+			t.Fatal(err)
+		}
+		from := published()
+		eventually(t, "10 unread models", func() bool { return published()-from >= 10 })
+		stopped := make(chan struct{})
+		go func() { s.Stop(); close(stopped) }()
+		select {
+		case <-stopped:
+		case <-time.After(2 * time.Second):
+			t.Fatal("Stop() did not return within 2s with unread models")
+		}
+		if _, open := <-s.Models(); open {
+			t.Fatal("Models() delivered a model after Stop")
+		}
+	}
+	// The first run leaves the shared transport's idle connections behind.
+	run()
+	waitNoWatches(t, env.Proxies[0])
+	base := runtime.NumGoroutine()
+	run()
+	waitNoWatches(t, env.Proxies[0])
+	waitGoroutines(t, base+2)
 }
