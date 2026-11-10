@@ -181,6 +181,8 @@ func TestTrackerOrderAcrossInstalls(t *testing.T) {
 		require.Len(t, obs, 2)
 		require.Equal(t, "warning", obs[0].Severity)
 		require.Equal(t, "error", obs[1].Severity)
+		require.Equal(t, "i1", obs[0].Install)
+		require.Equal(t, "i2", obs[1].Install)
 	}
 }
 

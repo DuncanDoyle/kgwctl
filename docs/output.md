@@ -472,6 +472,7 @@ A check is still deciding when `pending` is true or it has a `hold`. Otherwise i
 | Field | Type | Meaning |
 |---|---|---|
 | `id` | string | Finding ID. |
+| `install` | string | ID of the install that raised it; two installs can raise the same finding ID. |
 | `code` | string | Finding code. |
 | `severity` | string | Latest severity. |
 | `resource` | Ref | The object the finding is about. |

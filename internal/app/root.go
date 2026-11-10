@@ -182,6 +182,19 @@ func newRoot(cfg Config, hooks checkTestHooks) *cobra.Command {
 	return root
 }
 
+// signalStopKey holds Execute's NotifyContext stop func in the command context.
+type signalStopKey struct{}
+
+// defaultOnCancel restores the default interrupt handling once ctx ends, so a
+// second Ctrl-C ends the process at once. The returned func stops watching.
+func defaultOnCancel(ctx context.Context) func() bool {
+	stop, ok := ctx.Value(signalStopKey{}).(context.CancelFunc)
+	if !ok {
+		return func() bool { return false }
+	}
+	return context.AfterFunc(ctx, stop)
+}
+
 // Execute runs root until it returns or the process is interrupted. An error
 // prints as "Error: <msg>" on stderr and gives 1; an ExitError gives its code
 // and prints only when it carries an error; success gives 0. It silences
@@ -190,7 +203,7 @@ func Execute(root *cobra.Command) int {
 	quiet.Klog()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	err := root.ExecuteContext(ctx)
+	err := root.ExecuteContext(context.WithValue(ctx, signalStopKey{}, stop))
 	if err == nil {
 		return 0
 	}

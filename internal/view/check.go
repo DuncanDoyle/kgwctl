@@ -139,7 +139,9 @@ type Observation struct {
 
 // ObservedFinding is a finding seen during a --live run, cleared or not.
 type ObservedFinding struct {
-	ID         string       `json:"id"`
+	ID string `json:"id"`
+	// Install is the install ID; two installs can raise the same finding ID.
+	Install    string       `json:"install"`
 	Code       string       `json:"code"`
 	Severity   string       `json:"severity"`
 	Resource   *objects.Ref `json:"resource,omitempty"`

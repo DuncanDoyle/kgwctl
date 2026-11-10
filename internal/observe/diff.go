@@ -199,7 +199,7 @@ func (t *Tracker) Add(c view.Check, at time.Time) []Event {
 			seen[key] = true
 			e := t.entries[key]
 			if e == nil {
-				t.entries[key] = &tracked{f: view.ObservedFinding{ID: f.ID, Code: f.Code, Severity: f.Severity, Resource: f.Resource,
+				t.entries[key] = &tracked{f: view.ObservedFinding{ID: f.ID, Install: ic.Install.ID, Code: f.Code, Severity: f.Severity, Resource: f.Resource,
 					FirstSeen: at, Severities: []view.SeverityAt{{Severity: f.Severity, At: at}}}, install: ic.Install.ID, message: f.Message, transitioned: !first}
 				continue
 			}
@@ -226,7 +226,7 @@ func (t *Tracker) Add(c view.Check, at time.Time) []Event {
 }
 
 // Observed returns every finding with a transition, ordered by first-seen, then
-// finding ID, then install ID (ObservedFinding carries no install).
+// finding ID, then install ID.
 func (t *Tracker) Observed() []view.ObservedFinding {
 	var es []*tracked
 	for _, e := range t.entries {

@@ -85,7 +85,11 @@ Exit codes: `0` when clean, `1` when there are error or warning findings, `2` wh
 
 `check` reads controller metrics and Envoy stats through the API server's `pods/proxy`. If that is denied, those checks show under Not checked with the RBAC line to add. The run does not fail. See [Permissions](#permissions).
 
-`--live`, which watches held checks decide, is added in a later sub-phase.
+`check --live` keeps watching for `--timeout` (default `6m`) so grace periods and held checks decide, then prints one report. Ctrl-C stops early and still reports (exit `2`); a second Ctrl-C quits at once. While it runs, progress lines go to stderr when stderr is a terminal. The report adds an **Observed during this run** section: findings that appeared, cleared or changed severity, with their times, so a failure that came and went stays in the paste. `--request-timeout` still bounds the first read of the cluster; `--timeout` is only valid with `--live`.
+
+```bash
+kgwctl check --live --timeout 10m
+```
 
 ## Global flags
 

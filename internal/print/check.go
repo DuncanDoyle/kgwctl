@@ -46,9 +46,43 @@ func CheckTextFor(w io.Writer, c view.Check, _ time.Time, color bool, build view
 			b.WriteString("\n")
 		}
 	}
+	if c.Observation != nil {
+		writeObserved(b, *c.Observation, len(c.Installs) > 1)
+	}
 	b.WriteString("\n" + summary(total, deciding) + "\n")
 	_, err := io.WriteString(w, b.String())
 	return err
+}
+
+// writeObserved prints the --live section: every finding with a transition during the run (design §3.2).
+// withInstall names each entry's install, for reports of more than one.
+func writeObserved(b *strings.Builder, o view.Observation, withInstall bool) {
+	fmt.Fprintf(b, "\nOBSERVED DURING THIS RUN (%d) · %s to %s UTC, stopped by %s\n",
+		len(o.Observed), utc(o.StartedAt), utc(o.EndedAt), clean(o.StopReason))
+	for _, f := range o.Observed {
+		code := clean(f.Code)
+		head := "  " + code
+		if f.Resource != nil {
+			head += "  " + clean(f.Resource.Kind) + " " + clean(f.Resource.String())
+		}
+		if withInstall {
+			head += "  (install " + clean(f.Install) + ")"
+		}
+		b.WriteString(head + "\n")
+		pad := "  " + strings.Repeat(" ", len([]rune(code))+2)
+		seen := "First seen " + utc(f.FirstSeen)
+		if f.ClearedAt != nil {
+			seen += ", cleared " + utc(*f.ClearedAt)
+		} else {
+			seen += ", still present"
+		}
+		b.WriteString(pad + seen + ".\n")
+		hist := make([]string, len(f.Severities))
+		for i, s := range f.Severities {
+			hist[i] = clean(s.Severity) + " from " + utc(s.At)
+		}
+		b.WriteString(pad + "Severity: " + strings.Join(hist, ", ") + ".\n")
+	}
 }
 
 // CheckHint is CheckHintFor with the default command name.
