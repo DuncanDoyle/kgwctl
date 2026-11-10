@@ -59,7 +59,7 @@ kgwctl check [--live [--timeout 6m]] [-o text|json|yaml]
 2. Compute once all inputs are in, or at the deadline.
 3. Print the report (§3.3) and exit (§3.4).
 
-`-n NS` shows only findings on resources in that namespace, plus findings with no namespace (install-level). `-A` and no `-n` show everything. Checks always run over the whole install; `-n` filters what is printed and what the exit code counts. `--install` and `--all-controllers` select installs as in Phase 1 (design §6.2).
+`-n NS` shows only findings on resources in that namespace, plus install-level findings: those with no namespace and those on resources in the install's own (controller) namespace. A controller that is down affects every namespace, so `-n` never hides it (found on kind, 2026-11-10). `-A` and no `-n` show everything. Checks always run over the whole install; `-n` filters what is printed and what the exit code counts. `--install` and `--all-controllers` select installs as in Phase 1 (design §6.2).
 
 A plain run ends with a hint only when there is a reason: "2 checks are still deciding; the next decision is at 14:07:12 (in 4m48s). Run `kgwctl check --live` to see them decide." The time is the earliest `hold.until`: a hold's `until` is the earliest moment an item is decided, so kgwctl never claims an upper bound. Denied or failing inputs get their remedy instead (more time won't help).
 
@@ -313,6 +313,6 @@ None open. E9 is delivered (pre-release). A kgwctl release waits for the final S
 
 ## 15. Open items
 
-- `-n` semantics for install-level findings (shown always) — our call; owner may override.
+- `-n` semantics for install-level findings (shown always, incl. the controller namespace) — our call; owner may override.
 - Proposed E10 (Snellius): a collector's first-round completion signal, so `check` can drop the quiet period (§4.1). Needs the owner before an issue is filed.
 - Exit 2 for an interrupted `--live` even when the user stopped it on purpose — agreed in the live-mode review; revisit if it annoys in use.
