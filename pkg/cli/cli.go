@@ -29,6 +29,9 @@ type Option func(*options)
 func WithName(name string) Option { return func(o *options) { o.name = name } }
 
 // WithRegistry sets the registry whose kinds, detectors and checks reach the commands.
+// A vendor's checks, collectors and kinds belong in its own Snellius pack
+// (extension.WithPack). extension.WithDetectors attaches detectors to the
+// default kgateway pack, so the installs they claim get the kgateway checks.
 func WithRegistry(r *extension.Registry) Option { return func(o *options) { o.registry = r } }
 
 // WithCommands adds top-level commands.
