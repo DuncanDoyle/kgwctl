@@ -8,7 +8,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/DuncanDoyle/kgateway-ui/pkg/kinds"
+	"github.com/DuncanDoyle/snellius/pkg/kinds"
 )
 
 // Target is one table of output: the kinds it lists under one title.
@@ -73,7 +73,9 @@ func isAlias(name string) bool {
 // to one Target per name, in order. A kind is in at most one Target: names
 // that overlap merge into the first, which takes the alias label if either is the alias.
 func Kinds(served []kinds.Served, modelled []kinds.Descriptor, arg string) ([]Target, error) {
-	modelled = kinds.Dedupe(modelled)
+	// List-only kinds are skipped: load.Load doesn't wait for them, so a list could be falsely empty.
+	modelled = slices.DeleteFunc(kinds.Dedupe(modelled), func(d kinds.Descriptor) bool { return d.ListOnly })
+	served = slices.DeleteFunc(slices.Clone(served), func(s kinds.Served) bool { return s.ListOnly })
 	var out []Target
 	named := false
 	add := func(t Target) { out = merge(out, served, t) }

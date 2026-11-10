@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DuncanDoyle/kgateway-ui/pkg/objects"
+	"github.com/DuncanDoyle/snellius/pkg/objects"
 
 	"github.com/DuncanDoyle/kgwctl/internal/load"
 )

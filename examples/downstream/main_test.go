@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DuncanDoyle/kgateway-ui/pkg/kinds"
+	"github.com/DuncanDoyle/snellius/pkg/kinds"
 	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/DuncanDoyle/kgwctl/internal/load"
