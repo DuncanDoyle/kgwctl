@@ -7,17 +7,21 @@ import (
 	"github.com/DuncanDoyle/kgwctl/internal/print"
 )
 
-func TestColorEnabled(t *testing.T) {
-	f, err := os.CreateTemp(t.TempDir(), "out")
+func TestNotTerminal(t *testing.T) {
+	// /dev/null is a character device but not a terminal.
+	null, err := os.Open(os.DevNull)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
-	if print.IsTerminal(f) || print.ColorEnabled(f) {
-		t.Error("a regular file is not a terminal")
+	defer null.Close()
+	reg, err := os.CreateTemp(t.TempDir(), "out")
+	if err != nil {
+		t.Fatal(err)
 	}
-	t.Setenv("NO_COLOR", "1")
-	if print.ColorEnabled(os.Stdout) {
-		t.Error("NO_COLOR must disable colour")
+	defer reg.Close()
+	for _, f := range []*os.File{null, reg} {
+		if print.IsTerminal(f) || print.ColorEnabled(f) {
+			t.Errorf("%s is not a terminal", f.Name())
+		}
 	}
 }

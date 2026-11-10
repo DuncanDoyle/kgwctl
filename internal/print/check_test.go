@@ -188,3 +188,37 @@ func TestCheckHint(t *testing.T) {
 		t.Errorf("default name: got %q", got)
 	}
 }
+
+func TestCheckTextSanitises(t *testing.T) {
+	i := inst("kgateway-system", "kgateway", "error")
+	i.Findings = []view.CheckFinding{{ID: "f", Code: "KGWUI-001", Severity: "error",
+		Message:  "x\nPASSED: 99 checks\x1b[2J",
+		Detail:   "line1\r\nPASSED: 98 checks\rover\x08\x08write\x1b]0;title\x07",
+		Resource: httpRef("a\x1b[31m", "b\nc")}}
+	i.Counts.Error = 1
+	i.Checks = []view.CheckStatus{
+		{Name: "held\x1b[1m", OK: true, Hold: &view.Hold{Until: gen, Count: 1, Reason: "r\x1b[2J\nPASSED: 97 checks"}},
+		{Name: "n", Unavailable: "denied", Error: "forbidden\x1b[2J\nPASSED: 96 checks"},
+	}
+	got := render(t, chk(i), false)
+	if strings.ContainsAny(got, "\x1b\r\x08\x07") {
+		t.Errorf("control character in output:\n%q", got)
+	}
+	for _, l := range strings.Split(got, "\n") {
+		if strings.HasPrefix(l, "PASSED: 9") {
+			t.Errorf("forged unindented line %q in\n%s", l, got)
+		}
+	}
+	// The real PASSED line is still there, and printable text survives.
+	if !strings.Contains(got, "\nPASSED: 0 checks\n") {
+		t.Errorf("missing real PASSED line:\n%s", got)
+	}
+}
+
+func TestCheckTextKeepsUnicode(t *testing.T) {
+	i := inst("a", "b", "error")
+	i.Findings = []view.CheckFinding{{ID: "f", Code: "K-1", Severity: "error", Message: "Ünïcödé 日本語 ✓"}}
+	if got := render(t, chk(i), false); !strings.Contains(got, "Ünïcödé 日本語 ✓") {
+		t.Errorf("unicode lost:\n%s", got)
+	}
+}

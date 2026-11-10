@@ -5,6 +5,7 @@ import (
 	"io"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/DuncanDoyle/kgwctl/internal/view"
 )
@@ -20,8 +21,8 @@ func CheckText(w io.Writer, c view.Check, now time.Time, color bool) error {
 // color adds ANSI severity colours. now is unused: times come from the view.
 func CheckTextFor(w io.Writer, c view.Check, _ time.Time, color bool, build view.BuildInfo) error {
 	b := &strings.Builder{}
-	hdr := []string{strings.TrimSpace(build.Name + " check"), "context " + c.Context, stamp(c.GeneratedAt) + " UTC"}
-	if v := strings.TrimSpace(build.Name + " " + build.Version); build.Version != "" {
+	hdr := []string{strings.TrimSpace(clean(build.Name) + " check"), "context " + clean(c.Context), stamp(c.GeneratedAt) + " UTC"}
+	if v := strings.TrimSpace(clean(build.Name) + " " + clean(build.Version)); build.Version != "" {
 		hdr = append(hdr, v)
 	}
 	b.WriteString(strings.Join(hdr, " · ") + "\n")
@@ -38,9 +39,9 @@ func CheckTextFor(w io.Writer, c view.Check, _ time.Time, color bool, build view
 	if len(c.Incomplete) > 0 {
 		b.WriteString("\nINCOMPLETE INPUTS\n")
 		for _, in := range c.Incomplete {
-			fmt.Fprintf(b, "  %s: %s", in.Resource, in.State)
+			fmt.Fprintf(b, "  %s: %s", clean(in.Resource), clean(string(in.State)))
 			if in.Reason != "" {
-				fmt.Fprintf(b, ": %s", in.Reason)
+				fmt.Fprintf(b, ": %s", clean(in.Reason))
 			}
 			b.WriteString("\n")
 		}
@@ -86,11 +87,11 @@ func CheckHintFor(c view.Check, now time.Time, command string) string {
 }
 
 func writeCheckInstall(b *strings.Builder, ic view.InstallCheck, gen time.Time, color bool) {
-	fmt.Fprintf(b, "Install %s/%s", ic.Install.Namespace, ic.Install.Name)
+	fmt.Fprintf(b, "Install %s/%s", clean(ic.Install.Namespace), clean(ic.Install.Name))
 	if ic.Install.Version != "" {
-		fmt.Fprintf(b, " (%s)", version(ic.Install.Version))
+		fmt.Fprintf(b, " (%s)", version(clean(ic.Install.Version)))
 	}
-	fmt.Fprintf(b, " · state: %s\n", ic.State)
+	fmt.Fprintf(b, " · state: %s\n", clean(ic.State))
 
 	for _, sev := range []struct{ key, title, code string }{
 		{"error", "ERRORS", "31"}, {"warning", "WARNINGS", "33"}, {"info", "INFO", "36"},
@@ -113,10 +114,10 @@ func writeCheckInstall(b *strings.Builder, ic view.InstallCheck, gen time.Time, 
 		var cells [][]string
 		for _, cs := range rows {
 			if cs.Hold == nil {
-				cells = append(cells, []string{cs.Name, "pending"})
+				cells = append(cells, []string{clean(cs.Name), "pending"})
 				continue
 			}
-			cells = append(cells, []string{cs.Name, fmt.Sprintf("%d held", cs.Hold.Count), "decides " + utc(cs.Hold.Until), cs.Hold.Reason})
+			cells = append(cells, []string{clean(cs.Name), fmt.Sprintf("%d held", cs.Hold.Count), "decides " + utc(cs.Hold.Until), clean(cs.Hold.Reason)})
 		}
 		table(b, "  ", cells)
 	}
@@ -139,7 +140,7 @@ func writeFindings(b *strings.Builder, fs []view.CheckFinding, groups []view.Che
 	causes := map[string]string{}
 	for _, g := range groups {
 		if g.Cause != nil {
-			causes[g.ID] = g.Cause.Kind + " " + g.Cause.String()
+			causes[g.ID] = clean(g.Cause.Kind) + " " + clean(g.Cause.String())
 		}
 	}
 	done := map[string]bool{}
@@ -163,16 +164,18 @@ func writeFindings(b *strings.Builder, fs []view.CheckFinding, groups []view.Che
 }
 
 func writeFinding(b *strings.Builder, f view.CheckFinding, indent string, gen time.Time) {
-	head := f.Code
+	code := clean(f.Code)
+	head := code
 	if f.Resource != nil {
-		head += "  " + f.Resource.Kind + " " + f.Resource.String()
+		head += "  " + clean(f.Resource.Kind) + " " + clean(f.Resource.String())
 	}
-	b.WriteString(indent + head + "  " + f.Message + "\n")
-	pad := indent + strings.Repeat(" ", len(f.Code)+2)
+	b.WriteString(indent + head + "  " + clean(f.Message) + "\n")
+	pad := indent + strings.Repeat(" ", len([]rune(code))+2)
+	// line prints text sanitised, one renderer-indented line per source line.
 	line := func(prefix, text string) {
-		for i, l := range strings.Split(text, "\n") {
+		for i, l := range cleanLines(text) {
 			if i > 0 {
-				prefix = strings.Repeat(" ", len(prefix))
+				prefix = strings.Repeat(" ", len([]rune(prefix)))
 			}
 			b.WriteString(pad + prefix + l + "\n")
 		}
@@ -220,14 +223,14 @@ func writeNotChecked(b *strings.Builder, checks []view.CheckStatus) {
 			continue
 		}
 		n++
-		t := firstNonEmpty(cs.Error, cs.Detail, cs.Unavailable)
+		t := clean(firstNonEmpty(cs.Error, cs.Detail, cs.Unavailable))
 		if strings.Contains(strings.ToLower(t), "forbidden") {
 			t += " — see docs/rbac.yaml"
 		}
 		if names[t] == nil {
 			texts = append(texts, t)
 		}
-		names[t] = append(names[t], cs.Name)
+		names[t] = append(names[t], clean(cs.Name))
 	}
 	if n == 0 {
 		return
@@ -302,4 +305,27 @@ func firstNonEmpty(ss ...string) string {
 		}
 	}
 	return ""
+}
+
+// clean makes cluster-supplied text safe for a terminal: control and format
+// characters (ESC, CR, BS, bidi overrides) are dropped, newlines and tabs become spaces.
+func clean(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r == '\n' || r == '\t':
+			return ' '
+		case unicode.IsControl(r) || unicode.Is(unicode.Cf, r):
+			return -1
+		}
+		return r
+	}, s)
+}
+
+// cleanLines splits s at newlines and cleans each line, so the renderer owns the indentation.
+func cleanLines(s string) []string {
+	lines := strings.Split(strings.ReplaceAll(s, "\r\n", "\n"), "\n")
+	for i, l := range lines {
+		lines[i] = clean(l)
+	}
+	return lines
 }
