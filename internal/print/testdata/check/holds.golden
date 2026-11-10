@@ -9,6 +9,6 @@ STILL DECIDING (5)
   resource status  pending                    1 resource is being processed by the controller
   xDS rejects      1 held   decides 14:03:10  Waiting to see if rejects return
 
-PASSED: 2 checks
+CHECKS RUN: 4
 
 No findings, 5 checks deciding.

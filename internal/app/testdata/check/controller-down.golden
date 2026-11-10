@@ -16,6 +16,6 @@ NOT CHECKED (3)
   scope matches controller  controller metrics unavailable
   withheld config, xDS rejects  no ready controller pod to scrape
 
-PASSED: 18 checks
+CHECKS RUN: 18
 
-1 error, 2 info.
+1 error, 2 info, 3 not checked.

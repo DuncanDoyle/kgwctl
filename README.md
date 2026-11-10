@@ -73,9 +73,10 @@ Runs the health checks over each kgateway install and prints a report you can pa
 1. **Findings:** what is wrong, with the object and the reason.
 2. **Still deciding:** checks that need more time, with the time of the next decision.
 3. **Not checked:** checks that could not run, with the cause and the fix.
-4. **Passed:** the checks that found nothing.
+4. **Partial coverage:** checks that ran but could not look at everything, with what they missed.
+5. **Checks run:** how many checks ran. A check that ran is not a check that passed: findings are not tied to checks.
 
-A check that could not run or is still deciding never counts as passed.
+Error text from the cluster has its URLs and addresses redacted.
 
 ```bash
 kgwctl check -n live

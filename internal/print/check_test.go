@@ -129,6 +129,15 @@ func TestCheckText(t *testing.T) {
 	second.Counts.Error = 1
 	second.Checks = ok("a")
 
+	// OK with a detail ran with partial coverage; findings stay in their own section.
+	partial := inst("kgateway-system", "kgateway", "warning")
+	partial.Findings = []view.CheckFinding{{ID: "p", Code: "KGWUI-025", Severity: "warning", Message: "Proxy disconnected", Resource: httpRef("edge", "public")}}
+	partial.Counts.Warning = 1
+	partial.Checks = append(ok("a", "b"),
+		view.CheckStatus{Name: "proxy connection", OK: true, Detail: "1 of 2 Gateways have no proxy stats."},
+		view.CheckStatus{Name: "version skew", OK: true, Detail: "Versions are compared 10 minutes after a controller rollout ends"},
+		view.CheckStatus{Name: "process", OK: true, Unavailable: "off", Detail: "Proxy Pods are not watched, so proxies were not checked"})
+
 	incomplete := cleanInstall()
 	c := chk(incomplete)
 	c.Incomplete = []load.Input{{Resource: "pods", State: "denied", Reason: "forbidden"}}
@@ -141,6 +150,7 @@ func TestCheckText(t *testing.T) {
 		{"findings", chk(errorsInstall())},
 		{"holds", chk(holds)},
 		{"not-checked", chk(notChecked)},
+		{"partial", chk(partial)},
 		{"two-installs", chk(errorsInstall(), second)},
 		{"incomplete", c},
 	}
@@ -196,26 +206,27 @@ func TestCheckHint(t *testing.T) {
 func TestCheckTextSanitises(t *testing.T) {
 	i := inst("kgateway-system", "kgateway", "error")
 	i.Findings = []view.CheckFinding{{ID: "f", Code: "KGWUI-001", Severity: "error",
-		Message:  "x\nPASSED: 99 checks\x1b[2J",
-		Detail:   "line1\r\nPASSED: 98 checks\rover\x08\x08write\x1b]0;title\x07",
+		Message:  "x\nCHECKS RUN: 99\x1b[2J",
+		Detail:   "line1\r\nCHECKS RUN: 98\rover\x08\x08write\x1b]0;title\x07",
 		Resource: httpRef("a\x1b[31m", "b\nc")}}
 	i.Counts.Error = 1
 	i.Checks = []view.CheckStatus{
-		{Name: "held\x1b[1m", OK: true, Hold: &view.Hold{Until: gen, Count: 1, Reason: "r\x1b[2J\nPASSED: 97 checks"}},
-		{Name: "n", Unavailable: "denied", Error: "forbidden\x1b[2J\nPASSED: 96 checks"},
+		{Name: "held\x1b[1m", OK: true, Hold: &view.Hold{Until: gen, Count: 1, Reason: "r\x1b[2J\nCHECKS RUN: 97"}},
+		{Name: "n", Unavailable: "denied", Error: "forbidden\x1b[2J\nCHECKS RUN: 96"},
+		{Name: "p\x1b[1m", OK: true, Detail: "gap\x1b[2J\nCHECKS RUN: 95"},
 	}
 	got := render(t, chk(i), false)
 	if strings.ContainsAny(got, "\x1b\r\x08\x07") {
 		t.Errorf("control character in output:\n%q", got)
 	}
 	for _, l := range strings.Split(got, "\n") {
-		if strings.HasPrefix(l, "PASSED: 9") {
+		if strings.HasPrefix(l, "CHECKS RUN: 9") {
 			t.Errorf("forged unindented line %q in\n%s", l, got)
 		}
 	}
-	// The real PASSED line is still there, and printable text survives.
-	if !strings.Contains(got, "\nPASSED: 0 checks\n") {
-		t.Errorf("missing real PASSED line:\n%s", got)
+	// The real line is still there: the held and the partial check ran.
+	if !strings.Contains(got, "\nCHECKS RUN: 2\n") {
+		t.Errorf("missing real CHECKS RUN line:\n%s", got)
 	}
 }
 

@@ -27,7 +27,7 @@ func CheckTextFor(w io.Writer, c view.Check, _ time.Time, color bool, build view
 	}
 	b.WriteString(strings.Join(hdr, " · ") + "\n")
 	var total view.Counts
-	deciding := 0
+	deciding, notChecked, partial := 0, 0, 0
 	for _, ic := range c.Installs {
 		b.WriteString("\n")
 		writeCheckInstall(b, ic, c.GeneratedAt, color)
@@ -35,6 +35,14 @@ func CheckTextFor(w io.Writer, c view.Check, _ time.Time, color bool, build view
 		total.Warning += ic.Counts.Warning
 		total.Info += ic.Counts.Info
 		deciding += len(decidingChecks(ic))
+		for _, cs := range ic.Checks {
+			if cs.NotChecked() {
+				notChecked++
+			}
+			if cs.Partial() {
+				partial++
+			}
+		}
 	}
 	if len(c.Incomplete) > 0 {
 		b.WriteString("\nINCOMPLETE INPUTS\n")
@@ -49,7 +57,7 @@ func CheckTextFor(w io.Writer, c view.Check, _ time.Time, color bool, build view
 	if c.Observation != nil {
 		writeObserved(b, *c.Observation, len(c.Installs) > 1)
 	}
-	b.WriteString("\n" + summary(total, deciding) + "\n")
+	b.WriteString("\n" + summary(total, deciding, notChecked, partial) + "\n")
 	_, err := io.WriteString(w, b.String())
 	return err
 }
@@ -170,14 +178,23 @@ func writeCheckInstall(b *strings.Builder, ic view.InstallCheck, gen time.Time, 
 
 	writeNotChecked(b, ic.Checks)
 
-	passed := 0
+	var partial [][]string
+	ran := 0
 	for _, cs := range ic.Checks {
-		if cs.Passed() {
-			passed++
+		if cs.Ran() {
+			ran++
+		}
+		if cs.Partial() {
+			partial = append(partial, []string{clean(cs.Name), clean(cs.Detail)})
 		}
 	}
+	if len(partial) > 0 {
+		fmt.Fprintf(b, "\nPARTIAL COVERAGE (%d)\n", len(partial))
+		table(b, "  ", partial)
+	}
+	// OK means a check ran, and findings are not linked to checks: none is claimed to pass.
 	if len(ic.Checks) > 0 {
-		fmt.Fprintf(b, "\nPASSED: %d %s\n", passed, plural(passed, "check", "checks"))
+		fmt.Fprintf(b, "\nCHECKS RUN: %d\n", ran)
 	}
 }
 
@@ -287,7 +304,8 @@ func writeNotChecked(b *strings.Builder, checks []view.CheckStatus) {
 	}
 }
 
-func summary(c view.Counts, deciding int) string {
+// summary is the closing line: findings by severity, then checks deciding, not checked and partial.
+func summary(c view.Counts, deciding, notChecked, partial int) string {
 	var parts []string
 	if c.Error > 0 {
 		parts = append(parts, fmt.Sprintf("%d %s", c.Error, plural(c.Error, "error", "errors")))
@@ -303,6 +321,12 @@ func summary(c view.Counts, deciding int) string {
 	}
 	if deciding > 0 {
 		parts = append(parts, fmt.Sprintf("%d %s deciding", deciding, plural(deciding, "check", "checks")))
+	}
+	if notChecked > 0 {
+		parts = append(parts, fmt.Sprintf("%d not checked", notChecked))
+	}
+	if partial > 0 {
+		parts = append(parts, fmt.Sprintf("%d with partial coverage", partial))
 	}
 	return strings.Join(parts, ", ") + "."
 }

@@ -92,7 +92,7 @@ func Version(b BuildInfo, r *load.Result, f *Filter) (VersionView, error) {
 	}
 	for _, gvr := range append(slices.Clone(owners), cache.ProxyPodsGVR, cache.CRDsGVR) {
 		if in, ok := r.Inputs[gvr]; ok && in.State != load.StateOK {
-			v.Incomplete = append(v.Incomplete, in)
+			v.Incomplete = append(v.Incomplete, RedactInput(in))
 		}
 	}
 	slices.SortFunc(v.Incomplete, func(a, b load.Input) int { return cmp.Compare(a.Resource, b.Resource) })

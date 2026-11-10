@@ -526,7 +526,7 @@ func incomplete(r *load.Result, k kinds.Served) []load.Input {
 	var in []load.Input
 	for _, gvr := range gvrs {
 		if x, ok := r.Inputs[gvr]; ok && x.State != load.StateOK && !slices.ContainsFunc(in, func(y load.Input) bool { return y.Resource == x.Resource }) {
-			in = append(in, x)
+			in = append(in, RedactInput(x))
 		}
 	}
 	slices.SortFunc(in, func(a, b load.Input) int { return cmp.Compare(a.Resource, b.Resource) })

@@ -7,6 +7,6 @@ NOT CHECKED (4)
   ext auth  not on this kgateway version
   scrape  scrape timed out
 
-PASSED: 1 check
+CHECKS RUN: 1
 
-No findings.
+No findings, 4 not checked.

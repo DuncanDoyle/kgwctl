@@ -125,11 +125,11 @@ func TestBuildCheckHold(t *testing.T) {
 	if cs[0].Hold != nil || h == nil || h.Count != 12 || h.Reason != "Waiting" || h.Until.Location() != time.UTC || !h.Until.Equal(until) {
 		t.Fatalf("hold = %+v", cs)
 	}
-	if cs[1].Passed() {
-		t.Error("a held check must not count as passed")
+	if !cs[1].Ran() || cs[1].Partial() {
+		t.Error("a held OK check ran and is not partial")
 	}
-	if !cs[0].Passed() {
-		t.Error("plain OK check should pass")
+	if !cs[0].Ran() || cs[0].Partial() {
+		t.Error("plain OK check ran with full coverage")
 	}
 }
 
@@ -142,14 +142,20 @@ func TestBuildCheckUnavailable(t *testing.T) {
 		// Pending or held with an error text is still deciding, not "not checked".
 		{Name: "e", OK: false, Pending: true, Error: "1 resource is being processed by the controller"},
 		{Name: "f", OK: false, Error: "waiting", Hold: &health.Hold{Until: computedAt, Count: 1, Reason: "r"}},
+		// OK means the check ran: a detail is partial coverage, an Unavailable not checked.
+		{Name: "g", OK: true, Detail: "1 of 2 Gateways have no proxy stats."},
+		{Name: "h", OK: true, Unavailable: health.AvailOff, Detail: "Proxy Pods are not watched"},
 	}}
 	cs := build(checkModel(rep, nil), view.CheckSelect{}).Installs[0].Checks
 	if cs[0].Unavailable != "denied" || cs[0].Error == "" {
 		t.Errorf("raw fields not kept: %+v", cs[0])
 	}
-	for i, want := range []struct{ notChecked, passed bool }{{true, false}, {true, false}, {false, false}, {false, true}, {false, false}, {false, false}} {
-		if cs[i].NotChecked() != want.notChecked || cs[i].Passed() != want.passed {
-			t.Errorf("%s: NotChecked=%v Passed=%v", cs[i].Name, cs[i].NotChecked(), cs[i].Passed())
+	for i, want := range []struct{ notChecked, ran, partial bool }{
+		{true, false, false}, {true, false, false}, {false, false, false}, {false, true, false},
+		{false, false, false}, {false, false, false}, {false, true, true}, {true, false, false},
+	} {
+		if cs[i].NotChecked() != want.notChecked || cs[i].Ran() != want.ran || cs[i].Partial() != want.partial {
+			t.Errorf("%s: NotChecked=%v Ran=%v Partial=%v", cs[i].Name, cs[i].NotChecked(), cs[i].Ran(), cs[i].Partial())
 		}
 	}
 }

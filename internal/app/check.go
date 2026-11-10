@@ -165,10 +165,6 @@ func acquire(ctx context.Context, f *Flags, start time.Time, rc *rest.Config, re
 	if err != nil {
 		return nil, err
 	}
-	type started struct {
-		s   *observe.Session
-		err error
-	}
 	ch := make(chan started, 1)
 	go func() {
 		s, err := observe.Start(sctx, c, reg, o)
@@ -185,16 +181,10 @@ func acquire(ctx context.Context, f *Flags, start time.Time, rc *rest.Config, re
 		}
 		s = r.s
 	case <-deadline:
-		cancel()
-		if r := <-ch; r.s != nil {
-			r.s.Stop()
-		}
+		abandon(ch, cancel)
 		return nil, &ExitError{Code: 2, Err: fmt.Errorf("discovery did not finish within --%s %v", flagRequestTimeout, f.RequestTimeout)}
 	case <-ctx.Done():
-		cancel()
-		if r := <-ch; r.s != nil {
-			r.s.Stop()
-		}
+		abandon(ch, cancel)
 		return nil, interrupted()
 	}
 	defer func() {
@@ -226,6 +216,23 @@ func acquire(ctx context.Context, f *Flags, start time.Time, rc *rest.Config, re
 	}
 	ok = true
 	return &acquired{s: s, p: p, inputs: inputs, stop: func() { s.Stop(); cancel() }}, nil
+}
+
+// started is what observe.Start returned.
+type started struct {
+	s   *observe.Session
+	err error
+}
+
+// abandon cancels a Start that may ignore cancellation (an exec credential plugin)
+// without waiting for it; a session it returns later is stopped in the background.
+func abandon(ch <-chan started, cancel context.CancelFunc) {
+	cancel()
+	go func() {
+		if r := <-ch; r.s != nil {
+			r.s.Stop()
+		}
+	}()
 }
 
 func interrupted() error { return &ExitError{Code: 2, Err: errors.New("interrupted")} }
@@ -276,13 +283,13 @@ func writeCheck(cmd *cobra.Command, output string, c view.Check, build BuildInfo
 	return nil
 }
 
-// incomplete are the inputs that are not ok, by name. Without an install the
+// incomplete are the inputs that are not ok, by name, reasons redacted. Without an install the
 // collectors have nothing to collect, so they are left out.
 func incomplete(inputs map[schema.GroupVersionResource]load.Input, installs bool) []load.Input {
 	var out []load.Input
 	for gvr, in := range inputs {
 		if in.State != load.StateOK && (installs || gvr != observe.CollectorGVR(in.Resource)) {
-			out = append(out, in)
+			out = append(out, view.RedactInput(in))
 		}
 	}
 	slices.SortFunc(out, func(a, b load.Input) int { return cmp.Compare(a.Resource, b.Resource) })

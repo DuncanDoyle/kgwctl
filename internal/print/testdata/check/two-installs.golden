@@ -18,13 +18,13 @@ WARNINGS (3)
 INFO (1)
   KGWUI-020  HTTPRoute shop/x  Listener has no routes
 
-PASSED: 2 checks
+CHECKS RUN: 2
 
 Install other/gw (v2.5.1) · state: error
 
 ERRORS (1)
   KGWUI-003  HTTPRoute o/r  Route not attached
 
-PASSED: 1 check
+CHECKS RUN: 1
 
 2 errors, 3 warnings, 1 info.

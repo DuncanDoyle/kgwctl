@@ -179,7 +179,7 @@ func TestCheckThemes(t *testing.T) {
 		// contains are lines the text output must have, beyond the golden file.
 		contains []string
 	}{
-		{name: "healthy", fixtures: []string{checkInstall, checkController}, want: 0, contains: []string{"PASSED: "}},
+		{name: "healthy", fixtures: []string{checkInstall, checkController}, want: 0, contains: []string{"CHECKS RUN: "}},
 		{name: "controller-down", fixtures: []string{checkInstall, checkControllerDown}, want: 1, contains: []string{"KGWUI-005"}},
 		{name: "route-broken", fixtures: []string{checkInstall, checkController, checkRouteBroken}, want: 1,
 			contains: []string{"Likely cause: Service shop/cart-v2", "KGWUI-013  HTTPRoute shop/cart"}},
@@ -371,7 +371,7 @@ func TestCheckPodsProxyDenied(t *testing.T) {
 	}
 	text := runCheck(t, env, statsRegistry(fakeStats{}), h, "check")
 	_, notChecked, _ := strings.Cut(text.stdout, "NOT CHECKED")
-	notChecked, _, _ = strings.Cut(notChecked, "PASSED")
+	notChecked, _, _ = strings.Cut(notChecked, "CHECKS RUN")
 	for _, name := range checksReadingMetrics(statsRegistry(fakeStats{})) {
 		if !strings.Contains(notChecked, name) {
 			t.Errorf("check %q not under NOT CHECKED:\n%s", name, text.stdout)
@@ -614,4 +614,28 @@ func executeCheck(t *testing.T, ctx context.Context, env *testenv.Env, h app.Che
 	}
 	t.Logf("error: %v", err)
 	return out.String(), 1
+}
+
+// errScraper fails every scrape with a transport error naming the API server and the Pod.
+type errScraper struct{}
+
+func (errScraper) Scrape(context.Context, *corev1.Pod, int32) (io.ReadCloser, error) {
+	return nil, errors.New(`Get "https://10.0.0.1:6443/api/v1/namespaces/x/pods/y:9092/proxy/metrics": ` +
+		`tls: failed to verify certificate: x509: certificate signed by unknown authority`)
+}
+
+// TestCheckRedactsURLs: a scrape's transport error reaches the report without the server's address (design §3.3 rule 1).
+func TestCheckRedactsURLs(t *testing.T) {
+	env := checkEnv(t, checkInstall, checkController)
+	for _, out := range []string{"text", "json", "yaml"} {
+		r := runCheck(t, env, statsRegistry(fakeStats{}), fastHooks(errScraper{}), "check", "-o", out)
+		// JSON escapes < and >.
+		r.stdout = strings.NewReplacer(`\u003c`, "<", `\u003e`, ">").Replace(r.stdout)
+		if strings.Contains(r.stdout, "10.0.0.1") || strings.Contains(r.stdout, "/api/v1/namespaces/x") {
+			t.Errorf("%s: server address in the report:\n%s", out, r.stdout)
+		}
+		if !strings.Contains(r.stdout, "https://<redacted>") || !strings.Contains(r.stdout, "x509: certificate signed by unknown authority") {
+			t.Errorf("%s: the redacted error is missing:\n%s", out, r.stdout)
+		}
+	}
 }

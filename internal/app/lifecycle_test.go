@@ -272,4 +272,17 @@ func TestExecPluginHangsPastDeadline(t *testing.T) {
 			t.Errorf("%v: returned after %v, want within 2s of start", args, r.took)
 		}
 	}
+	// check is exit 2: it could not check (design §3.4).
+	for _, args := range [][]string{{"check"}, {"check", "--live", "--timeout", "1m"}} {
+		r := runCmd(t, &execEnv, append(args, "--request-timeout", "1s")...)
+		if r.code != 2 || r.stdout != "" {
+			t.Errorf("%v: exit %d, stdout %q; want 2 and empty", args, r.code, r.stdout)
+		}
+		if !strings.Contains(r.stderr, "discovery did not finish") {
+			t.Errorf("%v: stderr = %q, want the discovery timeout", args, r.stderr)
+		}
+		if r.took > 2*time.Second {
+			t.Errorf("%v: returned after %v, want within 2s of start", args, r.took)
+		}
+	}
 }

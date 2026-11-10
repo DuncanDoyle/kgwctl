@@ -5,6 +5,6 @@ Install kgateway-system/kgateway (v2.5.0) · state: healthy
 NOT CHECKED (1)
   withheld config  not-on-version
 
-PASSED: 20 checks
+CHECKS RUN: 20
 
-No findings.
+No findings, 1 not checked.

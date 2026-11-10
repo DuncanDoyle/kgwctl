@@ -96,7 +96,8 @@ type Fix struct {
 	Basis  string      `json:"basis"`
 }
 
-// CheckStatus is whether one check could collect its input.
+// CheckStatus is whether one check ran. OK means it ran, not that it found nothing:
+// findings are not linked to checks.
 type CheckStatus struct {
 	Name    string `json:"name"`
 	OK      bool   `json:"ok"`
@@ -118,8 +119,11 @@ func (c CheckStatus) NotChecked() bool {
 	return c.Unavailable != "" || !c.OK && c.Error != ""
 }
 
-// Passed reports whether the check is OK, holds nothing and was checked.
-func (c CheckStatus) Passed() bool { return c.OK && c.Hold == nil && !c.NotChecked() }
+// Ran reports whether the check ran: OK with its input available. A held check ran too.
+func (c CheckStatus) Ran() bool { return c.OK && c.Unavailable == "" }
+
+// Partial reports whether the check ran with partial coverage: OK, deciding nothing, with a detail.
+func (c CheckStatus) Partial() bool { return c.Ran() && c.Hold == nil && c.Detail != "" }
 
 // Hold says a check is still deciding on some items.
 type Hold struct {
@@ -316,14 +320,14 @@ func inNamespace(f health.Finding, ns, installNS string) bool {
 // checkFinding maps f; in and cmds build its next steps. A since not before from is dropped.
 func checkFinding(f *health.Finding, in diagnose.Input, cmds diagnose.Commands, from time.Time) CheckFinding {
 	cf := CheckFinding{ID: f.ID, Code: f.Code, Slug: f.Slug, Severity: string(f.Severity), Resource: f.Resource,
-		Message: f.Message, Detail: f.Detail, Group: f.Group}
+		Message: Redact(f.Message), Detail: Redact(f.Detail), Group: f.Group}
 	if f.Since != nil && (from.IsZero() || f.Since.Before(from)) {
 		cf.Since = new(f.Since.UTC())
 	}
 	if f.Facts != nil {
 		// An evidence that cannot be marshalled is left out rather than failing the report.
 		if b, err := json.Marshal(f.Facts); err == nil && string(b) != "null" && string(b) != "{}" {
-			cf.Evidence = b
+			cf.Evidence = redactJSON(b)
 		}
 	}
 	if cmds != nil {
@@ -340,9 +344,10 @@ func checkFinding(f *health.Finding, in diagnose.Input, cmds diagnose.Commands, 
 }
 
 func checkStatus(cr health.CheckResult) CheckStatus {
-	cs := CheckStatus{Name: cr.Name, OK: cr.OK, Pending: cr.Pending, Unavailable: string(cr.Unavailable), Error: cr.Error, Detail: cr.Detail}
+	cs := CheckStatus{Name: cr.Name, OK: cr.OK, Pending: cr.Pending, Unavailable: string(cr.Unavailable),
+		Error: Redact(cr.Error), Detail: Redact(cr.Detail)}
 	if h := cr.Hold; h != nil {
-		cs.Hold = &Hold{Until: h.Until.UTC(), Count: h.Count, Reason: h.Reason}
+		cs.Hold = &Hold{Until: h.Until.UTC(), Count: h.Count, Reason: Redact(h.Reason)}
 	}
 	return cs
 }

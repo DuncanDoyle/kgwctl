@@ -354,6 +354,8 @@ A reference with one extra field.
 
 `check` prints one report per selected install. With `-n`, findings on objects of other namespaces are dropped; findings without a namespace or in the install's own namespace (such as its controller) stay, since they affect every namespace, and `state` is still the engine's. Times are UTC.
 
+Text from the cluster (finding message and detail, evidence, check error and detail, hold reason, input reason) is redacted: a URL becomes `scheme://<redacted>`, path included, since a `pods/proxy` path names the API server's namespace, Pod and port; the address of a network error (`dial tcp <redacted>:`) goes too. The same applies to `incomplete` in `version` and `describe`.
+
 ### Check
 
 | Field | Type | Meaning |
@@ -441,14 +443,14 @@ A reference with one extra field.
 | Field | Type | Meaning |
 |---|---|---|
 | `name` | string | Check name. |
-| `ok` | boolean | The check collected its input and found nothing to report. Always present. |
+| `ok` | boolean | The check ran: it collected its input. Not that it found nothing; findings are not linked to checks. Always present. |
 | `pending` | boolean | Not `ok` only because objects are still being processed. Always present. |
 | `unavailable` | string | Why an optional input is missing: `off`, `denied`, `failing`, `not-on-version` or `not-observed`; always present, `""` when available. |
 | `error` | string | Why the check could not collect its input; absent when empty. |
-| `detail` | string | Extra context of an `ok` check; absent when empty. |
+| `detail` | string | Extra context of an `ok` check, such as what it could not look at; absent when empty. |
 | `hold` | Hold | Set while the check is still deciding on some items. |
 
-A check is still deciding when `pending` is true or it has a `hold`. Otherwise it was not checked when `unavailable` is set, or when `ok` is false and `error` is set. It passed when `ok` is true, it has no `hold` and it was checked.
+A check is still deciding when `pending` is true or it has a `hold`. Otherwise it was not checked when `unavailable` is set, or when `ok` is false and `error` is set. It ran when `ok` is true and `unavailable` is empty; one that ran with no `hold` and a `detail` ran with partial coverage.
 
 ### Hold
 

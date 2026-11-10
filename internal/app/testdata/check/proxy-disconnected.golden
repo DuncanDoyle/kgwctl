@@ -10,6 +10,6 @@ WARNINGS (1)
 NOT CHECKED (1)
   withheld config  not-on-version
 
-PASSED: 20 checks
+CHECKS RUN: 20
 
-1 warning.
+1 warning, 1 not checked.
