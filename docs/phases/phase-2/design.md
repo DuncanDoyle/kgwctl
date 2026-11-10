@@ -124,7 +124,7 @@ Rules:
 3. Each finding: code, resource, message, detail, `since` when known and earlier than kgwctl started observing (a later one only says when kgwctl looked), next-step commands with `--context` filled in, and a fix when `diagnose.Fix` has one (only some 013/014 cases).
 4. **Still deciding:** every check with a `hold`: name, count, decision time, reason (§6.1: no per-check unit words). Checks that are `Pending` without a hold also appear here.
 5. **Not checked:** every check with `Unavailable` set, grouped by cause, with the remedy (RBAC rule, flag, or "not on this kgateway version").
-6. **Passed** counts only checks that are OK, have no hold, and are not unavailable.
+6. **Checks run** counts checks that ran. Snellius's `OK` means a check ran, not that it found nothing, and findings aren't linked to checks, so kgwctl never claims a single check passed. Checks that ran with partial coverage (OK with a detail, such as Gateways without proxy stats) are listed under **Partial coverage**. (Phase review #2.)
 7. No colour or box-drawing characters when stdout is not a terminal. In a terminal, severity colours are allowed but `NO_COLOR` turns them off.
 8. Multiple installs: one block per install, one summary line at the end.
 
@@ -166,7 +166,7 @@ check --live: also stream Events() to stderr until --timeout / Ctrl-C -> report
 
 `--live` consumes **every** published model in order, from the engine's `OnLoop` `EvPublished` (each carries its immutable `Published`), through an unbounded queue. Reading only the latest model could skip one in which a finding appeared and cleared, and that is exactly the evidence the Observed section promises. Rendering may coalesce; tracking may not.
 
-It compares each model with the previous one by finding ID, check hold and input availability and emits the events of §3.2, including a finding whose severity or message changed under the same ID (KGWUI-003 goes from info to warning when its grace ends). It keeps first-seen, cleared and severity changes for the Observed section. **Observed** lists every finding with a transition during the run: raised after the first model, cleared, or changed severity (including one present from the start that is still present). The diff is presentation only; it never changes what the engine decides.
+It compares each model with the previous one by finding ID, check hold and input availability and emits the events of §3.2, including a finding whose severity or message changed under the same ID (KGWUI-003 goes from info to warning when its grace ends). It keeps first-seen, cleared and severity changes, and the latest evidence, next steps and fix, for the Observed section. A finding that disappears in a model where checks of its install stopped running is **no longer observed**, not cleared: kgwctl lost sight of it (phase review #3). A check that stops or resumes running is a progress event too. **Observed** lists every finding with a transition during the run: raised after the first model, cleared, or changed severity (including one present from the start that is still present). The diff is presentation only; it never changes what the engine decides.
 
 ### 4.3 Shutdown
 
@@ -257,7 +257,7 @@ item:
     observed: [{id, code, resource, severity, firstSeen, clearedAt, severities: [{severity, at}]}]
 ```
 
-Phase 1 conventions hold: RFC 3339 UTC times, no relative-to-now fields, refs as objects, empty optional fields omitted, warnings never in JSON/YAML. `docs/output.md` documents the `Check` kind; `TestOutputDocMatchesSchema` covers it. The exit-code sentence in `docs/output.md` and the README changes to say `check` uses 0/1/2.
+Cluster-derived text is redacted of URL hosts (transport errors can carry the API server's address). Phase 1 conventions hold: RFC 3339 UTC times, no relative-to-now fields, refs as objects, empty optional fields omitted, warnings never in JSON/YAML. `docs/output.md` documents the `Check` kind; `TestOutputDocMatchesSchema` covers it. The exit-code sentence in `docs/output.md` and the README changes to say `check` uses 0/1/2.
 
 ## 8. Snellius upgrade (first sub-phase)
 

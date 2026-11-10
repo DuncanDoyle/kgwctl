@@ -12,29 +12,39 @@ Status: implementation
 - [x] Q3 Cross-model review of design + plan (3 rounds), triage; owner go-ahead 2026-11-10
 - [x] Q4 Sub-phase 2.1 Snellius upgrade
 - [x] Q5 Sub-phase 2.2 `check` (phase-2.2-complete.md)
-- [ ] Q6 Sub-phase 2.3 `check --live` ← CURRENT
-- [ ] Q7 Phase review (Codex), triage
+- [x] Q6 Sub-phase 2.3 `check --live` (phase-2.3-complete.md)
+- [x] Q7 Phase review (Codex), triage: reviews/phase-codex.md
+- [ ] Q7b Stabilization 2.4 ← CURRENT
 - [ ] Q8 Owner tries `check`; phase close after that
 
 ### Exit gates
 - [ ] tests/vet pass (observed)
 - [ ] all queue items done or deferred
 - [x] design+plan cross-model review + triage: docs/phases/phase-2/reviews/design-codex.md (+ -r2, -r3)
-- [ ] phase cross-model review + triage: docs/phases/phase-2/reviews/phase-codex.md
+- [x] phase cross-model review + triage: docs/phases/phase-2/reviews/phase-codex.md
 - [ ] decisions.md / design / plan in sync with code
 - [ ] phase-2-complete.md written, roadmap updated, tracked items closed
 
 ## Sub-phase
-Sub-phase: 2.3 — `check --live`
-Kind: planned
-Base: 33b45e9
-Brief: implementation-plan.md Tasks 2.3.1–2.3.3 (no separate brief; tasks ran in the SDD loop interleaved with 2.2)
+Sub-phase: 2.4 — Phase review fixes
+Kind: stabilization
+Base: 3aef403
+Brief: docs/phases/phase-2/phase-2.4-brief.md
+
+### Allowed work
+bug fixes, missing designed behaviour, tests, docs
+
+### Not allowed
+new features, architecture changes, new dependencies
 
 ### Queue
-- [x] Task 2.3.1 model diff (2cf0854, bc6ee94)
-- [x] Task 2.3.2 `--live` (7595374, 33b45e9, fa78264)
-- [ ] Task 2.3.2 detail changes are transitions (found on kind) ← CURRENT
-- [x] Task 2.3.3 docs and live-check scenario (d37e529)
+- [ ] Q1 no hang on discovery (#1) ← CURRENT
+- [ ] Q2 honest coverage (#2)
+- [ ] Q3 no longer observed vs cleared (#3)
+- [ ] Q4 redact URLs (#4)
+- [ ] Q5 check availability events (#6)
+- [ ] Q6 live script asserts (#7)
+- [ ] Q7 observed keeps evidence (#8)
 
 ## Program
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
