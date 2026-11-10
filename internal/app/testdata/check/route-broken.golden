@@ -1,0 +1,16 @@
+kgwctl check · context ctx-0 · YYYY-MM-DD hh:mm:ss UTC · kgwctl v0.1.0
+
+Install kgateway-system/kgateway (v2.5.0) · state: error
+
+ERRORS (1)
+  Likely cause: Service shop/cart-v2
+    KGWUI-013  HTTPRoute shop/cart  Backend not found
+               Service `shop/cart-v2` does not exist. ResolvedRefs=False, reason BackendNotFound: Service "cart-v2" not found (parent Gateway kgateway-system/http)
+               Since YYYY-MM-DD hh:mm:ss UTC.
+
+NOT CHECKED (1)
+  withheld config  not-on-version
+
+PASSED: 20 checks
+
+1 error.

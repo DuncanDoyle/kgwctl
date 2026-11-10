@@ -144,9 +144,11 @@ func (f *Flags) Context(parent context.Context) (context.Context, context.Cancel
 	return context.WithTimeout(parent, f.RequestTimeout)
 }
 
-// NewRoot builds the root command with the global flags, get, describe, version,
-// completion and cfg.Commands.
-func NewRoot(cfg Config) *cobra.Command {
+// NewRoot builds the root command with the global flags, get, describe, check,
+// version, completion and cfg.Commands.
+func NewRoot(cfg Config) *cobra.Command { return newRoot(cfg, checkTestHooks{}) }
+
+func newRoot(cfg Config, hooks checkTestHooks) *cobra.Command {
 	if cfg.Name == "" {
 		cfg.Name = "kgwctl"
 	}
@@ -174,21 +176,31 @@ func NewRoot(cfg Config) *cobra.Command {
 	root.SetOut(cfg.Out)
 	root.SetErr(cfg.Err)
 	(&Flags{}).Bind(root.PersistentFlags())
-	root.AddCommand(newGetCmd(cfg.Registry, cfg.Now), newDescribeCmd(cfg.Registry, cfg.Now), newVersionCmd(cfg.Registry, cfg.Build))
+	root.AddCommand(newGetCmd(cfg.Registry, cfg.Now), newDescribeCmd(cfg.Registry, cfg.Now), newVersionCmd(cfg.Registry, cfg.Build),
+		newCheckCmd(cfg.Registry, cfg.Build, cfg.Now, hooks))
 	root.AddCommand(cfg.Commands...)
 	return root
 }
 
 // Execute runs root until it returns or the process is interrupted. An error
-// prints as "Error: <msg>" on stderr and gives 1; success gives 0. It
-// silences client-go's klog output once per process: commands report inputs as warnings.
+// prints as "Error: <msg>" on stderr and gives 1; an ExitError gives its code
+// and prints only when it carries an error; success gives 0. It silences
+// client-go's klog output once per process: commands report inputs as warnings.
 func Execute(root *cobra.Command) int {
 	quiet.Klog()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	if err := root.ExecuteContext(ctx); err != nil {
-		fmt.Fprintf(root.ErrOrStderr(), "Error: %v\n", err)
-		return 1
+	err := root.ExecuteContext(ctx)
+	if err == nil {
+		return 0
 	}
-	return 0
+	var ee *ExitError
+	if errors.As(err, &ee) {
+		if ee.Err != nil {
+			fmt.Fprintf(root.ErrOrStderr(), "Error: %v\n", ee.Err)
+		}
+		return ee.Code
+	}
+	fmt.Fprintf(root.ErrOrStderr(), "Error: %v\n", err)
+	return 1
 }

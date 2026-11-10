@@ -7,7 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/DuncanDoyle/snellius/pkg/diagnose"
 	"github.com/DuncanDoyle/snellius/pkg/extension"
+	"github.com/DuncanDoyle/snellius/pkg/proxystats"
 	"github.com/spf13/cobra"
 
 	"github.com/DuncanDoyle/kgwctl/pkg/cli"
@@ -50,16 +52,21 @@ type collector struct{}
 func (collector) Name() string                                { return "probe" }
 func (collector) Start(context.Context, extension.Deps) error { return nil }
 
+// hints is a command hints type other than the default registry's.
+type hints struct{ diagnose.Commands }
+
 func TestIgnoredCapabilitiesLogOneDebugLineEach(t *testing.T) {
 	var buf bytes.Buffer
 	old := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	t.Cleanup(func() { slog.SetDefault(old) })
 
-	reg := extension.New(extension.WithCollectors(collector{}))
+	// check runs collectors and the proxy stats source, so neither is ignored.
+	reg := extension.New(extension.WithCollectors(collector{}), extension.WithProxyStatsSource(proxystats.Kube{}),
+		extension.WithCommands(hints{}))
 	cli.NewRootCommand(cli.WithRegistry(reg))
-	if n := strings.Count(buf.String(), "ignored registry capability"); n != 1 {
-		t.Errorf("got %d debug lines, want 1:\n%s", n, buf.String())
+	if n := strings.Count(buf.String(), "ignored registry capability"); n != 1 || !strings.Contains(buf.String(), "capability=commands") {
+		t.Errorf("got %d debug lines, want 1 for commands:\n%s", n, buf.String())
 	}
 	buf.Reset()
 	cli.NewRootCommand()
