@@ -83,6 +83,33 @@ func TestLoadHealthy(t *testing.T) {
 	}
 }
 
+// gatewayExtensionsGVR is a list-only kind of the catalogue.
+var gatewayExtensionsGVR = schema.GroupVersionResource{Group: "gateway.kgateway.dev", Version: "v1alpha1", Resource: "gatewayextensions"}
+
+// TestLoadWaitsForListOnly: a slow list-only kind is waited for (Snellius setup doc).
+func TestLoadWaitsForListOnly(t *testing.T) {
+	env := testenv.New(t, testenv.Options{Fixtures: []string{healthy}})
+	match := testenv.Match{Kind: testenv.KindAcquire, Resource: "gatewayextensions.gateway.kgateway.dev"}
+	slow := env.Proxies[0].Rule(match, testenv.Action{Delay: 300 * time.Millisecond})
+	r := mustLoad(t, env, 10*time.Second, load.Needs{})
+	if in := input(t, r, gatewayExtensionsGVR); in.State != load.StateOK || slow.N() == 0 {
+		t.Errorf("gatewayextensions = %+v after %d delayed requests, want ok", in, slow.N())
+	}
+}
+
+// TestLoadListOnlyDeadline: a list-only kind still listing at the deadline is loading, not an error.
+func TestLoadListOnlyDeadline(t *testing.T) {
+	env := testenv.New(t, testenv.Options{Fixtures: []string{healthy}})
+	match := testenv.Match{Kind: testenv.KindAcquire, Resource: "gatewayextensions.gateway.kgateway.dev"}
+	hold := make(chan struct{})
+	t.Cleanup(func() { close(hold) })
+	env.Proxies[0].Rule(match, testenv.Action{Until: hold})
+	r := mustLoad(t, env, 2*time.Second, load.Needs{})
+	if in := input(t, r, gatewayExtensionsGVR); in.State != load.StateLoading {
+		t.Errorf("gatewayextensions held past the deadline = %+v, want loading", in)
+	}
+}
+
 func TestLoadDeniedKind(t *testing.T) {
 	env := testenv.New(t, testenv.Options{Fixtures: []string{healthy}})
 	env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindAcquire, Resource: "pods"}, testenv.Action{Status: http.StatusForbidden})

@@ -154,7 +154,7 @@ func Load(ctx context.Context, c Clients, reg *extension.Registry, needs Needs) 
 	defer cancel()
 	ca := cache.New(cfg.Cache)
 	ca.Start(cctx)
-	snap, pending := wait(ctx, ca, optional(needs))
+	snap, pending := wait(ctx, ca, append(optional(needs), listOnly(served)...))
 	cancel()
 
 	inputs := classify(snap.Access, pending)
@@ -250,6 +250,17 @@ func optional(needs Needs) []schema.GroupVersionResource {
 	}
 	if needs.CRDs {
 		out = append(out, cache.CRDsGVR)
+	}
+	return out
+}
+
+// listOnly returns the Access keys of the served list-only kinds; a one-shot caller waits for them (Snellius setup doc).
+func listOnly(served []kinds.Served) []schema.GroupVersionResource {
+	var out []schema.GroupVersionResource
+	for _, s := range served {
+		if s.ListOnly {
+			out = append(out, s.GVR())
+		}
 	}
 	return out
 }
