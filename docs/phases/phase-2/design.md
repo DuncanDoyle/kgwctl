@@ -102,8 +102,8 @@ ERRORS (1)
 
 WARNINGS (2)
   Likely cause: Service shop/cart-v2
-    KGWUI-013  HTTPRoute shop/cart  backendRef Service shop/cart-v2 not found
-               Fix: create Service shop/cart-v2, or change the backendRef
+    KGWUI-013  HTTPRoute shop/cart  Backend not found
+               Service `shop/cart-v2` does not exist.
   KGWUI-003  HTTPRoute shop/web  Route not attached to its parent
 
 STILL DECIDING (1)
@@ -121,7 +121,7 @@ PASSED: 17 checks
 Rules:
 1. Header: context name, time in UTC, kgwctl version; per install its ID, kgateway version and state. No server URL.
 2. Findings by severity (error, warning, info), then in the order of Snellius's diagnosis. Findings Snellius's `diagnose` puts in one group print together under the group's cause resource ("Likely cause: …"). kgwctl draws no cause link between findings itself (D-003).
-3. Each finding: code, resource, message, detail, `since` when known, next-step commands with `--context` filled in, and a fix when `diagnose.Fix` has one.
+3. Each finding: code, resource, message, detail, `since` when known and earlier than kgwctl started observing (a later one only says when kgwctl looked), next-step commands with `--context` filled in, and a fix when `diagnose.Fix` has one (only some 013/014 cases).
 4. **Still deciding:** every check with a `hold`: name, count, decision time, reason (§6.1: no per-check unit words). Checks that are `Pending` without a hold also appear here.
 5. **Not checked:** every check with `Unavailable` set, grouped by cause, with the remedy (RBAC rule, flag, or "not on this kgateway version").
 6. **Passed** counts only checks that are OK, have no hold, and are not unavailable.
