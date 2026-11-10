@@ -13,7 +13,9 @@ Round: 3
 
 New P1/P2 issue:
 
+
 - **P2 — Hanging-scraper test contradicts the new fallback.** [implementation-plan.md:105](/Users/ddoyle/Development/claude/kgwctl-claude-phase2/docs/phases/phase-2/implementation-plan.md:105) requires `Complete()` to stay false when the scraper blocks until cancellation, while line 98 permits completion after `FirstPublishWait` without publication. Both cannot hold beyond six seconds. Bound the test’s false assertion to before the fallback, then assert the intended partial-completion behavior.
+
 ## Triage
 | # | Finding | Source | Decision | Note |
 |---|---|---|---|---|

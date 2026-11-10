@@ -1,7 +1,7 @@
 # Sub-phase 2.2 — `check`
 
 Kind: planned
-Base: (set in the setup commit; see phase-status.md)
+Base: 7bd30ebb0040d3b2cf70710b7d8c2adfc625f1d7
 Issues: n/a | Plan steps: implementation-plan.md Tasks 2.2.1–2.2.6
 
 ## Problem / goal

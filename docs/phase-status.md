@@ -23,7 +23,24 @@ Status: implementation
 - [ ] phase-2-complete.md written, roadmap updated, tracked items closed
 
 ## Sub-phase
-n/a (2.1 complete: docs/phases/phase-2/phase-2.1-complete.md)
+Sub-phase: 2.2 — `check`
+Kind: planned
+Base: 7bd30ebb0040d3b2cf70710b7d8c2adfc625f1d7
+Brief: docs/phases/phase-2/phase-2.2-brief.md
+
+### Allowed work
+features within the approved design
+
+### Not allowed
+design changes without decisions.md + user approval
+
+### Queue
+- [ ] Task 2.2.1 `internal/observe` ← CURRENT
+- [ ] Task 2.2.2 check view and mapping
+- [ ] Task 2.2.3 text report
+- [ ] Task 2.2.4 `check` command and exit codes
+- [ ] Task 2.2.5 vendor pack in the downstream example
+- [ ] Task 2.2.6 RBAC, README, live check
 
 ## Program
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
