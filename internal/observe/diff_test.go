@@ -430,3 +430,18 @@ func TestTrackerHeldDoesNotClear(t *testing.T) {
 	require.Equal(t, &t3, tr.Observed()[0].ClearedAt)
 	require.Nil(t, tr.Observed()[0].LostAt)
 }
+
+// TestTrackerHeldCheckIsResponsible: a check that only ever held while the finding was present may have raised it.
+func TestTrackerHeldCheckIsResponsible(t *testing.T) {
+	tr := &Tracker{}
+	t1, t2 := t0.Add(time.Second), t0.Add(2*time.Second)
+	held := view.CheckStatus{Name: "stats", OK: true, Hold: &view.Hold{Until: t2, Count: 1, Reason: "warming"}}
+	f := []view.CheckFinding{finding("f", "error", "m")}
+	tr.Add(model(f, []view.CheckStatus{up("other"), held}), t0)
+	require.Equal(t, []EventKind{CheckUnavailable, FindingUnobserved, HoldEnded},
+		kinds(tr.Add(model(nil, []view.CheckStatus{up("other"), down("stats")}), t1)))
+	require.Equal(t, &t1, tr.Observed()[0].LostAt)
+	require.Equal(t, []EventKind{CheckAvailable, FindingCleared},
+		kinds(tr.Add(model(nil, []view.CheckStatus{up("other"), up("stats")}), t2)))
+	require.Equal(t, &t2, tr.Observed()[0].ClearedAt)
+}

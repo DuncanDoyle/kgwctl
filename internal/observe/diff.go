@@ -57,7 +57,7 @@ type Event struct {
 // inputs by resource. Events are ordered by install ID, kind, then key; input
 // events come last. It is pure and never reads a clock.
 //
-// A finding that disappears while a check that decided in prev does not decide in next
+// A finding that disappears while a check that ran in prev does not decide in next
 // is FindingUnobserved, not cleared: without provenance, any such check may have raised it.
 // A pending check has not decided; CheckAvailable needs a decided check.
 func Diff(prev, next view.Check, at time.Time) []Event {
@@ -94,7 +94,7 @@ func Diff(prev, next view.Check, at time.Time) []Event {
 		}
 		_, present := ni[id]
 		gone := FindingCleared
-		if !present || !decidedStill(decidedSet(pi[id]), ni[id]) {
+		if !present || !decidedStill(ranSet(pi[id]), ni[id]) {
 			gone = FindingUnobserved
 		}
 		pf, nf := findings(pi[id]), findings(ni[id])
@@ -194,6 +194,17 @@ func checks(ic view.InstallCheck) map[string]view.CheckStatus {
 // decided reports whether cs ran and decided, neither pending nor holding: only such a check confirms a finding is gone.
 func decided(cs view.CheckStatus) bool { return cs.Ran() && !cs.Pending && cs.Hold == nil }
 
+// ranSet is the set of checks of ic that ran, held or pending included: any may have raised a finding.
+func ranSet(ic view.InstallCheck) map[string]bool {
+	m := map[string]bool{}
+	for _, cs := range ic.Checks {
+		if cs.Ran() {
+			m[cs.Name] = true
+		}
+	}
+	return m
+}
+
 // decidedSet is the set of checks of ic that decided.
 func decidedSet(ic view.InstallCheck) map[string]bool {
 	m := map[string]bool{}
@@ -237,8 +248,8 @@ func inputs(c view.Check) map[string]string {
 // The first Add is the baseline and raises nothing. A finding that clears and
 // returns is ONE entry: it keeps its first FirstSeen, ClearedAt is nil again once
 // it returns, and Severities records each severity change with its time.
-// A finding gone while a check that decided during its presence does not decide
-// gets LostAt; it clears once every such check decides again without it.
+// A finding gone while a check that ran during its presence (held or pending too) does not
+// decide gets LostAt; it clears once every such check decides without it.
 type Tracker struct {
 	prev    *view.Check
 	entries map[string]*tracked
@@ -251,7 +262,7 @@ type tracked struct {
 	install string
 	// transitioned is set once the finding is raised late, cleared, lost, or changes severity, message or detail.
 	transitioned bool
-	// need is every check that decided while the finding was present; it resets once cleared.
+	// need is every check that ran while the finding was present; it resets once cleared.
 	need map[string]bool
 }
 
@@ -282,7 +293,7 @@ func (t *Tracker) Add(c view.Check, at time.Time) []Event {
 	}
 	seen := map[string]bool{}
 	for _, ic := range c.Installs {
-		d := decidedSet(ic)
+		d := ranSet(ic)
 		for _, f := range ic.Findings {
 			key := ic.Install.ID + "\x00" + f.ID
 			seen[key] = true
