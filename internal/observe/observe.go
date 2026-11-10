@@ -66,10 +66,13 @@ func (o Options) withDefaults() Options {
 	return o
 }
 
-// testLoop and testQuiet, if set, see each loop event and each quiet expiry (tests).
+// Test hooks, if set: each loop event, each quiet expiry, each quiet re-arm
+// and the first-publish wait's expiry, after the session's state is updated.
 var (
 	testLoop  func(engine.LoopEvent)
 	testQuiet func()
+	testArmed func()
+	testWait  func()
 )
 
 // CollectorGVR is the Inputs key of the collector named name; it never
@@ -81,11 +84,30 @@ func CollectorGVR(name string) schema.GroupVersionResource {
 // collectorState is what one collector has done so far.
 type collectorState struct {
 	published bool
-	reported  bool              // published or failed at least once
-	failing   map[string]string // key -> reason of its latest Fail, until it publishes again
+	reported  bool               // published or failed at least once
+	failing   map[string]failure // key -> its latest Fail, until it publishes again
+	terminal  bool               // has failed or returned at least once
 	returned  bool
 	err       string // Start's error or panic
 }
+
+// failure is one Fail's state and reason.
+type failure struct {
+	state  collect.State
+	reason string
+}
+
+// effect is what a collector event does to completion.
+type effect int
+
+const (
+	// noEffect: nothing the engine reads changed.
+	noEffect effect = iota
+	// resettle: a model computed after this event is needed.
+	resettle
+	// requiet: as resettle, and the quiet period restarts.
+	requiet
+)
 
 // Session is one running cache, engine and collector set.
 type Session struct {
@@ -114,8 +136,9 @@ type Session struct {
 	ended bool
 	// discoveredClosed and waitOver track the first-publish wait.
 	discoveredClosed, waitOver bool
-	// gen counts collector store changes; the quiet and settled flags reset on each.
-	gen                 uint64
+	// gen counts quiet-restarting events; epoch counts every event that needs a
+	// new model. A run settles only if quiet has fired and epoch is unchanged.
+	gen, epoch          uint64
 	quietFired, settled bool
 	runAfterQuiet       bool
 	runGen              uint64
@@ -158,7 +181,7 @@ func Start(ctx context.Context, c load.Clients, reg *extension.Registry, o Optio
 	for _, col := range cols {
 		name := col.Name()
 		s.names = append(s.names, name)
-		s.cols[name] = &collectorState{failing: map[string]string{}}
+		s.cols[name] = &collectorState{failing: map[string]failure{}}
 	}
 
 	s.ca.Start(sctx)
@@ -191,16 +214,21 @@ func (s *Session) runCollector(ctx context.Context, col extension.Collector, sto
 	d := extension.Deps{Current: s.eng.Current, Logger: log,
 		Publish: func(key string, v any, fp uint64, ttl time.Duration) {
 			store.Publish(name+"/"+key, v, fp, ttl)
-			s.record(name, func(st *collectorState) {
+			s.record(name, func(st *collectorState) effect {
 				st.published, st.reported = true, true
 				delete(st.failing, key)
+				return requiet
 			})
 		},
 		Fail: func(key string, state collect.State, reason string) {
 			store.Fail(name+"/"+key, state, reason)
-			s.record(name, func(st *collectorState) {
-				st.reported = true
-				st.failing[key] = reason
+			s.record(name, func(st *collectorState) effect {
+				f := failure{state, reason}
+				if prev, ok := st.failing[key]; ok && prev == f {
+					return noEffect // the store ignores it too
+				}
+				st.reported, st.failing[key] = true, f
+				return st.firstTerminal()
 			})
 		},
 	}
@@ -208,7 +236,10 @@ func (s *Session) runCollector(ctx context.Context, col extension.Collector, sto
 		var errText string
 		defer func() {
 			store.Stop(name)
-			s.record(name, func(st *collectorState) { st.returned, st.err = true, errText })
+			s.record(name, func(st *collectorState) effect {
+				st.returned, st.err = true, errText
+				return st.firstTerminal()
+			})
 		}()
 		defer func() {
 			if p := recover(); p != nil {
@@ -224,17 +255,36 @@ func (s *Session) runCollector(ctx context.Context, col extension.Collector, sto
 	})
 }
 
-// record applies f to collector name's state. Every store change re-arms the
-// quiet timer and voids the settled model.
-func (s *Session) record(name string, f func(*collectorState)) {
+// firstTerminal restarts the quiet period on a collector's first Fail or
+// return; a later one only needs a new model.
+func (st *collectorState) firstTerminal() effect {
+	if st.terminal {
+		return resettle
+	}
+	st.terminal = true
+	return requiet
+}
+
+// record applies f to collector name's state and then its effect: publishes
+// and first terminal outcomes restart the quiet period, every change voids the
+// settled model.
+func (s *Session) record(name string, f func(*collectorState) effect) {
 	s.mu.Lock()
-	f(s.cols[name])
-	s.gen++
-	s.quietFired, s.settled, s.runAfterQuiet = false, false, false
+	e := f(s.cols[name])
+	if e != noEffect {
+		s.epoch++
+		s.settled, s.runAfterQuiet = false, false
+	}
+	if e == requiet {
+		s.gen++
+		s.quietFired = false
+	}
 	s.mu.Unlock()
-	select {
-	case s.rearm <- struct{}{}:
-	default:
+	if e == requiet {
+		select {
+		case s.rearm <- struct{}{}:
+		default:
+		}
 	}
 	s.signal()
 }
@@ -264,6 +314,9 @@ func (s *Session) timers(ctx context.Context) {
 			armed = s.gen
 			s.mu.Unlock()
 			quiet = s.clk.NewTimer(s.o.Quiet)
+			if testArmed != nil {
+				testArmed()
+			}
 		case <-quiet.C():
 			s.mu.Lock()
 			fired := s.gen == armed
@@ -282,10 +335,18 @@ func (s *Session) timers(ctx context.Context) {
 			wait = s.clk.NewTimer(s.o.FirstPublishWait)
 			waitC = wait.C()
 		case <-waitC:
+			// Collectors that have not reported are now treated as having nothing to
+			// report; a model computed after this boundary is needed.
 			waitC = nil
 			s.mu.Lock()
 			s.waitOver = true
+			s.epoch++
+			s.settled, s.runAfterQuiet = false, false
 			s.mu.Unlock()
+			if testWait != nil {
+				testWait()
+			}
+			s.changes.Notify()
 			s.signal()
 		}
 	}
@@ -299,13 +360,13 @@ func (s *Session) onLoop(ev engine.LoopEvent) {
 	switch ev.Kind {
 	case engine.EvRunStarted:
 		s.mu.Lock()
-		s.runAfterQuiet, s.runGen = s.quietFired, s.gen
+		s.runAfterQuiet, s.runGen = s.quietFired, s.epoch
 		s.mu.Unlock()
 	case engine.EvPublished:
 		p := ev.Published
 		s.mu.Lock()
 		// Runs are serial, so this publication is the run started last.
-		if s.runAfterQuiet && s.quietFired && s.runGen == s.gen {
+		if s.runAfterQuiet && s.quietFired && s.runGen == s.epoch {
 			s.settled = true
 		}
 		s.runAfterQuiet = false
@@ -330,11 +391,25 @@ func (s *Session) signal() {
 // Current returns the latest published model, nil before the first.
 func (s *Session) Current() *engine.Published { return s.eng.Current() }
 
-// Models returns every published model in publication order. Stop closes
-// it; models not yet received by then are dropped.
+// Models returns every published model in publication order. Stop closes it
+// without waiting for a reader; a consumer that needs every model calls Drain
+// after Stop for the ones Models did not deliver.
 func (s *Session) Models() <-chan *engine.Published { return s.out }
 
-// send moves queued models to out until the session ends, then drops the rest.
+// Drain waits for Stop to finish and returns, in order, every published model
+// Models did not deliver; empty when it delivered all. Models are kept for
+// Drain until it is called, whether or not Models is read.
+func (s *Session) Drain() []*engine.Published {
+	<-s.done
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := s.queue
+	s.queue = nil
+	return out
+}
+
+// send moves queued models to out until the session ends. A model is removed
+// from the queue only once delivered, so Drain returns the rest.
 func (s *Session) send() {
 	defer close(s.forwarded)
 	defer close(s.out)
@@ -344,18 +419,20 @@ func (s *Session) send() {
 			s.cond.Wait()
 		}
 		if s.ended {
-			s.queue = nil
 			s.mu.Unlock()
 			return
 		}
 		p := s.queue[0]
-		s.queue[0] = nil
-		s.queue = s.queue[1:]
 		s.mu.Unlock()
 		select {
 		case s.out <- p:
 		case <-s.stopped:
+			return
 		}
+		s.mu.Lock()
+		s.queue[0] = nil
+		s.queue = s.queue[1:]
+		s.mu.Unlock()
 	}
 }
 
@@ -426,7 +503,7 @@ func collectorInput(name string, st *collectorState) load.Input {
 			keys = append(keys, k)
 		}
 		slices.Sort(keys)
-		in.State, in.Reason = load.StateFailed, st.failing[keys[0]]
+		in.State, in.Reason = load.StateFailed, st.failing[keys[0]].reason
 	case st.published, st.returned:
 		in.State = load.StateOK
 	}

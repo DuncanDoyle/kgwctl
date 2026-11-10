@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DuncanDoyle/snellius/pkg/collect"
 	"github.com/DuncanDoyle/snellius/pkg/ctrlmetrics"
 	"github.com/DuncanDoyle/snellius/pkg/engine"
 	"github.com/DuncanDoyle/snellius/pkg/extension"
@@ -340,6 +341,39 @@ func (l *loopLog) idle() bool {
 	return l.seen && !l.running && l.last == engine.EvArmed
 }
 
+func (l *loopLog) count() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.events)
+}
+
+func (l *loopLog) countKind(k engine.LoopEventKind) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	n := 0
+	for _, ev := range l.events {
+		if ev.Kind == k {
+			n++
+		}
+	}
+	return n
+}
+
+func (l *loopLog) published() int { return l.countKind(engine.EvPublished) }
+
+// seqs returns the Seq of every published model, in order.
+func (l *loopLog) seqs() []uint64 {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var out []uint64
+	for _, ev := range l.events {
+		if ev.Kind == engine.EvPublished {
+			out = append(out, ev.Published.Model.Seq)
+		}
+	}
+	return out
+}
+
 func hookLoop(t *testing.T) *loopLog {
 	l := &loopLog{}
 	testLoop = l.record
@@ -428,52 +462,41 @@ func TestObserveModelsInOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var gotMu sync.Mutex
+	// The reader takes one model, then waits at the gate while a backlog builds.
+	gate := make(chan struct{})
 	var got []uint64
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
+		first := true
 		for p := range s.Models() {
-			gotMu.Lock()
 			got = append(got, p.Model.Seq)
-			gotMu.Unlock()
-			time.Sleep(20 * time.Millisecond) // a slow reader
-		}
-	}()
-	eventually(t, "20 published models", func() bool {
-		l.mu.Lock()
-		defer l.mu.Unlock()
-		n := 0
-		for _, ev := range l.events {
-			if ev.Kind == engine.EvPublished {
-				n++
+			if first {
+				first = false
+				<-gate
 			}
 		}
-		return n >= 20
-	})
-	eventually(t, "the slow reader to receive 20 models", func() bool {
-		gotMu.Lock()
-		defer gotMu.Unlock()
-		return len(got) >= 20
-	})
+	}()
+	eventually(t, "a backlog of 10 published models", func() bool { return l.published() >= 11 })
 	s.Stop()
+	close(gate)
 	select {
 	case <-done:
 	case <-time.After(10 * time.Second):
 		t.Fatal("Models() not closed after Stop")
 	}
-	var want []uint64
-	for _, ev := range l.events {
-		if ev.Kind == engine.EvPublished {
-			want = append(want, ev.Published.Model.Seq)
-		}
+	rest := s.Drain()
+	if len(rest) == 0 {
+		t.Fatal("Drain returned nothing, so the backlog never formed")
 	}
-	// Models not yet received at Stop are dropped, so got is a prefix of want.
-	if len(got) < 20 || !slices.Equal(got, want[:len(got)]) {
-		t.Fatalf("Models() delivered seqs %v, published %v", got, want)
+	for _, p := range rest {
+		got = append(got, p.Model.Seq)
 	}
-	if !slices.IsSorted(got) {
-		t.Fatalf("seqs out of order: %v", got)
+	if want := l.seqs(); !slices.Equal(got, want) {
+		t.Fatalf("Models() + Drain() = %v, published %v", got, want)
+	}
+	if again := s.Drain(); len(again) != 0 {
+		t.Fatalf("second Drain returned %d models", len(again))
 	}
 }
 
@@ -501,51 +524,169 @@ func TestObserveSilentCollector(t *testing.T) {
 	}
 }
 
-func TestObserveQuietRecompute(t *testing.T) {
+// gateCheck blocks its Run while armed, so a test holds a compute in flight.
+type gateCheck struct {
+	mu      sync.Mutex
+	gate    chan struct{}
+	entered chan struct{}
+}
+
+func (*gateCheck) Name() string { return "test gate" }
+
+// Inputs reads the clock, so the check is never memoized and runs on every compute.
+func (*gateCheck) Inputs() health.InputSet { return health.InputSet{Clock: true} }
+
+func (c *gateCheck) Run(ctx health.RunContext) ([]health.Finding, health.CheckResult) {
+	c.mu.Lock()
+	g := c.gate
+	c.gate = nil
+	c.mu.Unlock()
+	if g != nil {
+		c.entered <- struct{}{}
+		<-g
+	}
+	return nil, health.CheckResult{Name: c.Name(), OK: true, CollectedAt: ctx.Now}
+}
+
+// arm makes the next Run block until the returned func is called.
+func (c *gateCheck) arm() (release func()) {
+	g := make(chan struct{})
+	c.mu.Lock()
+	c.gate = g
+	c.mu.Unlock()
+	return sync.OnceFunc(func() { close(g) })
+}
+
+// pushCollector publishes a new value each time the test calls push.
+type pushCollector struct{ ch chan struct{} }
+
+func (*pushCollector) Name() string { return "push" }
+func (c *pushCollector) Start(ctx context.Context, d extension.Deps) error {
+	var n uint64
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-c.ch:
+			n++
+			d.Publish("value", n, n, 0)
+		}
+	}
+}
+
+// signals counts hook calls and lets a test wait for the next one.
+type signals struct {
+	mu sync.Mutex
+	n  int
+}
+
+func (g *signals) hit() { g.mu.Lock(); g.n++; g.mu.Unlock() }
+func (g *signals) count() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.n
+}
+
+// settle steps fc by d (at least the 1s confirm tick, so the loop always
+// wakes) and waits until the loop is idle again.
+func settle(t *testing.T, l *loopLog, fc *clocktesting.FakeClock, d time.Duration) {
+	t.Helper()
+	eventually(t, "the engine loop to wait", l.idle)
+	n := l.count()
+	fc.Step(d)
+	eventually(t, "the engine loop to wake and wait again", func() bool { return l.count() > n && l.idle() })
+}
+
+// TestObserveQuietBarrier drives the quiet barrier with a fake clock, a pushed
+// collector and a check that holds a compute in flight.
+func TestObserveQuietBarrier(t *testing.T) {
 	env := testenv.New(t, testenv.Options{Fixtures: []string{healthyFixture}})
 	l := hookLoop(t)
-	var mu sync.Mutex
-	var quietAt []int // index into l.events when the quiet timer fired
-	testQuiet = func() {
-		l.mu.Lock()
-		n := len(l.events)
-		l.mu.Unlock()
-		mu.Lock()
-		quietAt = append(quietAt, n)
-		mu.Unlock()
+	var quiet, armed signals
+	testQuiet, testArmed = quiet.hit, armed.hit
+	t.Cleanup(func() { testQuiet, testArmed = nil, nil })
+	gc := &gateCheck{entered: make(chan struct{}, 1)}
+	push := &pushCollector{ch: make(chan struct{})}
+	reg := extension.New(extension.WithChecks("TEST-", gc), extension.WithCollectors(push))
+	if err := reg.Err(); err != nil {
+		t.Fatal(err)
 	}
-	t.Cleanup(func() { testQuiet = nil })
-	s := start(t, env, extension.New(), Options{Scraper: zeroScraper{}, Quiet: 500 * time.Millisecond})
-	waitComplete(t, s, 10*time.Second)
+	fc := clocktesting.NewFakeClock(time.Now())
+	// An hour-long interval and wait keep the safety timer, the collectors' ticks and the wait out of the way.
+	s := start(t, env, reg, Options{Clock: fc, Scraper: zeroScraper{}, MetricsInterval: time.Hour, FirstPublishWait: time.Hour, Quiet: 2 * time.Second})
+	eventually(t, "the cache to settle", s.ca.Settled)
 
-	mu.Lock()
-	last := quietAt[len(quietAt)-1]
-	mu.Unlock()
-	l.mu.Lock()
-	evs := slices.Clone(l.events)
-	l.mu.Unlock()
-	var before *engine.Published
-	for _, ev := range evs[:last] {
-		if ev.Kind == engine.EvPublished {
-			before = ev.Published
+	// publish pushes a value and waits until it has re-armed the quiet timer and reached the engine.
+	publish := func() {
+		a, trig := armed.count(), l.countKind(engine.EvTriggered)
+		push.ch <- struct{}{}
+		eventually(t, "the quiet timer to re-arm", func() bool { return armed.count() > a })
+		eventually(t, "the engine to see the publish", func() bool { return l.countKind(engine.EvTriggered) > trig })
+	}
+	// await waits for the gate check to be entered: a compute is in flight.
+	await := func() {
+		select {
+		case <-gc.entered:
+		case <-time.After(10 * time.Second):
+			t.Fatal("no compute reached the gate check")
 		}
 	}
-	var after *engine.Published
-	for _, ev := range evs[last:] {
-		if ev.Kind == engine.EvPublished {
-			after = ev.Published
+	// published waits for the in-flight compute to publish after release.
+	finish := func(release func()) {
+		n := l.published()
+		release()
+		eventually(t, "the held compute to publish", func() bool { return l.published() > n })
+		eventually(t, "the engine loop to wait", l.idle)
+	}
+
+	// Baseline: every collector reports and the session completes once.
+	publish()
+	for i := 0; !s.Complete(); i++ {
+		if i == 20 {
+			t.Fatal("no baseline completion after 20s of fake time")
+		}
+		settle(t, l, fc, time.Second)
+	}
+
+	// 1. A compute that starts before the quiet expiry does not complete the session.
+	publish()
+	if s.Complete() {
+		t.Fatal("Complete() true right after a publish")
+	}
+	release := gc.arm()
+	q := quiet.count()
+	fc.Step(time.Second) // the publish's debounce is due: a compute starts
+	await()
+	fc.Step(time.Second) // the quiet period ends while that compute is held
+	eventually(t, "the quiet timer to fire", func() bool { return quiet.count() > q })
+	finish(release)
+	if s.Complete() {
+		t.Fatal("Complete() true from a compute that started before the quiet expiry")
+	}
+
+	// 2. A publish during a compute that started after the expiry voids it.
+	release = gc.arm()
+	fc.Step(time.Second) // the quiet expiry's trigger is due: a qualifying compute starts
+	await()
+	publish()
+	finish(release)
+	if s.Complete() {
+		t.Fatal("Complete() true after a publish during the qualifying compute")
+	}
+
+	// 3. Only a compute started after the next quiet expiry completes the session.
+	q = quiet.count()
+	for i := 0; ; i++ {
+		if s.Complete() {
+			if quiet.count() == q {
+				t.Fatal("Complete() true before the quiet timer fired after the last publish")
+			}
 			break
 		}
-	}
-	if before == nil || after == nil {
-		t.Fatalf("no model published around the quiet expiry (before %v, after %v)", before != nil, after != nil)
-	}
-	// Same source: nothing changed, so only the quiet expiry caused the recompute.
-	if !after.Source.Equal(before.Source) {
-		t.Fatalf("source changed across the quiet recompute: %+v -> %+v", before.Source, after.Source)
-	}
-	if after.Model.Seq <= before.Model.Seq {
-		t.Fatalf("quiet recompute seq %d not after %d", after.Model.Seq, before.Model.Seq)
+		if i == 10 {
+			t.Fatal("not complete 10s of fake time after the last publish")
+		}
+		settle(t, l, fc, time.Second)
 	}
 }
 
@@ -598,7 +739,8 @@ func TestObserveOutlivesRequestTimeout(t *testing.T) {
 	env := testenv.New(t, testenv.Options{Fixtures: []string{healthyFixture}})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	// The acquisition deadline bounds only the wait, never the clients.
+	begin := time.Now()
+	// The acquisition deadline is independent of the session context and its clients.
 	acq, acqCancel := context.WithTimeout(context.Background(), time.Second)
 	defer acqCancel()
 	s, err := Start(ctx, sessionClients(t, env, ctx), extension.New(), Options{Scraper: zeroScraper{}, Quiet: 200 * time.Millisecond})
@@ -606,12 +748,12 @@ func TestObserveOutlivesRequestTimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Stop()
-	eventually(t, "a first model", func() bool { return s.Current() != nil })
-	if acq.Err() != nil {
-		t.Fatal("no model within the 1s acquisition deadline")
-	}
+	waitComplete(t, s, 10*time.Second)
 	<-acq.Done()
-	time.Sleep(2 * time.Second) // the session outlives the deadline by 2s
+	// Keep the session for 3s in all, well past the deadline.
+	if d := 3*time.Second - time.Since(begin); d > 0 {
+		time.Sleep(d)
+	}
 
 	// A route created now reaches a later model through the session's watches.
 	dyn := dynamic.NewForConfigOrDie(env.Admin)
@@ -637,17 +779,7 @@ func TestObserveOutlivesRequestTimeout(t *testing.T) {
 func TestObserveStopWithUnreadModels(t *testing.T) {
 	env := testenv.New(t, testenv.Options{Fixtures: []string{healthyFixture}})
 	l := hookLoop(t)
-	published := func() int {
-		l.mu.Lock()
-		defer l.mu.Unlock()
-		n := 0
-		for _, ev := range l.events {
-			if ev.Kind == engine.EvPublished {
-				n++
-			}
-		}
-		return n
-	}
+	published := l.published
 	run := func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
@@ -668,6 +800,9 @@ func TestObserveStopWithUnreadModels(t *testing.T) {
 		if _, open := <-s.Models(); open {
 			t.Fatal("Models() delivered a model after Stop")
 		}
+		if n := len(s.Drain()); n < 10 {
+			t.Fatalf("Drain returned %d unread models, want at least 10", n)
+		}
 	}
 	// The first run leaves the shared transport's idle connections behind.
 	run()
@@ -676,4 +811,70 @@ func TestObserveStopWithUnreadModels(t *testing.T) {
 	run()
 	waitNoWatches(t, env.Proxies[0])
 	waitGoroutines(t, base+2)
+}
+
+// failingCollector reports the same failure every 200ms and never publishes.
+type failingCollector struct{}
+
+func (failingCollector) Name() string { return "failing" }
+func (failingCollector) Start(ctx context.Context, d extension.Deps) error {
+	t := time.NewTicker(200 * time.Millisecond)
+	defer t.Stop()
+	for {
+		d.Fail("value", collect.Failing, "target unreachable")
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-t.C:
+		}
+	}
+}
+
+func TestObserveRepeatedFailure(t *testing.T) {
+	env := testenv.New(t, testenv.Options{Fixtures: []string{healthyFixture}})
+	// A 500ms quiet period would never end if each repeated Fail restarted it.
+	s := start(t, env, extension.New(extension.WithCollectors(failingCollector{})),
+		Options{Scraper: zeroScraper{}, Quiet: 500 * time.Millisecond, FirstPublishWait: time.Hour})
+	waitComplete(t, s, 10*time.Second)
+	got := s.Inputs()[CollectorGVR("failing")]
+	if got.State != load.StateFailed || got.Reason != "target unreachable" {
+		t.Fatalf("failing collector input = %+v, want failed with its reason", got)
+	}
+}
+
+func TestObserveFirstPublishWaitRecompute(t *testing.T) {
+	env := testenv.New(t, testenv.Options{Fixtures: []string{healthyFixture}})
+	l := hookLoop(t)
+	var expired signals
+	testWait = expired.hit
+	t.Cleanup(func() { testWait = nil })
+	fc := clocktesting.NewFakeClock(time.Now())
+	s := start(t, env, extension.New(extension.WithCollectors(silentCollector{})),
+		Options{Clock: fc, Scraper: zeroScraper{}, MetricsInterval: time.Hour, FirstPublishWait: 5 * time.Second, Quiet: time.Second})
+	eventually(t, "the cache to settle", s.ca.Settled)
+
+	for i := 0; expired.count() == 0; i++ {
+		if i == 20 {
+			t.Fatal("the first-publish wait never expired")
+		}
+		if s.Complete() {
+			t.Fatal("Complete() true while the silent collector's wait runs")
+		}
+		settle(t, l, fc, time.Second)
+	}
+	// The expiry needs a new model: the one computed before it does not count.
+	eventually(t, "the engine loop to wait", l.idle)
+	if s.Complete() {
+		t.Fatal("Complete() true at the wait's expiry, before a compute started after it")
+	}
+	n := l.countKind(engine.EvRunStarted)
+	for i := 0; !s.Complete(); i++ {
+		if i == 5 {
+			t.Fatal("not complete 5s of fake time after the wait expired")
+		}
+		settle(t, l, fc, time.Second)
+	}
+	if l.countKind(engine.EvRunStarted) == n {
+		t.Fatal("complete without a compute started after the wait expired")
+	}
 }
