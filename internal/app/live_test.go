@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DuncanDoyle/snellius/pkg/collect"
 	"github.com/DuncanDoyle/snellius/pkg/engine"
 	"github.com/DuncanDoyle/snellius/pkg/extension"
 	"github.com/spf13/cobra"
@@ -29,6 +30,8 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/DuncanDoyle/kgwctl/internal/app"
+	"github.com/DuncanDoyle/kgwctl/internal/load"
+	"github.com/DuncanDoyle/kgwctl/internal/observe"
 	"github.com/DuncanDoyle/kgwctl/internal/testenv"
 )
 
@@ -67,6 +70,8 @@ type liveOpts struct {
 	ctx        context.Context
 	noProgress bool
 	reg        *extension.Registry
+	// out replaces the command's stdout; the result's stdout is then empty.
+	out io.Writer
 }
 
 // startLive runs "check --live args" and returns once the command tracked its
@@ -96,7 +101,11 @@ func startLive(t *testing.T, env *testenv.Env, o liveOpts, h app.CheckTestHooks,
 	}
 	go func() {
 		var out, errb bytes.Buffer
-		root := app.NewRootWithCheckHooks(app.Config{Registry: reg, Build: testBuild, Out: &out, Err: &errb, Now: testNow}, h)
+		var outW io.Writer = &out
+		if o.out != nil {
+			outW = o.out
+		}
+		root := app.NewRootWithCheckHooks(app.Config{Registry: reg, Build: testBuild, Out: outW, Err: &errb, Now: testNow}, h)
 		root.SetArgs(append([]string{"--kubeconfig", env.Kubeconfig, "check", "--live"}, args...))
 		ctx := o.ctx
 		if ctx == nil {
@@ -160,6 +169,27 @@ func (r *liveRig) step(d time.Duration) bool {
 			r.t.Fatalf("no model computed at %v tracked within 10s", at)
 		}
 	}
+}
+
+// stepUntilClosed steps the clock 5s at a time until ch is closed.
+func (r *liveRig) stepUntilClosed(ch <-chan struct{}) {
+	r.t.Helper()
+	for range 200 {
+		r.fc.Step(5 * time.Second)
+		at := r.fc.Now()
+		deadline := time.After(10 * time.Second)
+		for paced := false; !paced; {
+			select {
+			case <-ch:
+				return
+			case p := <-r.tracked:
+				paced = !p.Model.ComputedAt.Before(at)
+			case <-deadline:
+				r.t.Fatalf("neither a model at %v nor the close within 10s", at)
+			}
+		}
+	}
+	r.t.Fatal("not closed after 200 steps")
 }
 
 // finish steps the clock 5s at a time, the metrics interval, until the command returns.
@@ -491,7 +521,7 @@ func TestLiveIntermittent(t *testing.T) {
 	var gate atomic.Pointer[chan struct{}]
 	blocked := make(chan struct{}, 1)
 	h := fastHooks(togglingScraper{reject})
-	h.Published = func(p *engine.Published) { published <- p }
+	h.Published = func(p observe.Publication) { published <- p.Published }
 	h.Tracked = func(*engine.Published) {
 		if g := gate.Load(); g != nil {
 			blocked <- struct{}{}
@@ -546,6 +576,136 @@ func TestLiveIntermittent(t *testing.T) {
 	t.Errorf("observed lacks 001 raised and cleared:\n%s", res.stdout)
 }
 
+// TestLiveInterruptDuringShutdown: a Ctrl-C while the session stops after the timeout still gives exit 2.
+func TestLiveInterruptDuringShutdown(t *testing.T) {
+	env := checkEnv(t, checkInstall, checkController, checkRouteBroken)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stopping, release := make(chan struct{}), make(chan struct{})
+	h := fastHooks(metricsScraper{})
+	h.Stopping = func() { close(stopping); <-release }
+	r := startLive(t, env, liveOpts{ctx: ctx}, h, "--timeout", "30s", "-o", "json")
+	r.stepUntilClosed(stopping)
+	cancel()
+	close(release)
+	res := r.wait()
+	if res.code != 2 {
+		t.Errorf("exit %d, want 2; stderr: %s", res.code, res.stderr)
+	}
+	if doc := decodeLive(t, res.stdout); doc.Item.Observation.StopReason != "interrupted" {
+		t.Errorf("stopReason %q, want interrupted", doc.Item.Observation.StopReason)
+	}
+}
+
+// gateWriter blocks the first Write until release is closed.
+type gateWriter struct {
+	entered, release chan struct{}
+	once             sync.Once
+	buf              syncBuffer
+}
+
+func (w *gateWriter) Write(p []byte) (int, error) {
+	w.once.Do(func() { close(w.entered); <-w.release })
+	return w.buf.Write(p)
+}
+
+// TestLiveInterruptDuringOutput: a Ctrl-C while the report is written still gives exit 2.
+func TestLiveInterruptDuringOutput(t *testing.T) {
+	env := checkEnv(t, checkInstall, checkController, checkRouteBroken)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	w := &gateWriter{entered: make(chan struct{}), release: make(chan struct{})}
+	r := startLive(t, env, liveOpts{ctx: ctx, out: w}, fastHooks(metricsScraper{}), "--timeout", "30s", "-o", "json")
+	r.stepUntilClosed(w.entered)
+	cancel()
+	close(w.release)
+	if res := r.wait(); res.code != 2 {
+		t.Errorf("exit %d, want 2; stderr: %s", res.code, res.stderr)
+	}
+	oneEnvelope(t, []byte(w.buf.String()), 1)
+}
+
+// flakyCollector publishes its one key, then fails (true) or publishes (false) on command.
+type flakyCollector struct{ cmds chan bool }
+
+func (flakyCollector) Name() string { return "flaky" }
+func (c flakyCollector) Start(ctx context.Context, d extension.Deps) error {
+	n := uint64(1)
+	d.Publish("value", n, n, 0)
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case fail := <-c.cmds:
+			n++
+			if fail {
+				d.Fail("value", collect.Failing, "down")
+			} else {
+				d.Publish("value", n, n, 0)
+			}
+		}
+	}
+}
+
+// TestLiveInputTransitions: a collector fails and recovers while the command is
+// busy; each publication carries its own inputs, so both INPUT lines print, in order.
+func TestLiveInputTransitions(t *testing.T) {
+	env := checkEnv(t, checkInstall, checkController)
+	flaky := flakyCollector{cmds: make(chan bool)}
+	reg := extension.New(extension.WithProxyStatsSource(fakeStats{}), extension.WithCollectors(flaky))
+	published := make(chan observe.Publication, 100000)
+	var gate atomic.Pointer[chan struct{}]
+	blocked := make(chan struct{}, 1)
+	h := fastHooks(metricsScraper{})
+	h.Published = func(p observe.Publication) { published <- p }
+	h.Tracked = func(*engine.Published) {
+		if g := gate.Load(); g != nil {
+			blocked <- struct{}{}
+			<-*g
+		}
+	}
+	r := startLive(t, env, liveOpts{reg: reg}, h, "--timeout", "1m")
+	state := func(p observe.Publication) load.State { return p.Inputs[observe.CollectorGVR("flaky")].State }
+	// waitState waits for a publication with the flaky input in want. A collector's first
+	// failure restarts the quiet period, whose expiry brings the recompute: small steps fire it.
+	waitState := func(want load.State) {
+		t.Helper()
+		deadline := time.After(10 * time.Second)
+		for {
+			select {
+			case p := <-published:
+				if state(p) == want {
+					return
+				}
+			case <-time.After(10 * time.Millisecond):
+				r.fc.Step(10 * time.Millisecond)
+			case <-deadline:
+				t.Fatalf("no publication with flaky %s within 10s", want)
+			}
+		}
+	}
+	g := make(chan struct{})
+	gate.Store(&g)
+	r.fc.Step(5 * time.Second)
+	select {
+	case <-blocked:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the command tracked no model within 10s")
+	}
+	flaky.cmds <- true
+	waitState(load.StateFailed)
+	flaky.cmds <- false
+	waitState(load.StateOK)
+	gate.Store(nil)
+	close(g)
+	r.finish()
+	p := r.progress.String()
+	down, up := strings.Index(p, "INPUT    flaky: unavailable: down"), strings.Index(p, "INPUT    flaky: available")
+	if down < 0 || up < down {
+		t.Errorf("progress lacks the flaky input going and coming back, in order (at %d, %d):\n%s", down, up, p)
+	}
+}
+
 func TestTimeoutWithoutLive(t *testing.T) {
 	env := checkEnv(t)
 	for _, args := range [][]string{{"check", "--timeout", "1m"}, {"check", "--live", "--timeout", "0s"}} {
@@ -583,7 +743,7 @@ func TestSecondInterruptKills(t *testing.T) {
 	}
 	waitFor("ready")
 	_ = cmd.Process.Signal(os.Interrupt)
-	waitFor("first")
+	waitFor("restored")
 	_ = cmd.Process.Signal(os.Interrupt)
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
@@ -599,13 +759,14 @@ func TestSecondInterruptKills(t *testing.T) {
 	}
 }
 
-// interruptHelper keeps reporting for a minute after the first interrupt, as a slow report would.
+// interruptHelper keeps reporting for a minute once the first interrupt restored default handling, as a slow report would.
 func interruptHelper() {
 	probe := &cobra.Command{Use: "probe", RunE: func(cmd *cobra.Command, _ []string) error {
-		defer app.DefaultOnCancel(cmd.Context())()
+		restored := make(chan struct{})
+		defer app.RestoreOnCancel(cmd.Context(), func() { close(restored) })()
 		os.Stdout.WriteString("ready\n")
-		<-cmd.Context().Done()
-		os.Stdout.WriteString("first\n")
+		<-restored
+		os.Stdout.WriteString("restored\n")
 		time.Sleep(time.Minute)
 		return nil
 	}}

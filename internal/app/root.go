@@ -187,12 +187,20 @@ type signalStopKey struct{}
 
 // defaultOnCancel restores the default interrupt handling once ctx ends, so a
 // second Ctrl-C ends the process at once. The returned func stops watching.
-func defaultOnCancel(ctx context.Context) func() bool {
+func defaultOnCancel(ctx context.Context) func() bool { return restoreOnCancel(ctx, nil) }
+
+// restoreOnCancel is defaultOnCancel; done, if set, runs once the handling is restored (tests).
+func restoreOnCancel(ctx context.Context, done func()) func() bool {
 	stop, ok := ctx.Value(signalStopKey{}).(context.CancelFunc)
 	if !ok {
 		return func() bool { return false }
 	}
-	return context.AfterFunc(ctx, stop)
+	return context.AfterFunc(ctx, func() {
+		stop()
+		if done != nil {
+			done()
+		}
+	})
 }
 
 // Execute runs root until it returns or the process is interrupted. An error

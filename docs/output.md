@@ -462,7 +462,7 @@ A check is still deciding when `pending` is true or it has a `hold`. Otherwise i
 
 | Field | Type | Meaning |
 |---|---|---|
-| `startedAt` | string | RFC3339 start of the run. |
+| `startedAt` | string | RFC3339 time tracking starts: the model the first read of the cluster ended with. Changes while inputs were still arriving are not tracked. |
 | `endedAt` | string | RFC3339 end of the run. |
 | `stopReason` | string | `timeout` or `interrupted`. |
 | `observed` | ObservedFinding[] | Findings seen during the run, cleared or not. |

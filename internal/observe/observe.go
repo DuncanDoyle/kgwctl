@@ -49,8 +49,8 @@ type Options struct {
 	Scraper ctrlmetrics.Scraper
 	// Logger receives the engine's and collectors' logs; nil discards them.
 	Logger *slog.Logger
-	// Published, if set, is called on the engine goroutine with each published model; it must not block (tests).
-	Published func(*engine.Published)
+	// Published, if set, is called on the engine goroutine with each publication; it must not block (tests).
+	Published func(Publication)
 }
 
 func (o Options) withDefaults() Options {
@@ -114,6 +114,12 @@ const (
 	requiet
 )
 
+// Publication is one published model with the inputs as they were when it was published.
+type Publication struct {
+	*engine.Published
+	Inputs map[schema.GroupVersionResource]load.Input
+}
+
 // Session is one running cache, engine and collector set.
 type Session struct {
 	cancel  context.CancelFunc
@@ -131,13 +137,13 @@ type Session struct {
 	rearm      chan struct{}
 	discovered chan struct{}
 	changed    chan struct{}
-	out        chan *engine.Published
+	out        chan Publication
 
 	mu   sync.Mutex
 	cond *sync.Cond // signals queue growth and ended
 	cols map[string]*collectorState
 	// queue holds published models not yet sent on out; ended is set once no more can come.
-	queue []*engine.Published
+	queue []Publication
 	ended bool
 	// discoveredClosed and waitOver track the first-publish wait.
 	discoveredClosed, waitOver bool
@@ -169,7 +175,7 @@ func Start(ctx context.Context, c load.Clients, reg *extension.Registry, o Optio
 	}
 	s := &Session{cancel: cancel, changes: cfg.Changes, clk: o.Clock, o: o, cols: map[string]*collectorState{},
 		done: make(chan struct{}), stopped: make(chan struct{}), forwarded: make(chan struct{}), rearm: make(chan struct{}, 1), discovered: make(chan struct{}),
-		changed: make(chan struct{}, 1), out: make(chan *engine.Published)}
+		changed: make(chan struct{}, 1), out: make(chan Publication)}
 	if s.clk == nil {
 		s.clk = clock.RealClock{}
 	}
@@ -382,7 +388,8 @@ func (s *Session) onLoop(ev engine.LoopEvent) {
 			s.settled = true
 		}
 		s.runAfterQuiet = false
-		s.queue = append(s.queue, p)
+		pub := Publication{Published: p, Inputs: s.inputsLocked(p)}
+		s.queue = append(s.queue, pub)
 		s.cond.Broadcast()
 		if !s.discoveredClosed && p.Model.Snapshot != nil && p.Model.Snapshot.Synced && len(p.Model.Installs) > 0 {
 			s.discoveredClosed = true
@@ -390,7 +397,7 @@ func (s *Session) onLoop(ev engine.LoopEvent) {
 		}
 		s.mu.Unlock()
 		if s.o.Published != nil {
-			s.o.Published(p)
+			s.o.Published(pub)
 		}
 		s.signal()
 	}
@@ -406,15 +413,15 @@ func (s *Session) signal() {
 // Current returns the latest published model, nil before the first.
 func (s *Session) Current() *engine.Published { return s.eng.Current() }
 
-// Models returns every published model in publication order. Stop closes it
+// Models returns every publication in order, each with its inputs at publication. Stop closes it
 // without waiting for a reader; a consumer that needs every model calls Drain
 // after Stop for the ones Models did not deliver.
-func (s *Session) Models() <-chan *engine.Published { return s.out }
+func (s *Session) Models() <-chan Publication { return s.out }
 
-// Drain waits for Stop to finish and returns, in order, every published model
-// Models did not deliver; empty when it delivered all. Models are kept for
+// Drain waits for Stop to finish and returns, in order, every publication
+// Models did not deliver; empty when it delivered all. Publications are kept for
 // Drain until it is called, whether or not Models is read.
-func (s *Session) Drain() []*engine.Published {
+func (s *Session) Drain() []Publication {
 	<-s.done
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -445,7 +452,7 @@ func (s *Session) send() {
 			return
 		}
 		s.mu.Lock()
-		s.queue[0] = nil
+		s.queue[0] = Publication{}
 		s.queue = s.queue[1:]
 		s.mu.Unlock()
 	}
@@ -491,14 +498,19 @@ func (s *Session) Complete() bool {
 // returned is silent and left out; the checks that read it report their own state.
 func (s *Session) Inputs() map[schema.GroupVersionResource]load.Input {
 	p := s.Current()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.inputsLocked(p)
+}
+
+// inputsLocked is Inputs for model p; s.mu must be held.
+func (s *Session) inputsLocked(p *engine.Published) map[schema.GroupVersionResource]load.Input {
 	var out map[schema.GroupVersionResource]load.Input
 	if p != nil && p.Model.Snapshot != nil {
 		out = load.Classify(p.Model.Snapshot.Access)
 	} else {
 		out = map[schema.GroupVersionResource]load.Input{}
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	for _, name := range s.names {
 		in := collectorInput(name, s.cols[name])
 		if in.State == load.StateLoading && s.waitOver {

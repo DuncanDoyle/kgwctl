@@ -130,6 +130,8 @@ type Hold struct {
 
 // Observation is what --live saw during the run.
 type Observation struct {
+	// StartedAt is when tracking starts: the model the first read of the cluster ended with.
+	// Changes while inputs were still arriving are not tracked.
 	StartedAt time.Time `json:"startedAt"`
 	EndedAt   time.Time `json:"endedAt"`
 	// StopReason is timeout or interrupted.

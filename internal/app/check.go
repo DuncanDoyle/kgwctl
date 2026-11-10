@@ -51,7 +51,9 @@ type checkTestHooks struct {
 	// Progress, if set, receives --live progress as a terminal would, without colour.
 	Progress io.Writer
 	// Published is observe.Options.Published.
-	Published func(*engine.Published)
+	Published func(observe.Publication)
+	// Stopping is called once a --live run decides to stop, before its session stops.
+	Stopping func()
 }
 
 // newCheckCmd builds the check command (design §3.1, §4.5).

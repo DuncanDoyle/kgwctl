@@ -8,5 +8,5 @@ type CheckTestHooks = checkTestHooks
 // NewRootWithCheckHooks is NewRoot with h passed to the check command.
 func NewRootWithCheckHooks(cfg Config, h CheckTestHooks) *cobra.Command { return newRoot(cfg, h) }
 
-// DefaultOnCancel exposes defaultOnCancel to the external tests.
-var DefaultOnCancel = defaultOnCancel
+// RestoreOnCancel exposes restoreOnCancel to the external tests.
+var RestoreOnCancel = restoreOnCancel
