@@ -39,6 +39,12 @@ func TestProgressLines(t *testing.T) {
 			"14:02:10  CHANGED  KGWUI-013  HTTPRoute live/r: now error: Backend not found; Service `live/x` has no port 8080 (ports: 80).\n"},
 		{observe.Event{At: gen, Kind: observe.FindingCleared, Code: "KGWUI-003", Severity: "warning", Resource: httpRef("shop", "cart"), Text: "not attached"},
 			"14:02:10  CLEARED  KGWUI-003  HTTPRoute shop/cart: not attached\n"},
+		{observe.Event{At: gen, Kind: observe.FindingUnobserved, Code: "KGWUI-001", Severity: "error", Resource: gw, Text: "Envoy rejects configuration"},
+			"14:02:10  UNKNOWN  KGWUI-001  Gateway edge/public: Envoy rejects configuration; no longer observed\n"},
+		{observe.Event{At: gen, Kind: observe.CheckUnavailable, Check: "xds rejects", Text: "failing: 403 Forbidden"},
+			"14:02:10  CHECK    xds rejects: not checked: failing: 403 Forbidden\n"},
+		{observe.Event{At: gen, Kind: observe.CheckAvailable, Check: "xds rejects"},
+			"14:02:10  CHECK    xds rejects: checked again\n"},
 		{observe.Event{At: gen, Kind: observe.HoldStarted, Check: "status progress", Hold: hold, Text: hold.Reason},
 			"14:02:10  WAITING  status progress  12 held; decides 14:07:10 (Waiting to see if status catches up)\n"},
 		{observe.Event{At: gen, Kind: observe.HoldChanged, Check: "status progress", Hold: hold, Text: hold.Reason},
@@ -128,6 +134,12 @@ func TestCheckTextObserved(t *testing.T) {
 		t.Error("observed section is not sanitised")
 	}
 	golden(t, "observed", got)
+	lost := gen.Add(4 * time.Minute)
+	c.Observation.Observed = []view.ObservedFinding{{ID: "c", Install: "kgateway-system.kgateway", Code: "KGWUI-001", Severity: "error",
+		Message: "Envoy rejects configuration", FirstSeen: gen, LostAt: &lost, Severities: []view.SeverityAt{{Severity: "error", At: gen}}}}
+	if got := render(t, c, false); !strings.Contains(got, "First seen 14:02:10, no longer observed from 14:06:10 (a check stopped running).") {
+		t.Errorf("a lost finding is not shown as no longer observed:\n%s", got)
+	}
 	c.Observation.Observed = []view.ObservedFinding{}
 	if got := render(t, c, false); !strings.Contains(got, "OBSERVED DURING THIS RUN (0)") {
 		t.Errorf("an empty observation is not shown:\n%s", got)

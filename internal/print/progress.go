@@ -43,6 +43,16 @@ func Progress(w io.Writer, e observe.Event, color bool) error {
 		}
 	case observe.FindingCleared:
 		label, code, text = "CLEARED", "32", clean(e.Code)+"  "+findingText(e.Resource, e.Text)
+	case observe.FindingUnobserved:
+		// A check stopped running: the finding may still be there.
+		label, text = "UNKNOWN", clean(e.Code)+"  "+findingText(e.Resource, e.Text)+"; no longer observed"
+	case observe.CheckUnavailable:
+		label, text = "CHECK", clean(e.Check)+": not checked"
+		if e.Text != "" {
+			text += ": " + clean(e.Text)
+		}
+	case observe.CheckAvailable:
+		label, text = "CHECK", clean(e.Check)+": checked again"
 	case observe.HoldStarted, observe.HoldChanged:
 		label, text = "WAITING", clean(e.Check)
 		if e.Hold != nil {

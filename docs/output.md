@@ -465,7 +465,7 @@ A check is still deciding when `pending` is true or it has a `hold`. Otherwise i
 | `startedAt` | string | RFC3339 time tracking starts: the model the first read of the cluster ended with. Changes while inputs were still arriving are not tracked. |
 | `endedAt` | string | RFC3339 end of the run. |
 | `stopReason` | string | `timeout` or `interrupted`. |
-| `observed` | ObservedFinding[] | Findings seen during the run, cleared or not. |
+| `observed` | ObservedFinding[] | Findings with a transition during the run: still present, cleared, or no longer observed. |
 
 ### ObservedFinding
 
@@ -479,8 +479,12 @@ A check is still deciding when `pending` is true or it has a `hold`. Otherwise i
 | `message` | string | Latest message. |
 | `detail` | string | Latest detail, absent when empty. A change in detail under the same ID (such as 013 going from a missing Service to a missing port) is a transition. |
 | `firstSeen` | string | RFC3339 time first seen. |
-| `clearedAt` | string | RFC3339 time it cleared; absent while it was still present at the end. |
+| `clearedAt` | string | RFC3339 time it cleared: every check that ran while it was present ran again without it. Absent while present or no longer observed. |
+| `lostAt` | string | RFC3339 time it disappeared while a check that ran before stopped running (denied, failing). kgwctl lost sight of it: its state is unknown, not cleared. Absent otherwise; at most one of `clearedAt` and `lostAt` is set. A lost finding that comes back drops `lostAt`; one whose checks run again without it gets `clearedAt` then. |
 | `severities` | SeverityAt[] | Severity changes, oldest first. |
+| `evidence` | object | The latest evidence while the finding was present, as in Finding. |
+| `nextSteps` | NextStep[] | The latest next steps while the finding was present. |
+| `fix` | Fix | The latest fix while the finding was present. |
 
 ### SeverityAt
 

@@ -137,7 +137,8 @@ MANIFEST
   trap - EXIT
 }
 
-# check --live while the missing Service of a route appears mid-run: 013 must be gone from the final report.
+# check --live while the missing Service of a route appears mid-run: 013 is gone from the final report
+# and observed as cleared; exit 1 and exactly one JSON document.
 live_scenario() {
   restore_live() {
     k -n "$FIX_NS" delete httproute check-live-svc --ignore-not-found >/dev/null
@@ -182,18 +183,35 @@ MANIFEST
   wait "$pid" || code=$?
   echo "$code" >"$out.exit"
   log "check live: exit $code"
-  if [ "$code" -gt 2 ]; then
-    log "FAIL check-live.json: exit $code"
+  # The fixtures' broken routes (orphan, bad-backend) keep error findings in $FIX_NS, and the admin reads every kind: exit 1.
+  if [ "$code" -ne 1 ]; then
+    log "FAIL check-live.json: exit $code, want 1"
     failed=1
   fi
-  if ! jq -e '.item.observation.stopReason == "timeout"' "$out" >/dev/null; then
-    log "FAIL check-live.json is not one document with observation.stopReason timeout"
+  if [ "$(jq -s 'length' "$out" 2>/dev/null)" != 1 ]; then
+    log "FAIL check-live.json is not exactly one JSON document"
     failed=1
-  elif jq -e --arg n check-live-svc \
-    '[.item.installs[].findings[] | select(.code | test("013")) | select(.resource.name == $n)] | length > 0' \
-    "$out" >/dev/null; then
-    log "FAIL check-live.json still has KGWUI-013 on check-live-svc after the Service was created"
+  elif ! jq -e '.item.observation.stopReason == "timeout"' "$out" >/dev/null; then
+    log "FAIL check-live.json: observation.stopReason is not timeout"
     failed=1
+  else
+    if jq -e --arg n check-live-svc \
+      '[.item.installs[].findings[] | select(.code == "KGWUI-013") | select(.resource.name == $n)] | length > 0' \
+      "$out" >/dev/null; then
+      log "FAIL check-live.json still has KGWUI-013 on check-live-svc after the Service was created"
+      failed=1
+    fi
+    # The run saw the route broken, then the fix: one 013 entry that cleared after it was first seen.
+    if ! jq -e --arg n check-live-svc --arg ns "$FIX_NS" '
+      def secs: (sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) + (((capture("(?<f>\\.[0-9]+)Z$") | .f) // "0") | tonumber);
+      [.item.observation.observed[]
+        | select(.code == "KGWUI-013" and .resource.name == $n and .resource.namespace == $ns)
+        | select(.clearedAt != null and .lostAt == null)
+        | select((.firstSeen | secs) <= (.clearedAt | secs))] | length == 1' \
+      "$out" >/dev/null; then
+      log "FAIL check-live.json: observation.observed lacks one KGWUI-013 on $FIX_NS/check-live-svc with firstSeen <= clearedAt"
+      failed=1
+    fi
   fi
   restore_live
 }

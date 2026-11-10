@@ -1,6 +1,7 @@
 package observe
 
 import (
+	"encoding/json"
 	"reflect"
 	"testing"
 	"time"
@@ -88,7 +89,7 @@ func TestDiffEvents(t *testing.T) {
 		{"input unavailable", model(nil, nil), model(nil, nil, load.Input{Resource: "pods"}), []EventKind{InputUnavailable}},
 		{"input available", model(nil, nil, load.Input{Resource: "pods"}), model(nil, nil), []EventKind{InputAvailable}},
 		{"order", model([]view.CheckFinding{finding("b", "error", "m")}, hold(1, u1, "r")),
-			model([]view.CheckFinding{finding("a", "error", "m")}, nil, load.Input{Resource: "pods"}),
+			model([]view.CheckFinding{finding("a", "error", "m")}, []view.CheckStatus{{Name: "status"}}, load.Input{Resource: "pods"}),
 			[]EventKind{FindingRaised, FindingCleared, HoldEnded, InputUnavailable}},
 	}
 	for _, tc := range tests {
@@ -216,11 +217,11 @@ func TestDiffPayloadAndInstalls(t *testing.T) {
 	h := &view.Hold{Until: u, Count: 3, Reason: "wait"}
 	a := finding("a", "error", "m")
 
-	// Install disappears: its finding clears and its hold ends with the previous value.
+	// Install disappears: kgwctl lost sight of its finding, and its hold ends with the previous value.
 	prev := view.Check{Installs: []view.InstallCheck{inst("i1", []view.CheckFinding{a}, []view.CheckStatus{{Name: "status", Hold: h}})}}
 	es := Diff(prev, view.Check{}, t0)
 	require.Equal(t, []Event{
-		{At: t0, Kind: FindingCleared, Install: "i1", Code: "KGWUI-a", Severity: "error", Resource: a.Resource, Text: "m"},
+		{At: t0, Kind: FindingUnobserved, Install: "i1", Code: "KGWUI-a", Severity: "error", Resource: a.Resource, Text: "m"},
 		{At: t0, Kind: HoldEnded, Install: "i1", Check: "status", Hold: h, Text: "wait"},
 	}, es)
 
@@ -237,7 +238,7 @@ func TestDiffPayloadAndInstalls(t *testing.T) {
 	}}
 	one := view.Check{Installs: []view.InstallCheck{
 		inst("i1", []view.CheckFinding{a}, []view.CheckStatus{{Name: "status", Hold: h}}),
-		inst("i2", nil, nil),
+		inst("i2", nil, []view.CheckStatus{{Name: "status"}}),
 	}}
 	es = Diff(both, one, t0)
 	require.Equal(t, 2, len(es))
@@ -260,4 +261,122 @@ func TestDiffPayloadAndInstalls(t *testing.T) {
 	require.Equal(t, []Event{{At: t0, Kind: InputUnavailable, Input: "pods", Text: "forbidden"}}, es)
 	es = Diff(model(nil, nil, load.Input{Resource: "pods", Reason: "forbidden"}), model(nil, nil), t0)
 	require.Equal(t, []Event{{At: t0, Kind: InputAvailable, Input: "pods"}}, es)
+}
+
+// up is a check that ran; down one that could not.
+func up(name string) view.CheckStatus { return view.CheckStatus{Name: name, OK: true} }
+func down(name string) view.CheckStatus {
+	return view.CheckStatus{Name: name, Unavailable: "failing", Error: "scrape failed"}
+}
+
+func TestDiffCheckAvailability(t *testing.T) {
+	a := []view.CheckFinding{finding("a", "error", "m")}
+	tests := []struct {
+		name       string
+		prev, next view.Check
+		want       []EventKind
+	}{
+		{"check stops", model(nil, []view.CheckStatus{up("xds")}), model(nil, []view.CheckStatus{down("xds")}), []EventKind{CheckUnavailable}},
+		{"check resumes", model(nil, []view.CheckStatus{down("xds")}), model(nil, []view.CheckStatus{up("xds")}), []EventKind{CheckAvailable}},
+		{"still down", model(nil, []view.CheckStatus{down("xds")}), model(nil, []view.CheckStatus{down("xds")}), []EventKind{}},
+		// A failed check without an engine reason is not checked either.
+		{"error only", model(nil, []view.CheckStatus{up("xds")}), model(nil, []view.CheckStatus{{Name: "xds", Error: "403"}}), []EventKind{CheckUnavailable}},
+		{"finding gone, check stops", model(a, []view.CheckStatus{up("xds")}), model(nil, []view.CheckStatus{down("xds")}),
+			[]EventKind{CheckUnavailable, FindingUnobserved}},
+		{"finding gone, check vanishes", model(a, []view.CheckStatus{up("xds")}), model(nil, nil), []EventKind{FindingUnobserved}},
+		{"finding gone, checks ran", model(a, []view.CheckStatus{up("xds")}), model(nil, []view.CheckStatus{up("xds")}), []EventKind{FindingCleared}},
+		// A check that could not run before cannot have raised the finding.
+		{"finding gone, check was down", model(a, []view.CheckStatus{down("xds")}), model(nil, []view.CheckStatus{down("xds")}), []EventKind{FindingCleared}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, kinds(Diff(tc.prev, tc.next, t0)))
+		})
+	}
+	es := Diff(model(nil, []view.CheckStatus{up("xds")}), model(nil, []view.CheckStatus{down("xds")}), t0)
+	require.Equal(t, []Event{{At: t0, Kind: CheckUnavailable, Install: "i1", Check: "xds", Text: "failing: scrape failed"}}, es)
+	es = Diff(model(nil, []view.CheckStatus{down("xds")}), model(nil, []view.CheckStatus{up("xds")}), t0)
+	require.Equal(t, []Event{{At: t0, Kind: CheckAvailable, Install: "i1", Check: "xds"}}, es)
+}
+
+// TestTrackerLostThenTimeout: a rejection whose scrape is then denied is no longer observed, never cleared.
+func TestTrackerLostThenTimeout(t *testing.T) {
+	tr := &Tracker{}
+	t1, t2, t3 := t0.Add(time.Second), t0.Add(2*time.Second), t0.Add(3*time.Second)
+	tr.Add(model(nil, []view.CheckStatus{up("xds")}), t0)
+	tr.Add(model([]view.CheckFinding{finding("a", "error", "m")}, []view.CheckStatus{up("xds")}), t1)
+	es := tr.Add(model(nil, []view.CheckStatus{down("xds")}), t2)
+	require.Equal(t, []EventKind{CheckUnavailable, FindingUnobserved}, kinds(es))
+	require.Empty(t, tr.Add(model(nil, []view.CheckStatus{down("xds")}), t3))
+	obs := tr.Observed()
+	require.Len(t, obs, 1)
+	require.Nil(t, obs[0].ClearedAt)
+	require.Equal(t, &t2, obs[0].LostAt)
+}
+
+// TestTrackerLostThenCleared: once the check runs again without the finding, it is cleared then.
+func TestTrackerLostThenCleared(t *testing.T) {
+	tr := &Tracker{}
+	t1, t2, t3 := t0.Add(time.Second), t0.Add(2*time.Second), t0.Add(3*time.Second)
+	tr.Add(model([]view.CheckFinding{finding("a", "error", "m")}, []view.CheckStatus{up("xds")}), t0)
+	tr.Add(model(nil, []view.CheckStatus{down("xds")}), t1)
+	es := tr.Add(model(nil, []view.CheckStatus{up("xds")}), t2)
+	require.Equal(t, []EventKind{CheckAvailable, FindingCleared}, kinds(es))
+	require.Equal(t, "KGWUI-a", es[1].Code)
+	obs := tr.Observed()
+	require.Len(t, obs, 1)
+	require.Equal(t, &t2, obs[0].ClearedAt)
+	require.Nil(t, obs[0].LostAt)
+	// Cleared once: a later model raises nothing more.
+	require.Empty(t, tr.Add(model(nil, []view.CheckStatus{up("xds")}), t3))
+}
+
+// TestTrackerLostThenReturns: a finding seen again continues its entry.
+func TestTrackerLostThenReturns(t *testing.T) {
+	tr := &Tracker{}
+	t1, t2 := t0.Add(time.Second), t0.Add(2*time.Second)
+	a := []view.CheckFinding{finding("a", "error", "m")}
+	tr.Add(model(a, []view.CheckStatus{up("xds")}), t0)
+	tr.Add(model(nil, []view.CheckStatus{down("xds")}), t1)
+	es := tr.Add(model(a, []view.CheckStatus{up("xds")}), t2)
+	require.Equal(t, []EventKind{CheckAvailable, FindingRaised}, kinds(es))
+	obs := tr.Observed()
+	require.Len(t, obs, 1)
+	require.Equal(t, t0, obs[0].FirstSeen)
+	require.Nil(t, obs[0].LostAt)
+	require.Nil(t, obs[0].ClearedAt)
+}
+
+// TestTrackerRejectionThenCleanScrape: the check ran and the finding is gone, so it cleared.
+func TestTrackerRejectionThenCleanScrape(t *testing.T) {
+	tr := &Tracker{}
+	t1 := t0.Add(time.Second)
+	tr.Add(model([]view.CheckFinding{finding("a", "error", "m")}, []view.CheckStatus{up("xds")}), t0)
+	require.Equal(t, []EventKind{FindingCleared}, kinds(tr.Add(model(nil, []view.CheckStatus{up("xds")}), t1)))
+	obs := tr.Observed()
+	require.Equal(t, &t1, obs[0].ClearedAt)
+	require.Nil(t, obs[0].LostAt)
+}
+
+// TestTrackerKeepsLatestSnapshot: evidence, next steps and fix are the latest while present, kept once cleared.
+func TestTrackerKeepsLatestSnapshot(t *testing.T) {
+	with := func(ev string, step string) view.Check {
+		f := finding("a", "error", "m")
+		f.Evidence = json.RawMessage(ev)
+		f.NextSteps = []view.NextStep{{Description: step, Command: "kubectl get x"}}
+		f.Fix = &view.Fix{Title: "fix " + step, YAML: "y"}
+		return model([]view.CheckFinding{f}, nil)
+	}
+	tr := &Tracker{}
+	t1, t2 := t0.Add(time.Second), t0.Add(2*time.Second)
+	tr.Add(model(nil, nil), t0)
+	tr.Add(with(`{"n":1}`, "one"), t1)
+	tr.Add(with(`{"n":2}`, "two"), t1)
+	tr.Add(model(nil, nil), t2)
+	obs := tr.Observed()
+	require.Len(t, obs, 1)
+	require.Equal(t, json.RawMessage(`{"n":2}`), obs[0].Evidence)
+	require.Equal(t, []view.NextStep{{Description: "two", Command: "kubectl get x"}}, obs[0].NextSteps)
+	require.Equal(t, "fix two", obs[0].Fix.Title)
+	require.Equal(t, &t2, obs[0].ClearedAt)
 }

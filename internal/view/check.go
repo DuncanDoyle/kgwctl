@@ -139,7 +139,7 @@ type Observation struct {
 	Observed   []ObservedFinding `json:"observed"`
 }
 
-// ObservedFinding is a finding seen during a --live run, cleared or not.
+// ObservedFinding is a finding seen during a --live run: still present, cleared, or no longer observed.
 type ObservedFinding struct {
 	ID string `json:"id"`
 	// Install is the install ID; two installs can raise the same finding ID.
@@ -148,11 +148,17 @@ type ObservedFinding struct {
 	Severity string       `json:"severity"`
 	Resource *objects.Ref `json:"resource,omitempty"`
 	// Message is the latest message; Detail the latest detail, so a detail-only change shows.
-	Message    string       `json:"message"`
-	Detail     string       `json:"detail,omitempty"`
-	FirstSeen  time.Time    `json:"firstSeen"`
-	ClearedAt  *time.Time   `json:"clearedAt,omitempty"`
+	Message   string     `json:"message"`
+	Detail    string     `json:"detail,omitempty"`
+	FirstSeen time.Time  `json:"firstSeen"`
+	ClearedAt *time.Time `json:"clearedAt,omitempty"`
+	// LostAt is when the finding disappeared as a check that ran stopped running: its state is unknown, not cleared.
+	LostAt     *time.Time   `json:"lostAt,omitempty"`
 	Severities []SeverityAt `json:"severities"`
+	// Evidence, NextSteps and Fix are the latest while the finding was present.
+	Evidence  json.RawMessage `json:"evidence,omitempty"`
+	NextSteps []NextStep      `json:"nextSteps,omitempty"`
+	Fix       *Fix            `json:"fix,omitempty"`
 }
 
 // SeverityAt is the severity a finding had from At on.

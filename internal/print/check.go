@@ -79,6 +79,8 @@ func writeObserved(b *strings.Builder, o view.Observation, withInstall bool) {
 		seen := "First seen " + utc(f.FirstSeen)
 		if f.ClearedAt != nil {
 			seen += ", cleared " + utc(*f.ClearedAt)
+		} else if f.LostAt != nil {
+			seen += ", no longer observed from " + utc(*f.LostAt) + " (a check stopped running)"
 		} else {
 			seen += ", still present"
 		}
