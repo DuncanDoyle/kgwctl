@@ -1,6 +1,6 @@
 # Output schema
 
-`describe` and `version` print a versioned envelope with `-o json` or `-o yaml`. Tables and the default text layout are not a stable interface; the envelope is. `get -o yaml|json` is not wrapped: it prints a plain Kubernetes `v1` List of the matching objects.
+`describe`, `version` and `check` print a versioned envelope with `-o json` or `-o yaml`. Tables and the default text layout are not a stable interface; the envelope is. `get -o yaml|json` is not wrapped: it prints a plain Kubernetes `v1` List of the matching objects.
 
 ## Envelope
 
@@ -11,8 +11,8 @@
 | Field | Type | Meaning |
 |---|---|---|
 | `schemaVersion` | string | Schema version, currently `kgwctl.kgateway.dev/v1alpha1`. |
-| `kind` | string | `Describe` or `Version`. |
-| `item` | object | A `DescribeView` or a `VersionView`. |
+| `kind` | string | `Describe`, `Version` or `Check`. |
+| `item` | object | A `DescribeView`, a `VersionView` or a `Check`. |
 
 ## Conventions
 
@@ -21,7 +21,7 @@
 - `install` is `namespace/name` of the owning install, as in `get`.
 - Optional fields are omitted when empty, not printed as null. Fields documented as always present are printed even when empty.
 - Data goes to stdout and errors to stderr. Warnings never appear in JSON or YAML output.
-- Exit codes: `0` for success and `1` for any error, in every output format.
+- Exit codes: `get`, `describe` and `version` use `0` for success and `1` for any error. `check` uses `0` when no shown finding is an error or warning, `1` when one is (or on a usage error), and `2` when it could not check, as with no install found. Exit codes are the same in every output format.
 
 ## Stability
 
@@ -349,3 +349,139 @@ A reference with one extra field.
 | `bundleVersion` | string | Gateway API bundle version. |
 | `channel` | string | `standard` or `experimental`. |
 | `unknown` | string | Why the bundle is not known, as `denied`. |
+
+## Check
+
+`check` prints one report per selected install. With `-n`, findings on objects of other namespaces are dropped; findings without a namespace stay, and `state` is still the engine's. Times are UTC.
+
+### Check
+
+| Field | Type | Meaning |
+|---|---|---|
+| `context` | string | Kube context name. |
+| `generatedAt` | string | RFC3339 time of the engine computation behind the report. |
+| `installs` | InstallCheck[] | One entry per selected install, ordered by install ID. Always present. |
+| `incomplete` | Input[] | Inputs the report depends on that are not `ok`. Absent when all are `ok`. |
+| `observation` | Observation | What `--live` saw during the run; absent without `--live`. |
+
+### InstallCheck
+
+| Field | Type | Meaning |
+|---|---|---|
+| `install` | InstallRef | The install. |
+| `state` | string | `error`, `warning`, `unknown` or `healthy`, as the engine rolled it up. |
+| `counts` | Counts | Shown findings per severity. |
+| `findings` | CheckFinding[] | Shown findings: errors, then warnings, then info, each in diagnosis order. |
+| `groups` | CheckGroup[] | Diagnosis groups with at least one shown finding. |
+| `checks` | CheckStatus[] | Every check of the install, ordered by name. |
+
+### InstallRef
+
+| Field | Type | Meaning |
+|---|---|---|
+| `id` | string | Install ID. |
+| `namespace` | string | Namespace of the controller. |
+| `name` | string | Name of the controller. |
+| `version` | string | Controller version; absent when unknown. |
+
+### Counts
+
+| Field | Type | Meaning |
+|---|---|---|
+| `error` | integer | Shown findings with severity `error`. |
+| `warning` | integer | Shown findings with severity `warning`. |
+| `info` | integer | Shown findings with severity `info`. |
+
+### CheckFinding
+
+| Field | Type | Meaning |
+|---|---|---|
+| `id` | string | Stable finding ID. |
+| `code` | string | Finding code. Codes of vendor packs appear as they are. |
+| `slug` | string | Short name of the code. |
+| `severity` | string | `error`, `warning` or `info`. |
+| `resource` | Ref | The object the finding is about; absent for install-level findings. |
+| `message` | string | What is wrong. |
+| `detail` | string | More context. |
+| `since` | string | RFC3339 time the problem started, when known. |
+| `group` | string | ID of the diagnosis group the finding is in. |
+| `evidence` | object | Typed evidence with a `kind` tag, passed through from the engine; absent when none. |
+| `nextSteps` | NextStep[] | Commands to learn more, with the kube context filled in. |
+| `fix` | Fix | The one change the evidence leaves, when there is one. |
+
+### CheckGroup
+
+| Field | Type | Meaning |
+|---|---|---|
+| `id` | string | Group ID. |
+| `cause` | Ref | The object the group's findings share as cause; absent when the engine names none. |
+| `findings` | string[] | IDs of the shown findings in the group. |
+
+### NextStep
+
+| Field | Type | Meaning |
+|---|---|---|
+| `description` | string | What the command shows. |
+| `command` | string | Shell command, with `--context` filled in for kubectl. |
+| `note` | string | Caution about the command's output. |
+
+### Fix
+
+| Field | Type | Meaning |
+|---|---|---|
+| `title` | string | What the change does. |
+| `target` | Ref | The object to create, or to change at `path`. |
+| `create` | boolean | True when `target` is a new object. |
+| `path` | string | Field path of the fragment in `target`; absent for a new object. |
+| `yaml` | string | The object or fragment. |
+| `basis` | string | Why this is the fix. |
+
+### CheckStatus
+
+| Field | Type | Meaning |
+|---|---|---|
+| `name` | string | Check name. |
+| `ok` | boolean | The check collected its input and found nothing to report. |
+| `pending` | boolean | Not `ok` only because objects are still being processed. |
+| `unavailable` | string | Why an optional input is missing: `off`, `denied`, `failing`, `not-on-version` or `not-observed`; `""` when available. |
+| `error` | string | Why the check could not collect its input. |
+| `detail` | string | Extra context of an `ok` check. |
+| `hold` | Hold | Set while the check is still deciding on some items. |
+
+A check was not checked when `unavailable` is set, or when `ok` is false and `error` is set. It passed when `ok` is true, it has no `hold` and it was checked.
+
+### Hold
+
+| Field | Type | Meaning |
+|---|---|---|
+| `until` | string | RFC3339 time of the earliest decision. |
+| `count` | integer | Held items, in the unit of the check's finding. |
+| `reason` | string | Why the items are held. |
+
+### Observation
+
+| Field | Type | Meaning |
+|---|---|---|
+| `startedAt` | string | RFC3339 start of the run. |
+| `endedAt` | string | RFC3339 end of the run. |
+| `stopReason` | string | `timeout` or `interrupted`. |
+| `observed` | ObservedFinding[] | Findings seen during the run, cleared or not. |
+
+### ObservedFinding
+
+| Field | Type | Meaning |
+|---|---|---|
+| `id` | string | Finding ID. |
+| `code` | string | Finding code. |
+| `severity` | string | Latest severity. |
+| `resource` | Ref | The object the finding is about. |
+| `firstSeen` | string | RFC3339 time first seen. |
+| `clearedAt` | string | RFC3339 time it cleared; absent while it was still present at the end. |
+| `severities` | SeverityAt[] | Severity changes, oldest first. |
+
+### SeverityAt
+
+| Field | Type | Meaning |
+|---|---|---|
+| `severity` | string | Severity from `at` on. |
+| `at` | string | RFC3339 time. |

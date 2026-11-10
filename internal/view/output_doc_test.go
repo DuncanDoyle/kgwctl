@@ -63,6 +63,8 @@ func TestOutputDocMatchesSchema(t *testing.T) {
 		ConditionBlock{}, ConditionRow{}, Relations{}, ParentSummary{}, ListenerRoutes{},
 		RouteLink{}, Condition{}, DelegationChild{}, Backend{}, DeclaredRefs{},
 		VersionView{}, BuildInfo{}, InstallVersion{}, ProxyVersion{}, CRDVersion{},
+		Check{}, InstallRef{}, InstallCheck{}, Counts{}, CheckGroup{}, CheckFinding{}, NextStep{}, Fix{},
+		CheckStatus{}, Hold{}, Observation{}, ObservedFinding{}, SeverityAt{},
 		load.Input{}, objects.Ref{}, objects.ParentRef{}, objects.GroupKind{},
 	}
 	doc := docFields(t, "../../docs/output.md")
