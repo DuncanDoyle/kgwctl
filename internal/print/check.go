@@ -73,6 +73,9 @@ func writeObserved(b *strings.Builder, o view.Observation, withInstall bool) {
 		}
 		b.WriteString(head + "\n")
 		pad := "  " + strings.Repeat(" ", len([]rune(code))+2)
+		if f.Detail != "" {
+			b.WriteString(pad + cleanLines(f.Detail)[0] + "\n")
+		}
 		seen := "First seen " + utc(f.FirstSeen)
 		if f.ClearedAt != nil {
 			seen += ", cleared " + utc(*f.ClearedAt)

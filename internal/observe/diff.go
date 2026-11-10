@@ -16,7 +16,7 @@ type EventKind int
 // The kinds, in the order Diff emits them within one install.
 const (
 	FindingRaised EventKind = iota
-	// FindingChanged is a finding whose severity or message changed under the same ID.
+	// FindingChanged is a finding whose severity, message or detail changed under the same ID.
 	FindingChanged
 	FindingCleared
 	HoldStarted
@@ -41,7 +41,9 @@ type Event struct {
 	Hold  *view.Hold
 	Input string
 	// Text is the finding message, the hold reason or the input's access error.
-	Text string
+	// Detail is a finding's detail.
+	Text   string
+	Detail string
 }
 
 // Diff compares two models and returns the events at time at. Findings are
@@ -76,7 +78,7 @@ func Diff(prev, next view.Check, at time.Time) []Event {
 			switch {
 			case !ok:
 				fe = append(fe, keyed{k, findingEvent(at, FindingRaised, id, n)})
-			case p.Severity != n.Severity || p.Message != n.Message:
+			case p.Severity != n.Severity || p.Message != n.Message || p.Detail != n.Detail:
 				fe = append(fe, keyed{k, findingEvent(at, FindingChanged, id, n)})
 			}
 		}
@@ -123,7 +125,7 @@ func Diff(prev, next view.Check, at time.Time) []Event {
 }
 
 func findingEvent(at time.Time, k EventKind, install string, f view.CheckFinding) Event {
-	return Event{At: at, Kind: k, Install: install, Code: f.Code, Severity: f.Severity, Resource: f.Resource, Text: f.Message}
+	return Event{At: at, Kind: k, Install: install, Code: f.Code, Severity: f.Severity, Resource: f.Resource, Text: f.Message, Detail: f.Detail}
 }
 
 func holdEvent(at time.Time, k EventKind, install, check string, h view.Hold) Event {
@@ -177,8 +179,7 @@ type Tracker struct {
 type tracked struct {
 	f       view.ObservedFinding
 	install string
-	message string
-	// transitioned is set once the finding is raised late, cleared or changes severity.
+	// transitioned is set once the finding is raised late, cleared, or changes severity, message or detail.
 	transitioned bool
 }
 
@@ -200,12 +201,12 @@ func (t *Tracker) Add(c view.Check, at time.Time) []Event {
 			e := t.entries[key]
 			if e == nil {
 				t.entries[key] = &tracked{f: view.ObservedFinding{ID: f.ID, Install: ic.Install.ID, Code: f.Code, Severity: f.Severity, Resource: f.Resource,
-					Message: f.Message, FirstSeen: at, Severities: []view.SeverityAt{{Severity: f.Severity, At: at}}}, install: ic.Install.ID, message: f.Message, transitioned: !first}
+					Message: f.Message, Detail: f.Detail, FirstSeen: at, Severities: []view.SeverityAt{{Severity: f.Severity, At: at}}}, install: ic.Install.ID, transitioned: !first}
 				continue
 			}
 			e.f.ClearedAt = nil
-			if e.message != f.Message {
-				e.message, e.f.Message = f.Message, f.Message
+			if e.f.Message != f.Message || e.f.Detail != f.Detail {
+				e.f.Message, e.f.Detail = f.Message, f.Detail
 				e.transitioned = true
 			}
 			if e.f.Severity != f.Severity {

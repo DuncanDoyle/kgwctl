@@ -147,8 +147,9 @@ type ObservedFinding struct {
 	Code     string       `json:"code"`
 	Severity string       `json:"severity"`
 	Resource *objects.Ref `json:"resource,omitempty"`
-	// Message is the latest message.
+	// Message is the latest message; Detail the latest detail, so a detail-only change shows.
 	Message    string       `json:"message"`
+	Detail     string       `json:"detail,omitempty"`
 	FirstSeen  time.Time    `json:"firstSeen"`
 	ClearedAt  *time.Time   `json:"clearedAt,omitempty"`
 	Severities []SeverityAt `json:"severities"`

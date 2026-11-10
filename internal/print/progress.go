@@ -37,6 +37,10 @@ func Progress(w io.Writer, e observe.Event, color bool) error {
 		text = clean(e.Code) + "  " + text
 	case observe.FindingChanged:
 		label, text = "CHANGED", clean(e.Code)+"  "+findingText(e.Resource, "now "+e.Severity+": "+e.Text)
+		// The detail says what changed when severity and message did not.
+		if d := cleanLines(e.Detail)[0]; d != "" {
+			text += "; " + d
+		}
 	case observe.FindingCleared:
 		label, code, text = "CLEARED", "32", clean(e.Code)+"  "+findingText(e.Resource, e.Text)
 	case observe.HoldStarted, observe.HoldChanged:

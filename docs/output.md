@@ -477,6 +477,7 @@ A check is still deciding when `pending` is true or it has a `hold`. Otherwise i
 | `severity` | string | Latest severity. |
 | `resource` | Ref | The object the finding is about. |
 | `message` | string | Latest message. |
+| `detail` | string | Latest detail, absent when empty. A change in detail under the same ID (such as 013 going from a missing Service to a missing port) is a transition. |
 | `firstSeen` | string | RFC3339 time first seen. |
 | `clearedAt` | string | RFC3339 time it cleared; absent while it was still present at the end. |
 | `severities` | SeverityAt[] | Severity changes, oldest first. |

@@ -168,6 +168,26 @@ func TestTrackerMessageOnlyChangeIsTransition(t *testing.T) {
 	require.Equal(t, []view.SeverityAt{{Severity: "info", At: t0}}, obs[0].Severities)
 }
 
+// TestDetailOnlyChangeIsTransition: 013's detail turns from "does not exist" to
+// "has no port" when the Service appears; same ID, same message, still a change.
+func TestDetailOnlyChangeIsTransition(t *testing.T) {
+	withDetail := func(d string) view.Check {
+		f := finding("a", "error", "Backend not found")
+		f.Detail = d
+		return model([]view.CheckFinding{f}, nil)
+	}
+	tr := &Tracker{}
+	tr.Add(withDetail("Service `live/x` does not exist."), t0)
+	t1 := t0.Add(time.Second)
+	es := tr.Add(withDetail("Service `live/x` has no port 8080 (ports: 80)."), t1)
+	require.Equal(t, []EventKind{FindingChanged}, kinds(es))
+	require.Equal(t, "Service `live/x` has no port 8080 (ports: 80).", es[0].Detail)
+	obs := tr.Observed()
+	require.Len(t, obs, 1)
+	require.Equal(t, "Service `live/x` has no port 8080 (ports: 80).", obs[0].Detail)
+	require.Nil(t, obs[0].ClearedAt)
+}
+
 func TestTrackerOrderAcrossInstalls(t *testing.T) {
 	mk := func(id, sev string) view.InstallCheck {
 		return view.InstallCheck{Install: view.InstallRef{ID: id}, Findings: []view.CheckFinding{finding("a", sev, "m")}}

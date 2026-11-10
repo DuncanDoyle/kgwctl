@@ -34,6 +34,9 @@ func TestProgressLines(t *testing.T) {
 			"14:02:10  WARNING  KGWUI-018  Status is not progressing\n"},
 		{observe.Event{At: gen, Kind: observe.FindingChanged, Code: "KGWUI-003", Severity: "warning", Resource: httpRef("shop", "web"), Text: "Not yet processed"},
 			"14:02:10  CHANGED  KGWUI-003  HTTPRoute shop/web: now warning: Not yet processed\n"},
+		{observe.Event{At: gen, Kind: observe.FindingChanged, Code: "KGWUI-013", Severity: "error", Resource: httpRef("live", "r"), Text: "Backend not found",
+			Detail: "Service `live/x` has no port 8080 (ports: 80).\nSecond line"},
+			"14:02:10  CHANGED  KGWUI-013  HTTPRoute live/r: now error: Backend not found; Service `live/x` has no port 8080 (ports: 80).\n"},
 		{observe.Event{At: gen, Kind: observe.FindingCleared, Code: "KGWUI-003", Severity: "warning", Resource: httpRef("shop", "cart"), Text: "not attached"},
 			"14:02:10  CLEARED  KGWUI-003  HTTPRoute shop/cart: not attached\n"},
 		{observe.Event{At: gen, Kind: observe.HoldStarted, Check: "status progress", Hold: hold, Text: hold.Reason},
@@ -117,7 +120,7 @@ func TestCheckTextObserved(t *testing.T) {
 		Observed: []view.ObservedFinding{
 			{ID: "a", Install: "kgateway-system.kgateway", Code: "KGWUI-003", Severity: "warning", Resource: httpRef("shop", "web"), Message: "Not yet processed", FirstSeen: gen,
 				Severities: []view.SeverityAt{{Severity: "info", At: gen}, {Severity: "warning", At: gen.Add(time.Minute)}}},
-			{ID: "b", Install: "kgateway-system.kgateway", Code: "KGWUI-013", Severity: "warning", Resource: httpRef("shop", "cart\x1b[1m"), Message: "Backend not found\x1b[2J", FirstSeen: gen,
+			{ID: "b", Install: "kgateway-system.kgateway", Code: "KGWUI-013", Severity: "warning", Resource: httpRef("shop", "cart\x1b[1m"), Message: "Backend not found\x1b[2J", Detail: "Service `shop/cart-v2` has no port 8080 (ports: 80).", FirstSeen: gen,
 				ClearedAt: &cleared, Severities: []view.SeverityAt{{Severity: "warning", At: gen}}},
 		}}}
 	got := render(t, c, false)

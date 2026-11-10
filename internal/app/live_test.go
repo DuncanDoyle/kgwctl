@@ -231,6 +231,7 @@ type liveDoc struct {
 			StopReason         string
 			Observed           []struct {
 				ID, Install, Code, Severity string
+				Detail                      string
 				FirstSeen                   time.Time
 				ClearedAt                   *time.Time
 				Severities                  []struct{ Severity string }
@@ -363,6 +364,33 @@ func fixCart(t *testing.T, env *testenv.Env) {
 	if _, err := routes.UpdateStatus(ctx, u, metav1.UpdateOptions{}); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// TestLiveDetailChange: a Service on the wrong port turns 013's detail from
+// "does not exist" to "has no port" under the same ID and message; that is a change.
+func TestLiveDetailChange(t *testing.T) {
+	env := checkEnv(t, checkInstall, checkController, checkRouteBroken)
+	r := startLive(t, env, liveOpts{}, fastHooks(metricsScraper{}), "--timeout", "30s", "-o", "json")
+	r.step(5 * time.Second)
+	kc := kubernetes.NewForConfigOrDie(env.Admin)
+	svc := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "cart-v2", Namespace: "shop"},
+		Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 80}}}}
+	if _, err := kc.CoreV1().Services("shop").Create(context.Background(), svc, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = kc.CoreV1().Services("shop").Delete(context.Background(), "cart-v2", metav1.DeleteOptions{})
+	})
+	res := r.finish()
+	if !strings.Contains(r.progress.String(), "CHANGED  KGWUI-013  HTTPRoute shop/cart: now error: Backend not found; Service `shop/cart-v2` has no port 8080") {
+		t.Errorf("progress has no CHANGED line for 013's detail:\n%s", r.progress.String())
+	}
+	for _, f := range decodeLive(t, res.stdout).Item.Observation.Observed {
+		if f.Code == "KGWUI-013" && f.ClearedAt == nil && strings.Contains(f.Detail, "has no port 8080") {
+			return
+		}
+	}
+	t.Errorf("observed lacks 013 with its new detail:\n%s", res.stdout)
 }
 
 func TestLiveClears(t *testing.T) {
