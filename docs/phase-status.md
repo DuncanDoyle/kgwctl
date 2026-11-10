@@ -20,19 +20,7 @@ Status: design
 - [ ] phase-2-complete.md written, roadmap updated, tracked items closed
 
 ## Sub-phase
-Sub-phase: 2.1 — Snellius upgrade
-Kind: planned
-Base: 2ed885af6831a27ea98cb7f7a5479a6f564ee5af
-Brief: docs/phases/phase-2/phase-2.1-brief.md
-
-### Allowed work
-features within the approved design (here: the dependency move only)
-
-### Not allowed
-design changes without decisions.md + user approval
-
-### Queue
-- [ ] Task 2.1.1 move to Snellius v0.7.0-alpha.1 ← CURRENT
+n/a (2.1 complete: docs/phases/phase-2/phase-2.1-complete.md)
 
 ## Program
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
@@ -49,5 +37,6 @@ design changes without decisions.md + user approval
 - Later phase (D-015): a narrow `pkg/cli` facade for vendor cluster commands — flags, REST config, deadline, load (reviews/phase-codex.md#9, D-009 follow-up).
 
 ## Notes
+- 2026-11-10 Ruling (2.1): Snellius's catalogue now has list-only kinds (DirectResponse, GatewayExtension, ReferenceGrant; kgwctl#17). `get`/`describe` keep Phase 1 behaviour and skip `ListOnly` kinds, because `load.Load` doesn't wait for them and could print a false empty list. Supporting them in `get`/`describe` is a follow-up for a later sub-phase or phase (owner to schedule).
 - GitHub repo: https://github.com/DuncanDoyle/kgwctl (`kgwctl` remains a working name, D-006).
 - 2026-11-06 Phase 1 closed: docs/phases/phase-1/phase-1-complete.md.
