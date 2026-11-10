@@ -878,3 +878,68 @@ func TestObserveFirstPublishWaitRecompute(t *testing.T) {
 		t.Fatal("complete without a compute started after the wait expired")
 	}
 }
+
+// flipCollector fails with each reason the test sends; the first one is sent at once.
+type flipCollector struct{ ch chan string }
+
+func (*flipCollector) Name() string { return "flip" }
+func (c *flipCollector) Start(ctx context.Context, d extension.Deps) error {
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case r := <-c.ch:
+			d.Fail("value", collect.Failing, r)
+		}
+	}
+}
+
+// TestObserveResettleRecomputes holds a changed Fail between its store write
+// and its record, lets a compute consume the store's notify, then checks the
+// session still completes without the safety timer.
+func TestObserveResettleRecomputes(t *testing.T) {
+	env := testenv.New(t, testenv.Options{Fixtures: []string{healthyFixture}})
+	l := hookLoop(t)
+	flip := &flipCollector{ch: make(chan string, 1)}
+	flip.ch <- "first"
+	fc := clocktesting.NewFakeClock(time.Now())
+	// An hour-long interval and wait: only a trigger can start a compute.
+	s := start(t, env, extension.New(extension.WithCollectors(flip)),
+		Options{Clock: fc, Scraper: zeroScraper{}, MetricsInterval: time.Hour, FirstPublishWait: time.Hour, Quiet: time.Second})
+	eventually(t, "the cache to settle", s.ca.Settled)
+	for i := 0; !s.Complete(); i++ {
+		if i == 20 {
+			t.Fatal("no baseline completion after 20s of fake time")
+		}
+		settle(t, l, fc, time.Second)
+	}
+
+	stored, release := make(chan struct{}), make(chan struct{})
+	testStored = func(name string) {
+		if name == "flip" {
+			close(stored)
+			<-release
+		}
+	}
+	t.Cleanup(func() { testStored = nil })
+	trig := l.countKind(engine.EvTriggered)
+	flip.ch <- "second"
+	<-stored
+	eventually(t, "the engine to see the store's notify", func() bool { return l.countKind(engine.EvTriggered) > trig })
+	n := l.published()
+	settle(t, l, fc, time.Second) // a compute consumes the store's notify before the record
+	if l.published() == n {
+		t.Fatal("no compute ran on the store's notify")
+	}
+	close(release)
+	eventually(t, "the changed failure to be recorded", func() bool { return s.Inputs()[CollectorGVR("flip")].Reason == "second" })
+	if s.Complete() {
+		t.Fatal("Complete() true from a compute that ran before the changed failure was recorded")
+	}
+	for i := 0; !s.Complete(); i++ {
+		if i == 5 {
+			t.Fatal("not complete 5s of fake time after the changed failure; it waits for the safety timer")
+		}
+		settle(t, l, fc, time.Second)
+	}
+}

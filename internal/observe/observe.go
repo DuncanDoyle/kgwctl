@@ -73,6 +73,8 @@ var (
 	testQuiet func()
 	testArmed func()
 	testWait  func()
+	// testStored runs between a collector's store write and its record (tests).
+	testStored func(collector string)
 )
 
 // CollectorGVR is the Inputs key of the collector named name; it never
@@ -222,6 +224,9 @@ func (s *Session) runCollector(ctx context.Context, col extension.Collector, sto
 		},
 		Fail: func(key string, state collect.State, reason string) {
 			store.Fail(name+"/"+key, state, reason)
+			if testStored != nil {
+				testStored(name)
+			}
 			s.record(name, func(st *collectorState) effect {
 				f := failure{state, reason}
 				if prev, ok := st.failing[key]; ok && prev == f {
@@ -267,7 +272,8 @@ func (st *collectorState) firstTerminal() effect {
 
 // record applies f to collector name's state and then its effect: publishes
 // and first terminal outcomes restart the quiet period, every change voids the
-// settled model.
+// settled model. The store notified the engine before record ran, so a
+// compute may already have consumed that notify; resettle asks for another.
 func (s *Session) record(name string, f func(*collectorState) effect) {
 	s.mu.Lock()
 	e := f(s.cols[name])
@@ -280,11 +286,14 @@ func (s *Session) record(name string, f func(*collectorState) effect) {
 		s.quietFired = false
 	}
 	s.mu.Unlock()
-	if e == requiet {
+	switch e {
+	case requiet:
 		select {
 		case s.rearm <- struct{}{}:
 		default:
 		}
+	case resettle:
+		s.changes.Notify()
 	}
 	s.signal()
 }
