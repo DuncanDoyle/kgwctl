@@ -112,7 +112,7 @@ STILL DECIDING (1)
 NOT CHECKED (1)
   proxy connection, proxy config warming   denied: get pods/proxy — see docs/rbac.yaml
 
-PASSED: 17 checks
+CHECKS RUN: 21
 
 1 error, 2 warnings, 1 check deciding.
 1 check is still deciding; the next decision is at 14:07:12 (in 5m). Run `kgwctl check --live` to see them decide.
