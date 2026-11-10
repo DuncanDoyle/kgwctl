@@ -88,7 +88,7 @@ func writeObserved(b *strings.Builder, o view.Observation, withInstall bool) {
 		if f.ClearedAt != nil {
 			seen += ", cleared " + utc(*f.ClearedAt)
 		} else if f.LostAt != nil {
-			seen += ", no longer observed from " + utc(*f.LostAt) + " (a check stopped running)"
+			seen += ", no longer observed from " + utc(*f.LostAt) + " (kgwctl lost sight of it; not confirmed resolved)"
 		} else {
 			seen += ", still present"
 		}

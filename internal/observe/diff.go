@@ -191,8 +191,8 @@ func checks(ic view.InstallCheck) map[string]view.CheckStatus {
 	return m
 }
 
-// decided reports whether cs ran and decided: only such a check confirms a finding is gone.
-func decided(cs view.CheckStatus) bool { return cs.Ran() && !cs.Pending }
+// decided reports whether cs ran and decided, neither pending nor holding: only such a check confirms a finding is gone.
+func decided(cs view.CheckStatus) bool { return cs.Ran() && !cs.Pending && cs.Hold == nil }
 
 // decidedSet is the set of checks of ic that decided.
 func decidedSet(ic view.InstallCheck) map[string]bool {

@@ -481,8 +481,8 @@ A check is still deciding when `pending` is true or it has a `hold`. Otherwise i
 | `message` | string | Latest message. |
 | `detail` | string | Latest detail, absent when empty. A change in detail under the same ID (such as 013 going from a missing Service to a missing port) is a transition. |
 | `firstSeen` | string | RFC3339 time first seen. |
-| `clearedAt` | string | RFC3339 time it cleared: every check that decided (ran, not pending) at any time while it was present decided again without it. Absent while present or no longer observed. |
-| `lostAt` | string | RFC3339 time it disappeared while such a check did not decide (denied, failing, pending). kgwctl lost sight of it: its state is unknown, not cleared. Absent otherwise; at most one of `clearedAt` and `lostAt` is set. A lost finding that comes back drops `lostAt`; one whose checks run again without it gets `clearedAt` then. |
+| `clearedAt` | string | RFC3339 time it cleared: every check that decided (ran, neither pending nor holding) at any time while it was present decided again without it. Absent while present or no longer observed. |
+| `lostAt` | string | RFC3339 time it disappeared while such a check did not decide (denied, failing, pending, holding). kgwctl lost sight of it: its state is unknown, not cleared. Absent otherwise; at most one of `clearedAt` and `lostAt` is set. A lost finding that comes back drops `lostAt`; one whose checks run again without it gets `clearedAt` then. |
 | `severities` | SeverityAt[] | Severity changes, oldest first. |
 | `evidence` | object | The latest evidence while the finding was present, as in Finding. |
 | `nextSteps` | NextStep[] | The latest next steps while the finding was present. |

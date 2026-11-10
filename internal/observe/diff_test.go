@@ -416,3 +416,17 @@ func TestTrackerNeedSpansPresence(t *testing.T) {
 func TestDiffPendingIsNotAvailable(t *testing.T) {
 	require.Empty(t, Diff(model(nil, []view.CheckStatus{down("xds")}), model(nil, []view.CheckStatus{pending("xds")}), t0))
 }
+
+// TestTrackerHeldDoesNotClear: a check back with a hold has not decided; the finding clears once the hold ends without it.
+func TestTrackerHeldDoesNotClear(t *testing.T) {
+	tr := &Tracker{}
+	t1, t2, t3 := t0.Add(time.Second), t0.Add(2*time.Second), t0.Add(3*time.Second)
+	held := view.CheckStatus{Name: "xds", OK: true, Hold: &view.Hold{Until: t3, Count: 1, Reason: "restart"}}
+	tr.Add(model([]view.CheckFinding{finding("a", "error", "m")}, []view.CheckStatus{up("xds")}), t0)
+	tr.Add(model(nil, []view.CheckStatus{down("xds")}), t1)
+	require.Equal(t, []EventKind{HoldStarted}, kinds(tr.Add(model(nil, []view.CheckStatus{held}), t2)))
+	require.Equal(t, &t1, tr.Observed()[0].LostAt)
+	require.Equal(t, []EventKind{CheckAvailable, FindingCleared, HoldEnded}, kinds(tr.Add(model(nil, []view.CheckStatus{up("xds")}), t3)))
+	require.Equal(t, &t3, tr.Observed()[0].ClearedAt)
+	require.Nil(t, tr.Observed()[0].LostAt)
+}

@@ -137,7 +137,7 @@ func TestCheckTextObserved(t *testing.T) {
 	lost := gen.Add(4 * time.Minute)
 	c.Observation.Observed = []view.ObservedFinding{{ID: "c", Install: "kgateway-system.kgateway", Code: "KGWUI-001", Severity: "error",
 		Message: "Envoy rejects configuration", FirstSeen: gen, LostAt: &lost, Severities: []view.SeverityAt{{Severity: "error", At: gen}}}}
-	if got := render(t, c, false); !strings.Contains(got, "First seen 14:02:10, no longer observed from 14:06:10 (a check stopped running).") {
+	if got := render(t, c, false); !strings.Contains(got, "First seen 14:02:10, no longer observed from 14:06:10 (kgwctl lost sight of it; not confirmed resolved).") {
 		t.Errorf("a lost finding is not shown as no longer observed:\n%s", got)
 	}
 	c.Observation.Observed = []view.ObservedFinding{}
