@@ -360,7 +360,7 @@ A reference with one extra field.
 |---|---|---|
 | `context` | string | Kube context name. |
 | `generatedAt` | string | RFC3339 time of the engine computation behind the report. |
-| `installs` | InstallCheck[] | One entry per selected install, ordered by install ID. Always present. |
+| `installs` | InstallCheck[] | One entry per selected install, ordered by install ID. Always present, `[]` when none. |
 | `incomplete` | Input[] | Inputs the report depends on that are not `ok`. Absent when all are `ok`. |
 | `observation` | Observation | What `--live` saw during the run; absent without `--live`. |
 
@@ -371,9 +371,9 @@ A reference with one extra field.
 | `install` | InstallRef | The install. |
 | `state` | string | `error`, `warning`, `unknown` or `healthy`, as the engine rolled it up. |
 | `counts` | Counts | Shown findings per severity. |
-| `findings` | CheckFinding[] | Shown findings: errors, then warnings, then info, each in diagnosis order. |
-| `groups` | CheckGroup[] | Diagnosis groups with at least one shown finding. |
-| `checks` | CheckStatus[] | Every check of the install, ordered by name. |
+| `findings` | CheckFinding[] | Shown findings: errors, then warnings, then info, each in diagnosis order. Always present, `[]` when none. |
+| `groups` | CheckGroup[] | Diagnosis groups with at least one shown finding. Always present, `[]` when none. |
+| `checks` | CheckStatus[] | Every check of the install, ordered by name. Always present, `[]` when none. |
 
 ### InstallRef
 
@@ -402,11 +402,11 @@ A reference with one extra field.
 | `severity` | string | `error`, `warning` or `info`. |
 | `resource` | Ref | The object the finding is about; absent for install-level findings. |
 | `message` | string | What is wrong. |
-| `detail` | string | More context. |
+| `detail` | string | More context; absent when empty. |
 | `since` | string | RFC3339 time the problem started, when known. |
-| `group` | string | ID of the diagnosis group the finding is in. |
+| `group` | string | ID of the diagnosis group the finding is in; absent when none. |
 | `evidence` | object | Typed evidence with a `kind` tag, passed through from the engine; absent when none. |
-| `nextSteps` | NextStep[] | Commands to learn more, with the kube context filled in. |
+| `nextSteps` | NextStep[] | Commands to learn more, with the kube context filled in; absent when none. |
 | `fix` | Fix | The one change the evidence leaves, when there is one. |
 
 ### CheckGroup
@@ -423,7 +423,7 @@ A reference with one extra field.
 |---|---|---|
 | `description` | string | What the command shows. |
 | `command` | string | Shell command, with `--context` filled in for kubectl. |
-| `note` | string | Caution about the command's output. |
+| `note` | string | Caution about the command's output; absent when empty. |
 
 ### Fix
 
@@ -431,7 +431,7 @@ A reference with one extra field.
 |---|---|---|
 | `title` | string | What the change does. |
 | `target` | Ref | The object to create, or to change at `path`. |
-| `create` | boolean | True when `target` is a new object. |
+| `create` | boolean | True when `target` is a new object; absent (false) otherwise. |
 | `path` | string | Field path of the fragment in `target`; absent for a new object. |
 | `yaml` | string | The object or fragment. |
 | `basis` | string | Why this is the fix. |
@@ -441,11 +441,11 @@ A reference with one extra field.
 | Field | Type | Meaning |
 |---|---|---|
 | `name` | string | Check name. |
-| `ok` | boolean | The check collected its input and found nothing to report. |
-| `pending` | boolean | Not `ok` only because objects are still being processed. |
-| `unavailable` | string | Why an optional input is missing: `off`, `denied`, `failing`, `not-on-version` or `not-observed`; `""` when available. |
-| `error` | string | Why the check could not collect its input. |
-| `detail` | string | Extra context of an `ok` check. |
+| `ok` | boolean | The check collected its input and found nothing to report. Always present. |
+| `pending` | boolean | Not `ok` only because objects are still being processed. Always present. |
+| `unavailable` | string | Why an optional input is missing: `off`, `denied`, `failing`, `not-on-version` or `not-observed`; always present, `""` when available. |
+| `error` | string | Why the check could not collect its input; absent when empty. |
+| `detail` | string | Extra context of an `ok` check; absent when empty. |
 | `hold` | Hold | Set while the check is still deciding on some items. |
 
 A check was not checked when `unavailable` is set, or when `ok` is false and `error` is set. It passed when `ok` is true, it has no `hold` and it was checked.

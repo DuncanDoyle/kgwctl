@@ -134,25 +134,43 @@ func TestBuildCheckUnavailable(t *testing.T) {
 
 func TestBuildCheckGroups(t *testing.T) {
 	svc := &objects.Ref{Kind: "Service", Namespace: "shop", Name: "cart-v2"}
+	// Indexes 0 and 2 are filtered out of "shop"; g2 loses all its members.
 	rep := health.Report{Findings: []health.Finding{
-		finding("f0", "X-1", health.SeverityWarning, ref("HTTPRoute", "shop", "a")),
-		finding("f1", "X-2", health.SeverityWarning, ref("HTTPRoute", "shop", "b")),
+		finding("f0", "X-1", health.SeverityInfo, ref("HTTPRoute", "other", "a")),
+		finding("f1", "X-2", health.SeverityInfo, ref("HTTPRoute", "shop", "b")),
 		finding("f2", "X-3", health.SeverityWarning, ref("HTTPRoute", "other", "c")),
+		finding("f3", "X-4", health.SeverityError, ref("HTTPRoute", "shop", "d")),
+		finding("f4", "X-5", health.SeverityWarning, ref("HTTPRoute", "shop", "e")),
 	}}
-	rep.Findings[0].Group, rep.Findings[1].Group, rep.Findings[2].Group = "g1", "g1", "g1"
-	d := &diagnose.Diagnosis{Groups: []diagnose.Group{{ID: "g1", Cause: svc, Members: []int{0, 1, 2}}, {ID: "g2", Members: []int{}}}, Rank: []int{0, 1, 2}}
+	for i, g := range []string{"g2", "g1", "g2", "g1", "g1"} {
+		rep.Findings[i].Group = g
+	}
+	d := &diagnose.Diagnosis{Groups: []diagnose.Group{
+		{ID: "g1", Cause: svc, Members: []int{1, 3, 4}},
+		{ID: "g2", Members: []int{0, 2}},
+	}, Rank: []int{4, 3, 1, 0, 2}}
 	ic := build(checkModel(rep, d), view.CheckSelect{Namespace: "shop"}).Installs[0]
+	// Severity first (f3 error, f4 warning, f1 info).
+	if got := strings.Join(ids(ic.Findings), ","); got != "f3,f4,f1" {
+		t.Errorf("findings = %s", got)
+	}
 	if len(ic.Groups) != 1 {
 		t.Fatalf("groups = %+v", ic.Groups)
 	}
 	g := ic.Groups[0]
-	if g.ID != "g1" || g.Cause == nil || g.Cause.Name != "cart-v2" || strings.Join(g.Findings, ",") != "f0,f1" {
+	// Members stay in the group's own order.
+	if g.ID != "g1" || g.Cause == nil || g.Cause.Name != "cart-v2" || strings.Join(g.Findings, ",") != "f1,f3,f4" {
 		t.Errorf("group = %+v", g)
 	}
 	for _, f := range ic.Findings {
 		if f.Group != "g1" {
 			t.Errorf("%s group = %q", f.ID, f.Group)
 		}
+	}
+	// A namespace that keeps nothing of g1 drops it.
+	ic = build(checkModel(rep, d), view.CheckSelect{Namespace: "none"}).Installs[0]
+	if got := strings.Join(ids(ic.Findings), ","); got != "" || len(ic.Groups) != 0 {
+		t.Errorf("findings = %s, groups = %+v", got, ic.Groups)
 	}
 }
 
@@ -238,6 +256,18 @@ func TestBuildCheckInstallSelect(t *testing.T) {
 	if n := len(build(m, view.CheckSelect{Install: "x/y"}).Installs); n != 0 {
 		t.Errorf("other install = %d", n)
 	}
+	for _, bad := range []string{"a/b/c", "/x", "x/", "bad id"} {
+		sel := view.CheckSelect{Install: bad}
+		if n := len(build(m, sel).Installs); n != 0 {
+			t.Errorf("%q selected %d installs", bad, n)
+		}
+		if sel.Validate() == nil {
+			t.Errorf("%q: Validate returned nil", bad)
+		}
+	}
+	if err := (view.CheckSelect{Install: "kgateway-system/kgateway"}).Validate(); err != nil {
+		t.Errorf("valid selector: %v", err)
+	}
 }
 
 func TestCheckExitCode(t *testing.T) {
@@ -248,5 +278,55 @@ func TestCheckExitCode(t *testing.T) {
 	rep.Findings = append(rep.Findings, finding("w", "X-2", health.SeverityWarning, nil))
 	if c := build(checkModel(rep, nil), view.CheckSelect{}); c.ExitCode() != 1 {
 		t.Errorf("warning = %d", c.ExitCode())
+	}
+}
+
+// Optional fields are absent, and required empty values are present, in JSON.
+func TestCheckJSONOmission(t *testing.T) {
+	rep := health.Report{Findings: []health.Finding{finding("f", "X-1", health.SeverityInfo, nil)},
+		Checks: []health.CheckResult{{Name: "c"}}}
+	b, err := json.Marshal(build(checkModel(rep, nil), view.CheckSelect{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(b, &doc); err != nil {
+		t.Fatal(err)
+	}
+	ic := doc["installs"].([]any)[0].(map[string]any)
+	f := ic["findings"].([]any)[0].(map[string]any)
+	for _, k := range []string{"resource", "detail", "since", "group", "evidence", "nextSteps", "fix"} {
+		if _, ok := f[k]; ok {
+			t.Errorf("finding has %q", k)
+		}
+	}
+	c := ic["checks"].([]any)[0].(map[string]any)
+	for _, k := range []string{"ok", "pending", "unavailable"} {
+		if v, ok := c[k]; !ok {
+			t.Errorf("check lacks %q", k)
+		} else if v != false && v != "" {
+			t.Errorf("check %q = %v", k, v)
+		}
+	}
+	for _, k := range []string{"error", "detail", "hold"} {
+		if _, ok := c[k]; ok {
+			t.Errorf("check has %q", k)
+		}
+	}
+	for _, k := range []string{"incomplete", "observation"} {
+		if _, ok := doc[k]; ok {
+			t.Errorf("check has %q", k)
+		}
+	}
+	// Empty arrays are [] not null.
+	empty, _ := json.Marshal(build(checkModel(health.Report{}, nil), view.CheckSelect{Install: "a/b/c"}))
+	if !strings.Contains(string(empty), `"installs":[]`) {
+		t.Errorf("empty = %s", empty)
+	}
+	b, _ = json.Marshal(build(checkModel(health.Report{}, nil), view.CheckSelect{}).Installs[0])
+	for _, want := range []string{`"findings":[]`, `"groups":[]`, `"checks":[]`} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("install lacks %s: %s", want, b)
+		}
 	}
 }

@@ -160,6 +160,12 @@ type CheckSelect struct {
 	AllControllers bool
 }
 
+// Validate returns the error of a malformed Install selector, for the command to report as a usage error.
+func (s CheckSelect) Validate() error {
+	_, err := install.ParsePinned(s.Install)
+	return err
+}
+
 // ExitCode is 1 when a shown finding is an error or warning, else 0. The
 // command decides exit 2 (design §3.4).
 func (c Check) ExitCode() int {
@@ -175,7 +181,11 @@ func (c Check) ExitCode() int {
 // diagnosis order; next steps come from the install's registry hooks.
 func BuildCheck(m *engine.Model, reg *extension.Registry, sel CheckSelect) Check {
 	c := Check{Context: sel.Context, GeneratedAt: m.ComputedAt.UTC(), Installs: []InstallCheck{}}
-	pinned, _ := install.ParsePinned(sel.Install)
+	pinned, err := install.ParsePinned(sel.Install)
+	if err != nil {
+		// A malformed selector selects nothing; the command reports it via Validate.
+		return c
+	}
 	for i := range m.Installs {
 		im := &m.Installs[i]
 		if pinned == "" || im.Resolved.ID() == pinned {
