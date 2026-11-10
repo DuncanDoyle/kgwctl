@@ -85,11 +85,36 @@ Exit codes: `0` when clean, `1` when there are error or warning findings, `2` wh
 
 `check` reads controller metrics and Envoy stats through the API server's `pods/proxy`. If that is denied, those checks show under Not checked with the RBAC line to add. The run does not fail. See [Permissions](#permissions).
 
-`check --live` keeps watching for `--timeout` (default `6m`) so grace periods and held checks decide, then prints one report. Ctrl-C stops early and still reports (exit `2`); a second Ctrl-C quits at once. While it runs, progress lines go to stderr when stderr is a terminal. The report adds an **Observed during this run** section: findings that appeared, cleared or changed severity, with their times, so a failure that came and went stays in the paste. `--request-timeout` still bounds the first read of the cluster; `--timeout` is only valid with `--live`.
+### Live mode
+
+`check --live` keeps watching the cluster for a bounded time, then prints one report. Use it when:
+
+- a check is still deciding and needs a grace period or a hold to pass,
+- you want to see a fix take effect while you apply it,
+- you are watching a rollout, or
+- a problem comes and goes.
 
 ```bash
 kgwctl check --live --timeout 10m
 ```
+
+On a terminal, progress lines go to stderr. The report goes to stdout once, at the end. It adds an **Observed during this run** section: findings that appeared, cleared or changed severity, with their times. A failure that came and went stays in the report.
+
+```
+OBSERVED DURING THIS RUN (2) · 18:09:44 to 18:11:18 UTC, stopped by timeout
+  KGWUI-003  HTTPRoute live/orphan  Not attached: parent not found
+             First seen 18:09:48, still present.
+             Severity: info from 18:09:48, warning from 18:10:45.
+  KGWUI-023  Service live/echo  Requests to this backend get 503
+             First seen 18:10:15, still present.
+             Severity: warning from 18:10:15.
+```
+
+`--timeout` sets how long the run lasts (default `6m`). It is only valid with `--live`. `--request-timeout` still bounds the first read of the cluster.
+
+The first Ctrl-C stops the run and prints the report. The exit code is `2`, because the run ended early. A second Ctrl-C exits at once, without a report.
+
+Exit codes follow the same rules as `check`, applied to the final state. With `-o json|yaml` you get one document at the end, with an `observation` block ([`docs/output.md`](docs/output.md)).
 
 ## Global flags
 
@@ -132,7 +157,7 @@ make test           # unit and envtest suite
 make vet lint build
 ```
 
-The live check runs the commands against a real kgateway install on a local kind cluster. It writes its own kubeconfig files under `hack/live/out/` and needs `kind`, `helm`, `kubectl` and `gh`.
+The live check runs the commands against a real kgateway install on a local kind cluster. It writes its own kubeconfig files under `hack/live/out/` and needs `kind`, `helm`, `kubectl`, `gh` and `jq`.
 
 ```bash
 hack/live-check.sh setup                                   # cluster, Gateway API CRDs, kgateway, fixtures, reader ServiceAccount

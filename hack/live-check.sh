@@ -132,7 +132,70 @@ MANIFEST
     failed=1
   fi
   restore_route
+
+  live_scenario
   trap - EXIT
+}
+
+# check --live while the missing Service of a route appears mid-run: 013 must be gone from the final report.
+live_scenario() {
+  restore_live() {
+    k -n "$FIX_NS" delete httproute check-live-svc --ignore-not-found >/dev/null
+    k -n "$FIX_NS" delete service check-live-svc --ignore-not-found >/dev/null
+  }
+  trap 'restore_controller; restore_route; restore_live' EXIT
+
+  log "scenario: check --live while a missing Service appears"
+  k apply -f - <<MANIFEST
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: check-live-svc
+  namespace: $FIX_NS
+spec:
+  parentRefs:
+    - name: web
+  rules:
+    - backendRefs:
+        - name: check-live-svc
+          port: 8081
+MANIFEST
+  k -n "$FIX_NS" wait --for=jsonpath='{.status.parents[0].controllerName}'=kgateway.dev/kgateway \
+    httproute/check-live-svc --timeout=120s
+
+  local out="$dir/check-live.json" code=0 pid
+  "$bin" --kubeconfig "$kc" --context "$CONTEXT" check --live --timeout 90s -n "$FIX_NS" -o json \
+    >"$out" 2>"$out.stderr" &
+  pid=$!
+  sleep 20
+  k apply -f - <<MANIFEST
+apiVersion: v1
+kind: Service
+metadata:
+  name: check-live-svc
+  namespace: $FIX_NS
+spec:
+  ports:
+    - port: 8081
+      targetPort: 8081
+MANIFEST
+  wait "$pid" || code=$?
+  echo "$code" >"$out.exit"
+  log "check live: exit $code"
+  if [ "$code" -gt 2 ]; then
+    log "FAIL check-live.json: exit $code"
+    failed=1
+  fi
+  if ! jq -e '.item.observation.stopReason == "timeout"' "$out" >/dev/null; then
+    log "FAIL check-live.json is not one document with observation.stopReason timeout"
+    failed=1
+  elif jq -e --arg n check-live-svc \
+    '[.item.installs[].findings[] | select(.code | test("013")) | select(.resource.name == $n)] | length > 0' \
+    "$out" >/dev/null; then
+    log "FAIL check-live.json still has KGWUI-013 on check-live-svc after the Service was created"
+    failed=1
+  fi
+  restore_live
 }
 
 verify() {
