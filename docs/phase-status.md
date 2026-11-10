@@ -11,8 +11,10 @@ Status: implementation
 - [x] Q2 Phase 2 implementation plan
 - [x] Q3 Cross-model review of design + plan (3 rounds), triage; owner go-ahead 2026-11-10
 - [x] Q4 Sub-phase 2.1 Snellius upgrade
-- [ ] Q5 Sub-phase 2.2 `check` ← CURRENT
-- [ ] Q6 Sub-phase 2.3 `check --live`
+- [x] Q5 Sub-phase 2.2 `check` (phase-2.2-complete.md)
+- [ ] Q6 Sub-phase 2.3 `check --live` ← CURRENT
+- [ ] Q7 Phase review (Codex), triage
+- [ ] Q8 Owner tries `check`; phase close after that
 
 ### Exit gates
 - [ ] tests/vet pass (observed)
@@ -23,24 +25,16 @@ Status: implementation
 - [ ] phase-2-complete.md written, roadmap updated, tracked items closed
 
 ## Sub-phase
-Sub-phase: 2.2 — `check`
+Sub-phase: 2.3 — `check --live`
 Kind: planned
-Base: 7bd30ebb0040d3b2cf70710b7d8c2adfc625f1d7
-Brief: docs/phases/phase-2/phase-2.2-brief.md
-
-### Allowed work
-features within the approved design
-
-### Not allowed
-design changes without decisions.md + user approval
+Base: 33b45e9
+Brief: implementation-plan.md Tasks 2.3.1–2.3.3 (no separate brief; tasks ran in the SDD loop interleaved with 2.2)
 
 ### Queue
-- [ ] Task 2.2.1 `internal/observe` ← CURRENT
-- [ ] Task 2.2.2 check view and mapping
-- [ ] Task 2.2.3 text report
-- [ ] Task 2.2.4 `check` command and exit codes
-- [ ] Task 2.2.5 vendor pack in the downstream example
-- [ ] Task 2.2.6 RBAC, README, live check
+- [x] Task 2.3.1 model diff (2cf0854, bc6ee94)
+- [x] Task 2.3.2 `--live` (7595374, 33b45e9, fa78264)
+- [ ] Task 2.3.2 detail changes are transitions (found on kind) ← CURRENT
+- [x] Task 2.3.3 docs and live-check scenario (d37e529)
 
 ## Program
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
