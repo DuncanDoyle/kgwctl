@@ -2,13 +2,13 @@
 
 ## Phase
 Phase: 2 — `check`
-Base: n/a (set at phase start)
+Base: 980d32d
 Docs: docs/phases/phase-2/
-Status: not started
+Status: design
 
 ### Queue
-- [ ] Q1 Phase 2 design (`design.md`), taking in the carry-over below
-- [ ] Q2 Phase 2 implementation plan
+- [x] Q1 Phase 2 design (`design.md`), taking in the carry-over below — approved 2026-11-10
+- [ ] Q2 Phase 2 implementation plan ← CURRENT
 - [ ] Q3 Cross-model review of design + plan, triage, owner approval
 
 ### Exit gates
@@ -24,16 +24,17 @@ n/a
 
 ## Program
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
-- Waiting on: E3 (Phase 5), E7 (Phase 6)
-- Available: E2 — kgateway-ui `v0.3.0` tagged 2026-11-05 (#16 closed); go.mod uses it
-- Available: E1 — krp `v0.1.0` tagged 2026-11-04 (DuncanDoyle/kgwctl#1); used from Phase 3
-- Available: E5 — krp `v0.2.0` origin mapping (DuncanDoyle/kgwctl#2); used from Phase 3/6
-- Available: E8 — kgateway-ui `v0.3.0` `pkg/setup`, `ctrlmetrics.Static` (Phase 2). Phase 2 must recompute at `m.Next.At` so grace periods and holds mature. 1.2 switches `internal/load/wiring.go` to `pkg/setup`.
+- Read 2026-11-10 at kgateway-tooling `10b77d2`. Open `cross-repo` issues: kgwctl #1–#7 (all "available" notices, none blocking). Snellius has two open from kgwctl, not needed for Phase 2: #18 list-only one-shot snapshot, #19 namespace-scoped listing for restricted users.
+- Available: E8 — Snellius `v0.6.0`: `engine.Compute` one-shot; controller metrics via `ctrlmetrics.CollectOnce` + `Publish` (kgwctl#5–#7). go.mod still on kgateway-ui `v0.3.0`; Phase 2 moves to `github.com/DuncanDoyle/snellius`.
+- Available: E3 — Snellius analyzer over a snapshot, all 26 checks (kgwctl#4); Phase 2 runs all of them (Phase 5 keeps `analyze -f`).
+- Available (pre-release): E9 — check holds, `CheckResult.Hold` in Snellius `v0.7.0-alpha.1` (snellius#33, closed). Used by `check --live`. A kgwctl release needs a final Snellius release.
+- Available: E2 (Phase 1), E1, E5 (Phase 3/6).
+- Waiting on: E7 (Phase 6).
 - Consumers: none
 
 ## Carry-over (deferred to later phases)
-- Phase 2: `check` keeps one engine across recomputes so grace periods and holds mature; `load.Load` returns a model only (reviews/phase-codex.md#8).
-- Phase 2: a narrow `pkg/cli` facade for vendor cluster commands — flags, REST config, deadline, load (reviews/phase-codex.md#9, D-009 follow-up).
+- Phase 2 (taken by design §4): `check` keeps one engine across recomputes so grace periods and holds mature; `load.Load` returns a model only (reviews/phase-codex.md#8).
+- Later phase (D-015): a narrow `pkg/cli` facade for vendor cluster commands — flags, REST config, deadline, load (reviews/phase-codex.md#9, D-009 follow-up).
 
 ## Notes
 - GitHub repo: https://github.com/DuncanDoyle/kgwctl (`kgwctl` remains a working name, D-006).

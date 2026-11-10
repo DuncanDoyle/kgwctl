@@ -92,9 +92,38 @@ Append-only. Newest at the bottom. Supersede, don't edit.
 **Alternatives:** Display strings in JSON (as text prints them) — rejected: JSON is the stable interface (§8).
 **Consequences:** `docs/output.md` documents the schema; `TestOutputDocMatchesSchema` keeps it in step with the Go types.
 
+## D-014 — `check` is a support first look (2026-11-10, phase 2)
+**Context:** The roadmap framed `check` as a CI gate after install or upgrade, and split checks between Phase 2 and Phase 5. Snellius now ships all 26 checks (E3).
+**Decision:** `check` is a support engineer's first command on a cluster they troubleshoot. It runs all 26 checks in Phase 2; text for reading and pasting, `-o json|yaml` as the full mode.
+**Alternatives:** CI gate first — rejected by the owner; Phase 2/5 split — outdated once E3 shipped.
+**Consequences:** Roadmap Phase 2 reworded; Phase 5 keeps only `analyze -f`.
+
+## D-015 — Deferred from Phase 2 (2026-11-10, phase 2)
+**Context:** Phase 2 keeps to the support first look.
+**Decision:** Defer `--only`, `--exclude`, `--fail-on` (until a CI user asks); controller logs as evidence; the `pkg/cli` facade for vendor cluster commands (Phase 1 carry-over, to the phase that first needs it); `-o agent` (next step after Phase 2, roadmap).
+**Alternatives:** Keep them in Phase 2 — rejected by the owner.
+**Consequences:** Exit 1 counts error and warning findings; info never fails a run.
+
+## D-016 — No cluster-derived timing; `--live` instead of `--wait` (2026-11-10, phase 2)
+**Context:** Grace periods and holds (003's 60s, 018's 5m) live in engine memory, so a one-shot run can't decide them. Seeding them from cluster timestamps was analysed with Codex and the Snellius session.
+**Decision:** Don't derive timing from the cluster: deletions, controller requeues, webhook changes and clock skew leave no usable timestamp, which gives early or false findings. Instead `check --live` keeps one engine running for a bounded time (default 6m): progress on stderr, one report on stdout, stops at `--timeout` or Ctrl-C, never on "nothing pending". Holds come from the engine (E9, snellius#33).
+**Alternatives:** `--wait` (no progress) — the owner prefers `--live`; cluster-derived timing — rejected under KISS.
+**Consequences:** A plain `check` shows held checks as "still deciding" with their decision time and suggests `--live` only with that reason.
+
+## D-017 — Controller metrics and proxy stats on by default (2026-11-10, phase 2)
+**Context:** 001, 007, 024, 025 and 026 need controller metrics or Envoy stats, read through the apiserver's `pods/proxy`; Phase 1's ClusterRole excluded it.
+**Decision:** `check` reads them through `pods/proxy` by default. A denied read puts those checks under "Not checked" with the RBAC line to add. No port-forward.
+**Alternatives:** An opt-in flag — rejected: the default first look would miss xDS rejections; cache inputs only — rejected.
+**Consequences:** `docs/rbac.yaml` gains `pods/proxy` get, Events, Services, EndpointSlices.
+
+## D-018 — kgwctl releases depend on final Snellius releases (2026-11-10, phase 2)
+**Context:** E9 shipped as Snellius `v0.7.0-alpha.1`.
+**Decision:** Development may depend on a Snellius pre-release. A kgwctl release only ever depends on a final Snellius release.
+**Alternatives:** Release on a pre-release — rejected by the owner.
+**Consequences:** No kgwctl release tag while go.mod names a Snellius pre-release.
 
 ## D-019 — Support bundle: agctl prior art, CLI only (2026-11-17, phase 4)
-**Context:** `agctl bug-report` (agentgateway#3991) ships a support bundle much like Phase 4. D-014 to D-018 are on the unmerged Phase 2 branch.
+**Context:** `agctl bug-report` (agentgateway#3991) ships a support bundle much like Phase 4. It is numbered after Phase 2's D-014 to D-018, which merged later.
 **Decision:** Phase 4 borrows three ideas from it: kind discovery by CRD category, partial results with `errors.txt`, and previous-container logs only after a restart. The bundle stays a CLI feature, with no shared library for now.
 **Alternatives:** A Snellius "download bundle" — deferred: a bundle crosses Snellius's per-Gateway authorization (Snellius D-013). The owner revisits it after Snellius Phase 12.
 **Consequences:** Phase 4's design settles Secret and ConfigMap capture and the `pods/log` RBAC grant. Collector, manifest and redaction interfaces stay free of CLI concerns, so they can move to Snellius `pkg/` later.
