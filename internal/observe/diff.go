@@ -22,7 +22,7 @@ const (
 	// FindingChanged is a finding whose severity, message or detail changed under the same ID.
 	FindingChanged
 	FindingCleared
-	// FindingUnobserved is a finding gone while a check that ran before did not run: its state is unknown.
+	// FindingUnobserved is a finding gone while a check that decided before did not decide: its state is unknown.
 	FindingUnobserved
 	HoldStarted
 	HoldChanged
@@ -37,7 +37,8 @@ type Event struct {
 	Kind EventKind
 	// Install is the install ID; empty for input events.
 	Install string
-	// Code, Severity and Resource describe a finding event; Severity is the new one.
+	// ID, Code, Severity and Resource describe a finding event; Severity is the new one.
+	ID       string
 	Code     string
 	Severity string
 	Check    string
@@ -56,8 +57,9 @@ type Event struct {
 // inputs by resource. Events are ordered by install ID, kind, then key; input
 // events come last. It is pure and never reads a clock.
 //
-// A finding that disappears while a check that ran in prev does not run in next
+// A finding that disappears while a check that decided in prev does not decide in next
 // is FindingUnobserved, not cleared: without provenance, any such check may have raised it.
+// A pending check has not decided; CheckAvailable needs a decided check.
 func Diff(prev, next view.Check, at time.Time) []Event {
 	type keyed struct {
 		key string
@@ -86,13 +88,13 @@ func Diff(prev, next view.Check, at time.Time) []Event {
 			switch {
 			case n.NotChecked() && (!ok || !p.NotChecked()):
 				fe = append(fe, keyed{k, Event{At: at, Kind: CheckUnavailable, Install: id, Check: k, Text: notCheckedReason(n)}})
-			case !n.NotChecked() && ok && p.NotChecked():
+			case decided(n) && ok && p.NotChecked():
 				fe = append(fe, keyed{k, Event{At: at, Kind: CheckAvailable, Install: id, Check: k}})
 			}
 		}
 		_, present := ni[id]
 		gone := FindingCleared
-		if !present || !ranStill(ran(pi[id]), ni[id]) {
+		if !present || !decidedStill(decidedSet(pi[id]), ni[id]) {
 			gone = FindingUnobserved
 		}
 		pf, nf := findings(pi[id]), findings(ni[id])
@@ -148,7 +150,7 @@ func Diff(prev, next view.Check, at time.Time) []Event {
 }
 
 func findingEvent(at time.Time, k EventKind, install string, f view.CheckFinding) Event {
-	return Event{At: at, Kind: k, Install: install, Code: f.Code, Severity: f.Severity, Resource: f.Resource, Text: f.Message, Detail: f.Detail}
+	return Event{At: at, Kind: k, Install: install, ID: f.ID, Code: f.Code, Severity: f.Severity, Resource: f.Resource, Text: f.Message, Detail: f.Detail}
 }
 
 func holdEvent(at time.Time, k EventKind, install, check string, h view.Hold) Event {
@@ -189,20 +191,23 @@ func checks(ic view.InstallCheck) map[string]view.CheckStatus {
 	return m
 }
 
-// ran is the set of checks of ic that ran: pending and holding ones included.
-func ran(ic view.InstallCheck) map[string]bool {
+// decided reports whether cs ran and decided: only such a check confirms a finding is gone.
+func decided(cs view.CheckStatus) bool { return cs.Ran() && !cs.Pending }
+
+// decidedSet is the set of checks of ic that decided.
+func decidedSet(ic view.InstallCheck) map[string]bool {
 	m := map[string]bool{}
 	for _, cs := range ic.Checks {
-		if !cs.NotChecked() {
+		if decided(cs) {
 			m[cs.Name] = true
 		}
 	}
 	return m
 }
 
-// ranStill reports whether every check in before also ran in ic.
-func ranStill(before map[string]bool, ic view.InstallCheck) bool {
-	now := ran(ic)
+// decidedStill reports whether every check in before also decided in ic.
+func decidedStill(before map[string]bool, ic view.InstallCheck) bool {
+	now := decidedSet(ic)
 	for name := range before {
 		if !now[name] {
 			return false
@@ -232,11 +237,13 @@ func inputs(c view.Check) map[string]string {
 // The first Add is the baseline and raises nothing. A finding that clears and
 // returns is ONE entry: it keeps its first FirstSeen, ClearedAt is nil again once
 // it returns, and Severities records each severity change with its time.
-// A finding gone while a check stopped running gets LostAt; it clears once every
-// check that ran while it was present runs again without it.
+// A finding gone while a check that decided during its presence does not decide
+// gets LostAt; it clears once every such check decides again without it.
 type Tracker struct {
 	prev    *view.Check
 	entries map[string]*tracked
+	// down is the checks, by install and name, not checked since they last decided.
+	down map[string]bool
 }
 
 type tracked struct {
@@ -244,23 +251,38 @@ type tracked struct {
 	install string
 	// transitioned is set once the finding is raised late, cleared, lost, or changes severity, message or detail.
 	transitioned bool
-	// ran is the checks that ran in the last model the finding was present in.
-	ran map[string]bool
+	// need is every check that decided while the finding was present; it resets once cleared.
+	need map[string]bool
 }
 
 // Add records c at time at and returns the events since the previous model.
 func (t *Tracker) Add(c view.Check, at time.Time) []Event {
 	if t.entries == nil {
-		t.entries = map[string]*tracked{}
+		t.entries, t.down = map[string]*tracked{}, map[string]bool{}
 	}
 	first := t.prev == nil
 	var events []Event
 	if !first {
 		events = Diff(*t.prev, c, at)
 	}
+	// A check back from not checked is available once it decides, even through pending models.
+	events = slices.DeleteFunc(events, func(e Event) bool { return e.Kind == CheckAvailable })
+	var extra []Event
+	for _, ic := range c.Installs {
+		for _, cs := range ic.Checks {
+			key := ic.Install.ID + "\x00" + cs.Name
+			switch {
+			case cs.NotChecked():
+				t.down[key] = true
+			case decided(cs) && t.down[key]:
+				delete(t.down, key)
+				extra = append(extra, Event{At: at, Kind: CheckAvailable, Install: ic.Install.ID, Check: cs.Name})
+			}
+		}
+	}
 	seen := map[string]bool{}
 	for _, ic := range c.Installs {
-		r := ran(ic)
+		d := decidedSet(ic)
 		for _, f := range ic.Findings {
 			key := ic.Install.ID + "\x00" + f.ID
 			seen[key] = true
@@ -270,7 +292,12 @@ func (t *Tracker) Add(c view.Check, at time.Time) []Event {
 					Message: f.Message, Detail: f.Detail, FirstSeen: at, Severities: []view.SeverityAt{{Severity: f.Severity, At: at}}}, install: ic.Install.ID, transitioned: !first}
 				t.entries[key] = e
 			}
-			e.ran = r
+			if e.need == nil || e.f.ClearedAt != nil {
+				e.need = map[string]bool{}
+			}
+			for name := range d {
+				e.need[name] = true
+			}
 			e.f.Evidence, e.f.NextSteps, e.f.Fix = f.Evidence, f.NextSteps, f.Fix
 			e.f.ClearedAt, e.f.LostAt = nil, nil
 			if e.f.Message != f.Message || e.f.Detail != f.Detail {
@@ -285,38 +312,47 @@ func (t *Tracker) Add(c view.Check, at time.Time) []Event {
 		}
 	}
 	byID := installs(c)
-	var resolved []Event
+	// verdict is the tracker's kind for a finding Diff saw disappear: its need spans the whole presence.
+	verdict := map[string]EventKind{}
 	for key, e := range t.entries {
 		if seen[key] || e.f.ClearedAt != nil {
 			continue
 		}
 		ic, ok := byID[e.install]
 		switch {
-		case ok && ranStill(e.ran, ic):
-			// Diff already emitted the clear unless the finding was lost before.
+		case ok && decidedStill(e.need, ic):
+			verdict[key] = FindingCleared
+			// Diff emits no event for a finding already gone: the lost one clears here.
 			if e.f.LostAt != nil {
-				resolved = append(resolved, Event{At: at, Kind: FindingCleared, Install: e.install, Code: e.f.Code,
+				extra = append(extra, Event{At: at, Kind: FindingCleared, Install: e.install, ID: e.f.ID, Code: e.f.Code,
 					Severity: e.f.Severity, Resource: e.f.Resource, Text: e.f.Message, Detail: e.f.Detail})
 			}
 			e.f.ClearedAt, e.f.LostAt = new(at), nil
+			e.transitioned = true
 		case e.f.LostAt == nil:
+			verdict[key] = FindingUnobserved
 			e.f.LostAt = new(at)
+			e.transitioned = true
 		}
-		e.transitioned = true
 	}
-	if !first {
-		events = mergeEvents(events, resolved)
+	if first {
+		t.prev = &c
+		return nil
+	}
+	for i, e := range events {
+		if k, ok := verdict[e.Install+"\x00"+e.ID]; ok && (e.Kind == FindingCleared || e.Kind == FindingUnobserved) {
+			events[i].Kind = k
+		}
 	}
 	t.prev = &c
-	return events
+	return mergeEvents(events, extra)
 }
 
-// mergeEvents adds the tracker's clears to Diff's events, keeping install then kind order and input events last.
+// mergeEvents adds the tracker's events to Diff's, keeping install then kind order and input events last.
 func mergeEvents(events, extra []Event) []Event {
-	if len(extra) == 0 {
-		return events
-	}
-	slices.SortFunc(extra, func(a, b Event) int { return cmp.Or(cmp.Compare(a.Install, b.Install), cmp.Compare(a.Code, b.Code)) })
+	slices.SortFunc(extra, func(a, b Event) int {
+		return cmp.Or(cmp.Compare(a.Install, b.Install), cmp.Compare(a.Check, b.Check), cmp.Compare(a.ID, b.ID))
+	})
 	out := append(events, extra...)
 	isInput := func(e Event) bool { return e.Kind == InputAvailable || e.Kind == InputUnavailable }
 	slices.SortStableFunc(out, func(a, b Event) int {

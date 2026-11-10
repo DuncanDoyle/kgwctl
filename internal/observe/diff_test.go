@@ -221,7 +221,7 @@ func TestDiffPayloadAndInstalls(t *testing.T) {
 	prev := view.Check{Installs: []view.InstallCheck{inst("i1", []view.CheckFinding{a}, []view.CheckStatus{{Name: "status", Hold: h}})}}
 	es := Diff(prev, view.Check{}, t0)
 	require.Equal(t, []Event{
-		{At: t0, Kind: FindingUnobserved, Install: "i1", Code: "KGWUI-a", Severity: "error", Resource: a.Resource, Text: "m"},
+		{At: t0, Kind: FindingUnobserved, Install: "i1", ID: "a", Code: "KGWUI-a", Severity: "error", Resource: a.Resource, Text: "m"},
 		{At: t0, Kind: HoldEnded, Install: "i1", Check: "status", Hold: h, Text: "wait"},
 	}, es)
 
@@ -379,4 +379,40 @@ func TestTrackerKeepsLatestSnapshot(t *testing.T) {
 	require.Equal(t, []view.NextStep{{Description: "two", Command: "kubectl get x"}}, obs[0].NextSteps)
 	require.Equal(t, "fix two", obs[0].Fix.Title)
 	require.Equal(t, &t2, obs[0].ClearedAt)
+}
+
+// pending is a check still deciding: it ran, but cannot confirm a finding is gone.
+func pending(name string) view.CheckStatus { return view.CheckStatus{Name: name, Pending: true} }
+
+// TestTrackerPendingDoesNotClear: present, lost, then pending without it stays lost; it clears once the check decides.
+func TestTrackerPendingDoesNotClear(t *testing.T) {
+	tr := &Tracker{}
+	t1, t2, t3 := t0.Add(time.Second), t0.Add(2*time.Second), t0.Add(3*time.Second)
+	tr.Add(model([]view.CheckFinding{finding("a", "error", "m")}, []view.CheckStatus{up("xds")}), t0)
+	require.Equal(t, []EventKind{CheckUnavailable, FindingUnobserved}, kinds(tr.Add(model(nil, []view.CheckStatus{down("xds")}), t1)))
+	require.Empty(t, tr.Add(model(nil, []view.CheckStatus{pending("xds")}), t2))
+	require.Equal(t, &t1, tr.Observed()[0].LostAt)
+	require.Equal(t, []EventKind{CheckAvailable, FindingCleared}, kinds(tr.Add(model(nil, []view.CheckStatus{up("xds")}), t3)))
+	require.Equal(t, &t3, tr.Observed()[0].ClearedAt)
+	require.Nil(t, tr.Observed()[0].LostAt)
+}
+
+// TestTrackerNeedSpansPresence: B decided while F was present, so F gone while B is down is lost, not cleared.
+func TestTrackerNeedSpansPresence(t *testing.T) {
+	tr := &Tracker{}
+	t1, t2, t3 := t0.Add(time.Second), t0.Add(2*time.Second), t0.Add(3*time.Second)
+	f := []view.CheckFinding{finding("f", "error", "m")}
+	tr.Add(model(f, []view.CheckStatus{up("A"), up("B")}), t0)
+	tr.Add(model(f, []view.CheckStatus{up("A"), down("B")}), t1)
+	require.Equal(t, []EventKind{FindingUnobserved}, kinds(tr.Add(model(nil, []view.CheckStatus{up("A"), down("B")}), t2)))
+	obs := tr.Observed()
+	require.Nil(t, obs[0].ClearedAt)
+	require.Equal(t, &t2, obs[0].LostAt)
+	require.Equal(t, []EventKind{CheckAvailable, FindingCleared}, kinds(tr.Add(model(nil, []view.CheckStatus{up("A"), up("B")}), t3)))
+	require.Equal(t, &t3, tr.Observed()[0].ClearedAt)
+}
+
+// TestDiffPendingIsNotAvailable: a check back from not checked is not available while pending.
+func TestDiffPendingIsNotAvailable(t *testing.T) {
+	require.Empty(t, Diff(model(nil, []view.CheckStatus{down("xds")}), model(nil, []view.CheckStatus{pending("xds")}), t0))
 }
