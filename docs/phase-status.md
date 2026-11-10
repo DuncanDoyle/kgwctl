@@ -20,7 +20,19 @@ Status: design
 - [ ] phase-2-complete.md written, roadmap updated, tracked items closed
 
 ## Sub-phase
-n/a
+Sub-phase: 2.1 — Snellius upgrade
+Kind: planned
+Base: 2ed885af6831a27ea98cb7f7a5479a6f564ee5af
+Brief: docs/phases/phase-2/phase-2.1-brief.md
+
+### Allowed work
+features within the approved design (here: the dependency move only)
+
+### Not allowed
+design changes without decisions.md + user approval
+
+### Queue
+- [ ] Task 2.1.1 move to Snellius v0.7.0-alpha.1 ← CURRENT
 
 ## Program
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
