@@ -512,15 +512,22 @@ func TestObserveCollectorReturnsEarly(t *testing.T) {
 
 func TestObserveSilentCollector(t *testing.T) {
 	env := testenv.New(t, testenv.Options{Fixtures: []string{healthyFixture}})
-	s := start(t, env, extension.New(extension.WithCollectors(silentCollector{})),
+	s := start(t, env, extension.New(extension.WithCollectors(silentCollector{}, failingCollector{})),
 		Options{Scraper: zeroScraper{}, FirstPublishWait: time.Second, Quiet: 200 * time.Millisecond})
+	if got, ok := s.Inputs()[CollectorGVR("silent")]; !ok || got.State != load.StateLoading {
+		t.Fatalf("silent collector input before the wait = %+v (present %v), want loading", got, ok)
+	}
 	t0 := firstInstallModel(t, s)
 	waitComplete(t, s, 10*time.Second)
 	if d := time.Since(t0); d > time.Second+time.Second {
 		t.Fatalf("Complete() %v after the first install model, want at most the 1s wait plus slack", d)
 	}
-	if got := s.Inputs()[CollectorGVR("silent")]; got.State != load.StateLoading {
-		t.Fatalf("silent collector input = %+v, want loading", got)
+	in := s.Inputs()
+	if got, ok := in[CollectorGVR("silent")]; ok {
+		t.Fatalf("silent collector input = %+v after the wait, want none", got)
+	}
+	if got := in[CollectorGVR("failing")]; got.State != load.StateFailed || got.Reason != "target unreachable" {
+		t.Fatalf("failing collector input = %+v, want failed with its reason", got)
 	}
 }
 

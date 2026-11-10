@@ -40,7 +40,8 @@ type Options struct {
 	// Quiet is how long no collector may publish before the final recompute.
 	Quiet time.Duration
 	// FirstPublishWait is how long after the first model with an install a
-	// collector that has not published is treated as having nothing to report.
+	// collector that has not published is treated as having nothing to report;
+	// after it, such a silent collector is left out of Inputs.
 	FirstPublishWait time.Duration
 	// Clock drives the engine, the collectors and the session's timers; nil is the real clock.
 	Clock clock.WithTicker
@@ -48,6 +49,8 @@ type Options struct {
 	Scraper ctrlmetrics.Scraper
 	// Logger receives the engine's and collectors' logs; nil discards them.
 	Logger *slog.Logger
+	// Published, if set, is called on the engine goroutine with each published model; it must not block (tests).
+	Published func(*engine.Published)
 }
 
 func (o Options) withDefaults() Options {
@@ -386,6 +389,9 @@ func (s *Session) onLoop(ev engine.LoopEvent) {
 			close(s.discovered)
 		}
 		s.mu.Unlock()
+		if s.o.Published != nil {
+			s.o.Published(p)
+		}
 		s.signal()
 	}
 }
@@ -480,7 +486,9 @@ func (s *Session) Complete() bool {
 }
 
 // Inputs returns the access state of every watched input in the current
-// model, plus one input per collector keyed by CollectorGVR.
+// model, plus one input per collector keyed by CollectorGVR. Once the
+// first-publish wait has passed, a collector that has not published, failed or
+// returned is silent and left out; the checks that read it report their own state.
 func (s *Session) Inputs() map[schema.GroupVersionResource]load.Input {
 	p := s.Current()
 	var out map[schema.GroupVersionResource]load.Input
@@ -492,7 +500,11 @@ func (s *Session) Inputs() map[schema.GroupVersionResource]load.Input {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, name := range s.names {
-		out[CollectorGVR(name)] = collectorInput(name, s.cols[name])
+		in := collectorInput(name, s.cols[name])
+		if in.State == load.StateLoading && s.waitOver {
+			continue
+		}
+		out[CollectorGVR(name)] = in
 	}
 	return out
 }
