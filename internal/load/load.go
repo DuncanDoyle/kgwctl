@@ -17,6 +17,7 @@ import (
 	"github.com/DuncanDoyle/snellius/pkg/setup"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/discovery"
 )
 
 // Needs are the inputs a command waits for beyond the core inputs (design §4.1).
@@ -228,6 +229,13 @@ func (m *memoDiscovery) ServerResourcesForGroupVersion(gv string) (*metav1.APIRe
 	return a.l, a.err
 }
 
+// MemoDiscovery returns a kinds.DiscoveryClient whose requests run under ctx
+// and that answers each group version once. It lists no Catalog. It is not
+// safe for concurrent use.
+func MemoDiscovery(ctx context.Context, c discovery.DiscoveryInterface) kinds.DiscoveryClient {
+	return &memoDiscovery{dc: Discovery(ctx, c), seen: map[string]answer{}}
+}
+
 // fixedSnapshot hands Compute the snapshot Load classified its inputs from.
 type fixedSnapshot struct{ s *cache.Snapshot }
 
@@ -302,6 +310,12 @@ func wait(ctx context.Context, ca *cache.Cache, opt []schema.GroupVersionResourc
 	snap := *final
 	snap.Access = acc
 	return &snap, pending
+}
+
+// Classify maps each Access entry to an Input: ok, loading while it has no
+// error yet, denied or failed.
+func Classify(acc map[schema.GroupVersionResource]cache.Access) map[schema.GroupVersionResource]Input {
+	return classify(acc, nil)
 }
 
 // classify maps each Access entry to an Input; pending inputs that are not
