@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DuncanDoyle/snellius/pkg/health"
 
@@ -71,8 +72,11 @@ func TestRedactorServerHost(t *testing.T) {
 		{"https://[fd00::1]:6443", "valid for fd00::2, not fd00::1", "valid for fd00::2, not <apiserver>"},
 		{"", "lookup x on [fd00::a]:53: no such host", "lookup x on <redacted>: no such host"},
 	} {
-		if got := view.NewRedactor(tc.server).Redact(tc.in); got != tc.want {
+		red := view.NewRedactor(tc.server)
+		if got := red.Redact(tc.in); got != tc.want {
 			t.Errorf("server %q: Redact(%q)\n got %q\nwant %q", tc.server, tc.in, got, tc.want)
+		} else if again := red.Redact(got); again != got {
+			t.Errorf("server %q: not idempotent: %q -> %q", tc.server, got, again)
 		}
 	}
 }
@@ -83,5 +87,31 @@ func TestBuildCheckRedactsServerHost(t *testing.T) {
 	c := build(checkModel(rep, nil), view.CheckSelect{Server: "https://private-api:6443"})
 	if got := c.Installs[0].Checks[0].Error; got != "x509: certificate is valid for other, not <apiserver>" {
 		t.Errorf("error = %q", got)
+	}
+}
+
+// A host that is part of a placeholder is redacted once, promptly, and redaction is idempotent.
+func TestRedactorPlaceholderHosts(t *testing.T) {
+	for _, host := range []string{"apiserver", "redacted", "server"} {
+		red := view.NewRedactor("https://" + host + ":6443")
+		for _, tc := range []struct{ in, want string }{
+			{"x509: certificate is valid for other, not " + host, "x509: certificate is valid for other, not <apiserver>"},
+			{"dial tcp: lookup " + host + " on 10.96.0.10:53: no such host", "dial tcp: lookup <apiserver> on <redacted>: no such host"},
+			{host + " " + host + "," + host, "<apiserver> <apiserver>,<apiserver>"},
+		} {
+			done := make(chan string, 1)
+			go func() { done <- red.Redact(tc.in) }()
+			select {
+			case got := <-done:
+				if got != tc.want {
+					t.Errorf("host %q: Redact(%q)\n got %q\nwant %q", host, tc.in, got, tc.want)
+				}
+				if again := red.Redact(got); again != got {
+					t.Errorf("host %q: not idempotent: %q -> %q", host, got, again)
+				}
+			case <-time.After(time.Second):
+				t.Fatalf("host %q: Redact(%q) did not return", host, tc.in)
+			}
+		}
 	}
 }

@@ -21,7 +21,7 @@ var (
 
 // Redactor redacts cluster-derived text so it never carries a server address (design §3.3 rule 1).
 type Redactor struct {
-	// host matches the API server's host as a whole word; nil when unknown.
+	// host matches the API server's host; nil when unknown. Boundaries are checked in redactHost.
 	host *regexp.Regexp
 }
 
@@ -37,24 +37,41 @@ func NewRedactor(server string) Redactor {
 	if err != nil || u.Hostname() == "" {
 		return Redactor{}
 	}
-	// A host part next to a letter, digit, '-' or ':' (or a '.' before it) is another name.
-	return Redactor{host: regexp.MustCompile(`(?i)(^|[^A-Za-z0-9.:-])` + regexp.QuoteMeta(u.Hostname()) + `([^A-Za-z0-9:-]|$)`)}
+	return Redactor{host: regexp.MustCompile(`(?i)` + regexp.QuoteMeta(u.Hostname()))}
 }
 
 // Redact replaces URLs with scheme://<redacted>, the addresses of net and DNS errors
-// with <redacted>, and the API server's host with <apiserver>.
+// with <redacted>, and the API server's host with <apiserver>. It is one pass and idempotent.
 func (r Redactor) Redact(s string) string {
 	s = urlRe.ReplaceAllString(s, "$1://<redacted>")
 	s = netRe.ReplaceAllString(s, "$1 <redacted>$2")
 	s = lookupRe.ReplaceAllString(s, "$1 <redacted>$2")
-	if r.host != nil {
-		// Adjacent matches share a separator, so repeat until none is left.
-		for t := ""; t != s; {
-			t, s = s, r.host.ReplaceAllString(s, "${1}<apiserver>${2}")
-		}
-	}
-	return s
+	return r.redactHost(s)
 }
+
+// redactHost replaces each whole-name match of the host in one pass. A match next to a
+// letter, digit, '-', ':', '<' or '>' (or after a '.') is part of another name or a placeholder.
+func (r Redactor) redactHost(s string) string {
+	if r.host == nil {
+		return s
+	}
+	var b strings.Builder
+	last := 0
+	for _, m := range r.host.FindAllStringIndex(s, -1) {
+		if m[0] > 0 && strings.ContainsRune(nameChars+".", rune(s[m[0]-1])) ||
+			m[1] < len(s) && strings.ContainsRune(nameChars, rune(s[m[1]])) {
+			continue
+		}
+		b.WriteString(s[last:m[0]])
+		b.WriteString("<apiserver>")
+		last = m[1]
+	}
+	b.WriteString(s[last:])
+	return b.String()
+}
+
+// nameChars continue a host name or a placeholder.
+const nameChars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-:<>"
 
 // Input is in with its reason redacted.
 func (r Redactor) Input(in load.Input) load.Input {
