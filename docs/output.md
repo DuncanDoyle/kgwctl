@@ -354,7 +354,7 @@ A reference with one extra field.
 
 `check` prints one report per selected install. With `-n`, findings on objects of other namespaces are dropped; findings without a namespace or in the install's own namespace (such as its controller) stay, since they affect every namespace, and `state` is still the engine's. Times are UTC.
 
-Text from the cluster (finding message and detail, evidence, check error and detail, hold reason, input reason) is redacted: a URL becomes `scheme://<redacted>`, path included, since a `pods/proxy` path names the API server's namespace, Pod and port; the address of a network error (`dial tcp <redacted>:`) goes too. The same applies to `incomplete` in `version` and `describe`.
+Text from the cluster (finding message and detail, evidence, check error and detail, hold reason, input reason) is redacted: a URL becomes `scheme://<redacted>`, path included, since a `pods/proxy` path names the API server's namespace, Pod and port; the address of a network error (`dial tcp <redacted>:`) and a DNS error's resolver (`lookup x on <redacted>:`) go too. The API server's own host, from the kubeconfig, becomes `<apiserver>` wherever it appears as a whole name (`x509: certificate is valid for other, not <apiserver>`). `version` and `describe` redact `incomplete` with the URL and address rules only.
 
 ### Check
 
@@ -450,7 +450,7 @@ Text from the cluster (finding message and detail, evidence, check error and det
 | `detail` | string | Extra context of an `ok` check, such as what it could not look at; absent when empty. |
 | `hold` | Hold | Set while the check is still deciding on some items. |
 
-A check is still deciding when `pending` is true or it has a `hold`. Otherwise it was not checked when `unavailable` is set, or when `ok` is false and `error` is set. It ran when `ok` is true and `unavailable` is empty; one that ran with no `hold` and a `detail` ran with partial coverage.
+A check is still deciding when `pending` is true or it has a `hold`. Otherwise it was not checked when `unavailable` is set, or when `ok` is false and `error` is set. It ran when `ok` is true and `unavailable` is empty; one that ran with a `detail` other than its hold reason ran with partial coverage, held or not.
 
 ### Hold
 

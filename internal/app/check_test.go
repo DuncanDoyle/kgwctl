@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"runtime"
 	"strings"
@@ -616,26 +617,40 @@ func executeCheck(t *testing.T, ctx context.Context, env *testenv.Env, h app.Che
 	return out.String(), 1
 }
 
-// errScraper fails every scrape with a transport error naming the API server and the Pod.
-type errScraper struct{}
+// errScraper fails every scrape with err.
+type errScraper struct{ err string }
 
-func (errScraper) Scrape(context.Context, *corev1.Pod, int32) (io.ReadCloser, error) {
-	return nil, errors.New(`Get "https://10.0.0.1:6443/api/v1/namespaces/x/pods/y:9092/proxy/metrics": ` +
-		`tls: failed to verify certificate: x509: certificate signed by unknown authority`)
+func (s errScraper) Scrape(context.Context, *corev1.Pod, int32) (io.ReadCloser, error) {
+	return nil, errors.New(s.err)
 }
 
 // TestCheckRedactsURLs: a scrape's transport error reaches the report without the server's address (design §3.3 rule 1).
 func TestCheckRedactsURLs(t *testing.T) {
 	env := checkEnv(t, checkInstall, checkController)
-	for _, out := range []string{"text", "json", "yaml"} {
-		r := runCheck(t, env, statsRegistry(fakeStats{}), fastHooks(errScraper{}), "check", "-o", out)
-		// JSON escapes < and >.
-		r.stdout = strings.NewReplacer(`\u003c`, "<", `\u003e`, ">").Replace(r.stdout)
-		if strings.Contains(r.stdout, "10.0.0.1") || strings.Contains(r.stdout, "/api/v1/namespaces/x") {
-			t.Errorf("%s: server address in the report:\n%s", out, r.stdout)
-		}
-		if !strings.Contains(r.stdout, "https://<redacted>") || !strings.Contains(r.stdout, "x509: certificate signed by unknown authority") {
-			t.Errorf("%s: the redacted error is missing:\n%s", out, r.stdout)
+	u, err := url.Parse(env.Proxies[0].URL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := u.Hostname()
+	// want is short: YAML folds long lines and JSON escapes quotes.
+	for _, tc := range []struct{ err, gone, want string }{
+		// A URL: scheme kept, host, port and path gone.
+		{`Get "https://10.0.0.1:6443/api/v1/namespaces/x/pods/y:9092/proxy/metrics": tls: failed to verify certificate: x509: certificate signed by unknown authority`,
+			"10.0.0.1", `https://<redacted>`},
+		// The API server's own host outside a URL: a DNS error and a certificate name mismatch.
+		{`dial tcp: lookup ` + host + ` on 10.96.0.10:53: no such host`, host, `lookup <apiserver> on <redacted>:`},
+		{`tls: failed to verify certificate: x509: certificate is valid for other, not ` + host, host, `not <apiserver>`},
+	} {
+		for _, out := range []string{"text", "json", "yaml"} {
+			r := runCheck(t, env, statsRegistry(fakeStats{}), fastHooks(errScraper{tc.err}), "check", "-o", out)
+			// JSON escapes < and >.
+			r.stdout = strings.NewReplacer(`\u003c`, "<", `\u003e`, ">").Replace(r.stdout)
+			if strings.Contains(r.stdout, tc.gone) || strings.Contains(r.stdout, "/api/v1/namespaces/x") || strings.Contains(r.stdout, "10.96.0.10") {
+				t.Errorf("%s: server address in the report:\n%s", out, r.stdout)
+			}
+			if !strings.Contains(r.stdout, tc.want) {
+				t.Errorf("%s: report lacks %q:\n%s", out, tc.want, r.stdout)
+			}
 		}
 	}
 }

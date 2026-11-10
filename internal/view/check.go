@@ -122,8 +122,11 @@ func (c CheckStatus) NotChecked() bool {
 // Ran reports whether the check ran: OK with its input available. A held check ran too.
 func (c CheckStatus) Ran() bool { return c.OK && c.Unavailable == "" }
 
-// Partial reports whether the check ran with partial coverage: OK, deciding nothing, with a detail.
-func (c CheckStatus) Partial() bool { return c.Ran() && c.Hold == nil && c.Detail != "" }
+// Partial reports whether the check ran with partial coverage: a detail other than its hold reason.
+// A held check can be partial too (proxy stats: one Gateway warming, another without stats).
+func (c CheckStatus) Partial() bool {
+	return c.Ran() && c.Detail != "" && (c.Hold == nil || c.Detail != c.Hold.Reason)
+}
 
 // Hold says a check is still deciding on some items.
 type Hold struct {
@@ -184,6 +187,8 @@ type CheckSelect struct {
 	// ObservedFrom is when the command started observing. A since not before it is only
 	// when kgwctl first looked, so it is left out; zero keeps every since.
 	ObservedFrom time.Time
+	// Server is the API server URL (rest.Config Host); its host is redacted from cluster text.
+	Server string
 }
 
 // Validate returns the error of a malformed Install selector, for the command to report as a usage error.
@@ -236,6 +241,7 @@ func sevRank(s health.Severity) int {
 }
 
 func installCheck(m *engine.Model, im *engine.InstallModel, reg *extension.Registry, sel CheckSelect) InstallCheck {
+	red := NewRedactor(sel.Server)
 	r := im.Resolved
 	ic := InstallCheck{
 		Install:  InstallRef{ID: r.ID(), Namespace: r.Namespace, Name: r.Name, Version: r.Version},
@@ -277,7 +283,7 @@ func installCheck(m *engine.Model, im *engine.InstallModel, reg *extension.Regis
 	})
 	for _, i := range kept {
 		f := &fs[i]
-		ic.Findings = append(ic.Findings, checkFinding(f, in, cmds, sel.ObservedFrom))
+		ic.Findings = append(ic.Findings, checkFinding(f, in, cmds, sel.ObservedFrom, red))
 		switch f.Severity {
 		case health.SeverityError:
 			ic.Counts.Error++
@@ -305,7 +311,7 @@ func installCheck(m *engine.Model, im *engine.InstallModel, reg *extension.Regis
 		}
 	}
 	for _, cr := range im.Health.Checks {
-		ic.Checks = append(ic.Checks, checkStatus(cr))
+		ic.Checks = append(ic.Checks, checkStatus(cr, red))
 	}
 	slices.SortStableFunc(ic.Checks, func(a, b CheckStatus) int { return cmp.Compare(a.Name, b.Name) })
 	return ic
@@ -318,16 +324,16 @@ func inNamespace(f health.Finding, ns, installNS string) bool {
 }
 
 // checkFinding maps f; in and cmds build its next steps. A since not before from is dropped.
-func checkFinding(f *health.Finding, in diagnose.Input, cmds diagnose.Commands, from time.Time) CheckFinding {
+func checkFinding(f *health.Finding, in diagnose.Input, cmds diagnose.Commands, from time.Time, red Redactor) CheckFinding {
 	cf := CheckFinding{ID: f.ID, Code: f.Code, Slug: f.Slug, Severity: string(f.Severity), Resource: f.Resource,
-		Message: Redact(f.Message), Detail: Redact(f.Detail), Group: f.Group}
+		Message: red.Redact(f.Message), Detail: red.Redact(f.Detail), Group: f.Group}
 	if f.Since != nil && (from.IsZero() || f.Since.Before(from)) {
 		cf.Since = new(f.Since.UTC())
 	}
 	if f.Facts != nil {
 		// An evidence that cannot be marshalled is left out rather than failing the report.
 		if b, err := json.Marshal(f.Facts); err == nil && string(b) != "null" && string(b) != "{}" {
-			cf.Evidence = redactJSON(b)
+			cf.Evidence = red.JSON(b)
 		}
 	}
 	if cmds != nil {
@@ -343,11 +349,11 @@ func checkFinding(f *health.Finding, in diagnose.Input, cmds diagnose.Commands, 
 	return cf
 }
 
-func checkStatus(cr health.CheckResult) CheckStatus {
+func checkStatus(cr health.CheckResult, red Redactor) CheckStatus {
 	cs := CheckStatus{Name: cr.Name, OK: cr.OK, Pending: cr.Pending, Unavailable: string(cr.Unavailable),
-		Error: Redact(cr.Error), Detail: Redact(cr.Detail)}
+		Error: red.Redact(cr.Error), Detail: red.Redact(cr.Detail)}
 	if h := cr.Hold; h != nil {
-		cs.Hold = &Hold{Until: h.Until.UTC(), Count: h.Count, Reason: Redact(h.Reason)}
+		cs.Hold = &Hold{Until: h.Until.UTC(), Count: h.Count, Reason: red.Redact(h.Reason)}
 	}
 	return cs
 }

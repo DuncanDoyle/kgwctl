@@ -145,6 +145,9 @@ func TestBuildCheckUnavailable(t *testing.T) {
 		// OK means the check ran: a detail is partial coverage, an Unavailable not checked.
 		{Name: "g", OK: true, Detail: "1 of 2 Gateways have no proxy stats."},
 		{Name: "h", OK: true, Unavailable: health.AvailOff, Detail: "Proxy Pods are not watched"},
+		// A held check with a gap detail is partial too; a detail that only repeats the hold reason is not.
+		{Name: "i", OK: true, Detail: "1 of 2 Gateways have no proxy stats.", Hold: &health.Hold{Until: computedAt, Count: 1, Reason: "r"}},
+		{Name: "j", OK: true, Detail: "Waiting", Hold: &health.Hold{Until: computedAt, Count: 1, Reason: "Waiting"}},
 	}}
 	cs := build(checkModel(rep, nil), view.CheckSelect{}).Installs[0].Checks
 	if cs[0].Unavailable != "denied" || cs[0].Error == "" {
@@ -153,6 +156,7 @@ func TestBuildCheckUnavailable(t *testing.T) {
 	for i, want := range []struct{ notChecked, ran, partial bool }{
 		{true, false, false}, {true, false, false}, {false, false, false}, {false, true, false},
 		{false, false, false}, {false, false, false}, {false, true, true}, {true, false, false},
+		{false, true, true}, {false, true, false},
 	} {
 		if cs[i].NotChecked() != want.notChecked || cs[i].Ran() != want.ran || cs[i].Partial() != want.partial {
 			t.Errorf("%s: NotChecked=%v Ran=%v Partial=%v", cs[i].Name, cs[i].NotChecked(), cs[i].Ran(), cs[i].Partial())

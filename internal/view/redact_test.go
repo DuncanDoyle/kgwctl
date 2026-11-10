@@ -59,3 +59,29 @@ func TestBuildCheckRedacts(t *testing.T) {
 		t.Errorf("not redacted:\n%s", s)
 	}
 }
+
+// The API server's own host is redacted wherever it appears, not only in URLs.
+func TestRedactorServerHost(t *testing.T) {
+	for _, tc := range []struct{ server, in, want string }{
+		{"https://private-api:6443", `Get "https://private-api:6443/api/v1/x": dial tcp: lookup private-api on 10.96.0.10:53: no such host`,
+			`Get "https://<redacted>": dial tcp: lookup <apiserver> on <redacted>: no such host`},
+		{"private-api:6443", "x509: certificate is valid for other, not Private-API", "x509: certificate is valid for other, not <apiserver>"},
+		{"https://private-api", "private-api-2 and api.private-api.example stay", "private-api-2 and api.private-api.example stay"},
+		{"https://10.0.0.1:6443/prefix", "x509: certificate is valid for 10.0.0.2, 110.0.0.12, not 10.0.0.1.", "x509: certificate is valid for 10.0.0.2, 110.0.0.12, not <apiserver>."},
+		{"https://[fd00::1]:6443", "valid for fd00::2, not fd00::1", "valid for fd00::2, not <apiserver>"},
+		{"", "lookup x on [fd00::a]:53: no such host", "lookup x on <redacted>: no such host"},
+	} {
+		if got := view.NewRedactor(tc.server).Redact(tc.in); got != tc.want {
+			t.Errorf("server %q: Redact(%q)\n got %q\nwant %q", tc.server, tc.in, got, tc.want)
+		}
+	}
+}
+
+// BuildCheck redacts the server host given by CheckSelect.Server.
+func TestBuildCheckRedactsServerHost(t *testing.T) {
+	rep := health.Report{Checks: []health.CheckResult{{Name: "a", Error: "x509: certificate is valid for other, not private-api"}}}
+	c := build(checkModel(rep, nil), view.CheckSelect{Server: "https://private-api:6443"})
+	if got := c.Installs[0].Checks[0].Error; got != "x509: certificate is valid for other, not <apiserver>" {
+		t.Errorf("error = %q", got)
+	}
+}

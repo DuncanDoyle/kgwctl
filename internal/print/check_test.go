@@ -136,6 +136,9 @@ func TestCheckText(t *testing.T) {
 	partial.Checks = append(ok("a", "b"),
 		view.CheckStatus{Name: "proxy connection", OK: true, Detail: "1 of 2 Gateways have no proxy stats."},
 		view.CheckStatus{Name: "version skew", OK: true, Detail: "Versions are compared 10 minutes after a controller rollout ends"},
+		// Held with a gap: deciding on one Gateway, blind on another.
+		view.CheckStatus{Name: "proxy config warming", OK: true, Detail: "1 of 2 Gateways have no proxy stats.",
+			Hold: &view.Hold{Until: gen.Add(2 * time.Minute), Count: 1, Reason: "Waiting for proxies to finish loading config"}},
 		view.CheckStatus{Name: "process", OK: true, Unavailable: "off", Detail: "Proxy Pods are not watched, so proxies were not checked"})
 
 	incomplete := cleanInstall()

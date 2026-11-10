@@ -102,6 +102,7 @@ func newCheckCmd(reg *extension.Registry, build BuildInfo, now func() time.Time,
 			if sel.Context, err = currentContext(f); err != nil {
 				return err
 			}
+			sel.Server = rc.Host
 			o := observe.Options{Scraper: hooks.Scraper, Clock: hooks.Clock, Quiet: hooks.Quiet, FirstPublishWait: hooks.FirstPublishWait,
 				MetricsInterval: hooks.MetricsInterval, Logger: engineLogger(cmd.ErrOrStderr()), Published: hooks.Published}
 			// Since times from this moment on only say when kgwctl first looked (design §3.3).
@@ -119,7 +120,7 @@ func newCheckCmd(reg *extension.Registry, build BuildInfo, now func() time.Time,
 			a.stop()
 			p := a.p
 			c := view.BuildCheck(p.Model, reg, sel)
-			c.Incomplete = incomplete(a.inputs, len(p.Model.Installs) > 0)
+			c.Incomplete = incomplete(a.inputs, len(p.Model.Installs) > 0, sel.Server)
 			if err := writeCheck(cmd, output, c, build, now()); err != nil {
 				return err
 			}
@@ -283,13 +284,14 @@ func writeCheck(cmd *cobra.Command, output string, c view.Check, build BuildInfo
 	return nil
 }
 
-// incomplete are the inputs that are not ok, by name, reasons redacted. Without an install the
-// collectors have nothing to collect, so they are left out.
-func incomplete(inputs map[schema.GroupVersionResource]load.Input, installs bool) []load.Input {
+// incomplete are the inputs that are not ok, by name, reasons redacted with server's host. Without an
+// install the collectors have nothing to collect, so they are left out.
+func incomplete(inputs map[schema.GroupVersionResource]load.Input, installs bool, server string) []load.Input {
+	red := view.NewRedactor(server)
 	var out []load.Input
 	for gvr, in := range inputs {
 		if in.State != load.StateOK && (installs || gvr != observe.CollectorGVR(in.Resource)) {
-			out = append(out, view.RedactInput(in))
+			out = append(out, red.Input(in))
 		}
 	}
 	slices.SortFunc(out, func(a, b load.Input) int { return cmp.Compare(a.Resource, b.Resource) })

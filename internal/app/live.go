@@ -44,7 +44,7 @@ type liveRun struct {
 // view builds the report of p with the inputs as they were when p was published.
 func (l *liveRun) view(p observe.Publication) view.Check {
 	c := view.BuildCheck(p.Model, l.cfg.reg, l.cfg.sel)
-	c.Incomplete = incomplete(p.Inputs, len(p.Model.Installs) > 0)
+	c.Incomplete = incomplete(p.Inputs, len(p.Model.Installs) > 0, l.cfg.sel.Server)
 	return c
 }
 
