@@ -1,6 +1,6 @@
 # Phase 2 — `check`: Design
 
-Status: r2, approved by the owner 2026-11-10 (r2 adds §6.1 on the owner's request). Base: `980d32d`.
+Status: r3, 2026-11-10. r2 approved by the owner (r2 added §6.1 on the owner's request); r3 applies the Codex design review (reviews/design-codex.md, rounds 1–2). Base: `980d32d`.
 Inputs: the brainstorm with the owner (2026-11-09/10), Codex reviews of cluster-derived timing and live mode (owner's Desktop; summarised in §2), Snellius `v0.7.0-alpha.1` (E8, E3, E9).
 
 ## 1. Goal and scope
@@ -61,7 +61,7 @@ kgwctl check [--live [--timeout 6m]] [-o text|json|yaml]
 
 `-n NS` shows only findings on resources in that namespace, plus findings with no namespace (install-level). `-A` and no `-n` show everything. Checks always run over the whole install; `-n` filters what is printed and what the exit code counts. `--install` and `--all-controllers` select installs as in Phase 1 (design §6.2).
 
-A plain run ends with a hint only when there is a reason: "2 checks are still deciding (up to 4m48s). Run `kgwctl check --live` to see them decide." The duration is the latest `hold.until` minus now. Denied or failing inputs get their remedy instead (more time won't help).
+A plain run ends with a hint only when there is a reason: "2 checks are still deciding; the next decision is at 14:07:12 (in 4m48s). Run `kgwctl check --live` to see them decide." The time is the earliest `hold.until`: a hold's `until` is the earliest moment an item is decided, so kgwctl never claims an upper bound. Denied or failing inputs get their remedy instead (more time won't help).
 
 ### 3.2 `kgwctl check --live`
 
@@ -101,10 +101,10 @@ ERRORS (1)
              Next: kubectl --context prod -n edge describe gateway public
 
 WARNINGS (2)
-  KGWUI-003  HTTPRoute shop/cart  Route not attached to its parent
-             ...
-     └ caused by KGWUI-013  HTTPRoute shop/cart  backendRef Service shop/cart-v2 not found
-             Fix: create Service shop/cart-v2, or change the backendRef
+  Likely cause: Service shop/cart-v2
+    KGWUI-013  HTTPRoute shop/cart  backendRef Service shop/cart-v2 not found
+               Fix: create Service shop/cart-v2, or change the backendRef
+  KGWUI-003  HTTPRoute shop/web  Route not attached to its parent
 
 STILL DECIDING (1)
   status progress   12 held  decides 14:07:12  Waiting to see if status catches up
@@ -115,12 +115,12 @@ NOT CHECKED (1)
 PASSED: 17 checks
 
 1 error, 2 warnings, 1 check deciding.
-2 checks are still deciding (up to 5m). Run `kgwctl check --live` to see them decide.
+1 check is still deciding; the next decision is at 14:07:12 (in 5m). Run `kgwctl check --live` to see them decide.
 ```
 
 Rules:
 1. Header: context name, time in UTC, kgwctl version; per install its ID, kgateway version and state. No server URL.
-2. Findings by severity (error, warning, info), then in the order of Snellius's diagnosis (likely cause first). Findings `diagnose` groups under one cause print under it.
+2. Findings by severity (error, warning, info), then in the order of Snellius's diagnosis. Findings Snellius's `diagnose` puts in one group print together under the group's cause resource ("Likely cause: …"). kgwctl draws no cause link between findings itself (D-003).
 3. Each finding: code, resource, message, detail, `since` when known, next-step commands with `--context` filled in, and a fix when `diagnose.Fix` has one.
 4. **Still deciding:** every check with a `hold`: name, count, decision time, reason (§6.1: no per-check unit words). Checks that are `Pending` without a hold also appear here.
 5. **Not checked:** every check with `Unavailable` set, grouped by cause, with the remedy (RBAC rule, flag, or "not on this kgateway version").
@@ -154,19 +154,31 @@ check --live: also stream Events() to stderr until --timeout / Ctrl-C -> report
 ```
 
 1. `setup.Build` with Events, CRDs, Services/EndpointSlices and proxy pods on (`NoEvents`, `NoCRDs`, `NoEndpoints` false). `Changes` stays on: the engine recomputes on it.
-2. Collectors come from the registry: `reg.PackCollectors(env)` and `RunCollectors`, so a vendor build's collectors run too (D-004). kgwctl stops ignoring registry collectors for `check` only; `logIgnored` in `pkg/cli` is updated to match.
+2. Collectors come from the registry: `reg.PackCollectors(env)` plus `reg.Collectors()`, so a vendor build's collectors run too (D-004). kgwctl runs them itself rather than through `Registry.RunCollectors`, which gives no completion handle: one goroutine per collector, `Publish`/`Fail` wrapped per collector (same store keys, `<name>/<key>`), panics recovered, every goroutine joined on stop. A collector whose `Start` returns before publishing (controller logs while off) counts as finished. kgwctl stops ignoring registry collectors for `check` only; `logIgnored` in `pkg/cli` is updated to match.
 3. `Engine.Run` drives recomputes; kgwctl reads `Engine.Current()` after each published model (`OnLoop` `EvPublished`). Holds mature because the engine wakes at `Model.Next`.
-4. **Complete** means: core kinds synced; each optional watch (Events, CRDs, Services, EndpointSlices, proxy pods, list-only kinds) is OK or has an error; each started collector has published or failed once; and a model was computed after all of that. This is what Snellius's `setup` doc says a one-shot caller must wait for, otherwise output varies between runs.
+4. **Complete** means: core kinds synced; each optional watch (Events, CRDs, Services, EndpointSlices, proxy pods, list-only kinds) is OK or has an error; each collector has published, failed or returned; **no collector has published for a quiet period of 2s**; and a model was computed after all of that. Snellius's `setup` doc says a one-shot caller must wait for its inputs, otherwise output varies between runs.
+   kgwctl arms the quiet timer itself and, when it expires, fires the engine's change signal (`setup.Config.Changes.Notify()`), so the final model is computed from the settled inputs; a publish before then re-arms it. A collector that has not published within a **first-publish wait** of 6s after the first model with an install (the controller metrics scrape times out per pod at 5s) is treated as having nothing to report: a pack's collector has no targets when no install is that pack's (a vendor-only cluster), and then never publishes. Its checks show what they report, under Not checked when they lack data.
+   The quiet period is an approximation: a collector publishes after each install it scrapes (`ctrlmetrics` scrapes installs concurrently), and the library has no generic "first round done" signal. An install whose scrape is still running at completion shows its checks under Not checked ("not collected yet"), never as passed. A library contract for first-round completion is a follow-up for the owner (proposed edge E10).
 5. At the `check` deadline, inputs that are not in become "not checked (timed out)". Core kinds not synced is exit 2.
 6. `kinds.Monitor` does not run: served kinds are fixed for the run. A CRD installed during `--live` is not seen (documented limit).
 
 ### 4.2 Diffing models for progress
 
-`--live` compares each published model with the previous one by finding ID, check hold and input availability, and emits the events of §3.2. It also keeps the first-seen and cleared times for the "Observed" section. The diff is presentation only; it never changes what the engine decides.
+`--live` consumes **every** published model in order, from the engine's `OnLoop` `EvPublished` (each carries its immutable `Published`), through an unbounded queue. Reading only the latest model could skip one in which a finding appeared and cleared, and that is exactly the evidence the Observed section promises. Rendering may coalesce; tracking may not.
+
+It compares each model with the previous one by finding ID, check hold and input availability and emits the events of §3.2, including a finding whose severity or message changed under the same ID (KGWUI-003 goes from info to warning when its grace ends). It keeps first-seen, cleared and severity changes for the Observed section. **Observed** lists every finding with a transition during the run: raised after the first model, cleared, or changed severity (including one present from the start that is still present). The diff is presentation only; it never changes what the engine decides.
 
 ### 4.3 Shutdown
 
-On stop, cancel the context passed to `cache.Start`, the collectors and `Engine.Run`; wait for `cache.Wait()` and the collector goroutines; then print. Phase 1's `TestNoAccumulation` and `waitNoWatches` invariants hold after `check` and after `check --live`.
+On stop, cancel the session context; wait for `cache.Wait()`, the collector goroutines and `Engine.Run` to return; then print. A compute already running when `Run` returns finishes on its own goroutine and its result is dropped (the engine's result channel is buffered). It reads only the in-memory snapshot and does no I/O, so kgwctl doesn't wait for it; the library has no join for it. Leak tests allow for it by polling the goroutine count with a time bound. Phase 1's `TestNoAccumulation` and `waitNoWatches` invariants hold after `check` and after `check --live`.
+
+### 4.5 Contexts and deadlines
+
+Two separate bounds:
+1. **Session context:** from the command context until stop. The clients bind to it, so `--live` keeps reading past 30s.
+2. **Acquisition deadline:** `--request-timeout` from command start. It covers `setup.Build` (which resolves served kinds synchronously; kgwctl runs it in a goroutine and stops waiting at the deadline, cancelling the session) and the wait for Complete.
+
+Discovery that has not finished at the deadline is exit 2. Phase 1's `Flags.Context` (timeout-bound) is not used for `check`'s clients.
 
 ### 4.4 Timing
 
@@ -200,7 +212,7 @@ A vendor distribution of kgateway will layer its own checks on top of the core's
 3. **Rendering is generic.** No table in kgwctl keyed by finding code or check name: unknown codes, check names, hold reasons and evidence render from the result alone. Hold counts print as a number with the engine's reason; there is no per-check unit word.
 4. **Remedies are generic.** "Not checked" shows the engine's or collector's error text and points at the build's RBAC document; kgwctl has no per-check RBAC table.
 5. **RBAC is per build.** `docs/rbac.yaml` covers the core; a vendor build documents its additions.
-6. `examples/downstream` proves it: it registers a pack with one check, one collector and one policy kind, and a test asserts the check's finding and hold appear in `vendorctl check` text and JSON, and its collector runs.
+6. `examples/downstream` proves it: it registers a pack with one check, one collector and one policy kind. The collector reads the vendor server's Pods through `CollectorEnv.Kube` (the cache watches only Pods its detectors select) and publishes readiness; the check reads that value. A test asserts the finding and hold appear in `vendorctl check` text and JSON for absent, unready and ready server Pods.
 
 ## 7. Output contract (`-o json|yaml`)
 
@@ -223,10 +235,14 @@ item:
       message: …
       detail: …
       since: 2026-11-10T13:58:01Z # omitted when unknown
-      causedBy: <finding id>      # from diagnose grouping, omitted when none
+      group: <group id>           # Snellius diagnosis group, omitted when none
       evidence: {…}               # typed per code, passed through from Snellius
       nextSteps: [{description: …, command: "kubectl --context prod …"}]
       fix: {…}                    # when diagnose.Fix has one
+    groups:                       # Snellius diagnosis groups
+    - id: <group id>
+      cause: {kind: Service, namespace: shop, name: cart-v2}   # omitted when the library names none
+      findings: [<finding id>, …]
     checks:
     - name: status progress
       ok: true
@@ -238,7 +254,7 @@ item:
     startedAt: …
     endedAt: …
     stopReason: timeout           # timeout | interrupted
-    observed: [{id, code, resource, severity, firstSeen, clearedAt}]
+    observed: [{id, code, resource, severity, firstSeen, clearedAt, severities: [{severity, at}]}]
 ```
 
 Phase 1 conventions hold: RFC 3339 UTC times, no relative-to-now fields, refs as objects, empty optional fields omitted, warnings never in JSON/YAML. `docs/output.md` documents the `Check` kind; `TestOutputDocMatchesSchema` covers it. The exit-code sentence in `docs/output.md` and the README changes to say `check` uses 0/1/2.
@@ -247,7 +263,7 @@ Phase 1 conventions hold: RFC 3339 UTC times, no relative-to-now fields, refs as
 
 1. `go.mod`: `github.com/DuncanDoyle/kgateway-ui v0.3.0` → `github.com/DuncanDoyle/snellius v0.7.0-alpha.1`; rewrite imports.
 2. Adapt to API changes between `v0.3.0` and the tag (e.g. `setup.Options`, `install.Install.Impl`).
-3. `lifecycle_test.go`'s import guard names the new module path for `pkg/app`, so it keeps guarding.
+3. `lifecycle_test.go`'s guard: no binary dependency on Snellius `pkg/app` (transitive), and no kgwctl package imports `pkg/app` or `pkg/api` directly. `pkg/api` itself is a transitive dependency through `pkg/extension`, which kgwctl can't avoid at this tag.
 4. `get`/`describe`/`version` behaviour and goldens unchanged; `hack/live-check.sh` passes.
 5. Close kgwctl#5, #6, #7 with the commit.
 
@@ -257,12 +273,12 @@ No new module dependencies. TTY detection uses `os.File.Stat` (`ModeCharDevice`)
 
 ## 10. Testing
 
-Boundary: the `check` command, run through `app.Execute` against envtest, as Phase 1's command tests. Collectors take an injected scraper/source (`CollectorEnv.Scraper`, proxystats `Source`) and the engine a fake clock (`setup.Options.Clock`), so holds mature without waiting minutes.
+Boundary: the `check` command, run through `app.Execute` against envtest, as Phase 1's command tests. Collectors take an injected scraper/source (`CollectorEnv.Scraper`, proxystats `Source`) and the engine a fake clock (`setup.Options.Clock`), so holds mature without waiting minutes. The fake clock does not reach the collectors' network timeouts (`context.WithTimeout`), so network cancellation is tested with short real-time bounds. 018 needs a ready controller and at least 10 stuck objects (or the percentage threshold), and its hold starts only when evaluated: tests step the clock through grace, then through the hold.
 
 Required tests:
 1. One fixture per priority theme gives the expected codes and exit code (install down: 005/006; route broken: 003/013/014; controller stuck: 018 after its hold with a fake clock; accepted but broken: 001 via fake metrics, 025/026 via fake stats).
 2. Hold lifecycle in `--live`: hold appears, matures into a finding, or clears and resets.
-3. A denied input (`pods/proxy` 403, Events forbidden via the testenv proxy) lands in Not checked, exit unchanged; a denied core kind gives exit 2.
+3. A denied input (`pods/proxy` 403, Events forbidden via the testenv proxy, which gains subresource matching) lands in Not checked, exit unchanged; a denied core kind gives exit 2.
 4. Exit matrix across text/json/yaml, including Ctrl-C (2) and no install (2).
 5. `--live -o json` writes one valid document; stdout and, off a terminal, stderr contain no ANSI escapes.
 6. `--live` stops at `--timeout`; no watch, connection or goroutine left after return (`TestNoAccumulation` style).
@@ -298,4 +314,5 @@ None open. E9 is delivered (pre-release). A kgwctl release waits for the final S
 ## 15. Open items
 
 - `-n` semantics for install-level findings (shown always) — our call; owner may override.
+- Proposed E10 (Snellius): a collector's first-round completion signal, so `check` can drop the quiet period (§4.1). Needs the owner before an issue is filed.
 - Exit 2 for an interrupted `--live` even when the user stopped it on purpose — agreed in the live-mode review; revisit if it annoys in use.

@@ -4,17 +4,20 @@
 Phase: 2 — `check`
 Base: 980d32d
 Docs: docs/phases/phase-2/
-Status: design
+Status: implementation
 
 ### Queue
 - [x] Q1 Phase 2 design (`design.md`), taking in the carry-over below — approved 2026-11-10
-- [ ] Q2 Phase 2 implementation plan ← CURRENT
-- [ ] Q3 Cross-model review of design + plan, triage, owner approval
+- [x] Q2 Phase 2 implementation plan
+- [x] Q3 Cross-model review of design + plan (3 rounds), triage; owner go-ahead 2026-11-10
+- [x] Q4 Sub-phase 2.1 Snellius upgrade
+- [ ] Q5 Sub-phase 2.2 `check` ← CURRENT
+- [ ] Q6 Sub-phase 2.3 `check --live`
 
 ### Exit gates
 - [ ] tests/vet pass (observed)
 - [ ] all queue items done or deferred
-- [ ] design+plan cross-model review + triage: docs/phases/phase-2/reviews/design-codex.md
+- [x] design+plan cross-model review + triage: docs/phases/phase-2/reviews/design-codex.md (+ -r2, -r3)
 - [ ] phase cross-model review + triage: docs/phases/phase-2/reviews/phase-codex.md
 - [ ] decisions.md / design / plan in sync with code
 - [ ] phase-2-complete.md written, roadmap updated, tracked items closed
