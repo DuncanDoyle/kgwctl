@@ -1,0 +1,305 @@
+package print
+
+import (
+	"fmt"
+	"io"
+	"strings"
+	"time"
+
+	"github.com/DuncanDoyle/kgwctl/internal/view"
+)
+
+const defaultCommand = "kgwctl"
+
+// CheckText writes the text report of c, without the binary name or version in the header.
+func CheckText(w io.Writer, c view.Check, now time.Time, color bool) error {
+	return CheckTextFor(w, c, now, color, view.BuildInfo{})
+}
+
+// CheckTextFor writes the text report of design §3.3. build names the binary in the header;
+// color adds ANSI severity colours. now is unused: times come from the view.
+func CheckTextFor(w io.Writer, c view.Check, _ time.Time, color bool, build view.BuildInfo) error {
+	b := &strings.Builder{}
+	hdr := []string{strings.TrimSpace(build.Name + " check"), "context " + c.Context, stamp(c.GeneratedAt) + " UTC"}
+	if v := strings.TrimSpace(build.Name + " " + build.Version); build.Version != "" {
+		hdr = append(hdr, v)
+	}
+	b.WriteString(strings.Join(hdr, " · ") + "\n")
+	var total view.Counts
+	deciding := 0
+	for _, ic := range c.Installs {
+		b.WriteString("\n")
+		writeCheckInstall(b, ic, c.GeneratedAt, color)
+		total.Error += ic.Counts.Error
+		total.Warning += ic.Counts.Warning
+		total.Info += ic.Counts.Info
+		deciding += len(decidingChecks(ic))
+	}
+	if len(c.Incomplete) > 0 {
+		b.WriteString("\nINCOMPLETE INPUTS\n")
+		for _, in := range c.Incomplete {
+			fmt.Fprintf(b, "  %s: %s", in.Resource, in.State)
+			if in.Reason != "" {
+				fmt.Fprintf(b, ": %s", in.Reason)
+			}
+			b.WriteString("\n")
+		}
+	}
+	b.WriteString("\n" + summary(total, deciding) + "\n")
+	_, err := io.WriteString(w, b.String())
+	return err
+}
+
+// CheckHint is CheckHintFor with the default command name.
+func CheckHint(c view.Check, now time.Time) string { return CheckHintFor(c, now, defaultCommand) }
+
+// CheckHintFor returns the §3.1 hint for held checks, naming command, or "" when no check holds.
+// It reports only the earliest decision time, never an upper bound.
+func CheckHintFor(c view.Check, now time.Time, command string) string {
+	var first *time.Time
+	n := 0
+	for _, ic := range c.Installs {
+		for _, cs := range ic.Checks {
+			if cs.Hold == nil {
+				continue
+			}
+			n++
+			if first == nil || cs.Hold.Until.Before(*first) {
+				first = &cs.Hold.Until
+			}
+		}
+	}
+	// A --live run already waited for the holds.
+	if first == nil || c.Observation != nil {
+		return ""
+	}
+	verb, noun := "are", "checks"
+	if n == 1 {
+		verb, noun = "is", "check"
+	}
+	when := utc(*first)
+	if d := first.Sub(now); d > 0 {
+		when += " (in " + duration(d) + ")"
+	}
+	return fmt.Sprintf("%d %s %s still deciding; the next decision is at %s. Run `%s check --live` to see them decide.",
+		n, noun, verb, when, command)
+}
+
+func writeCheckInstall(b *strings.Builder, ic view.InstallCheck, gen time.Time, color bool) {
+	fmt.Fprintf(b, "Install %s/%s", ic.Install.Namespace, ic.Install.Name)
+	if ic.Install.Version != "" {
+		fmt.Fprintf(b, " (%s)", version(ic.Install.Version))
+	}
+	fmt.Fprintf(b, " · state: %s\n", ic.State)
+
+	for _, sev := range []struct{ key, title, code string }{
+		{"error", "ERRORS", "31"}, {"warning", "WARNINGS", "33"}, {"info", "INFO", "36"},
+	} {
+		var fs []view.CheckFinding
+		for _, f := range ic.Findings {
+			if f.Severity == sev.key {
+				fs = append(fs, f)
+			}
+		}
+		if len(fs) == 0 {
+			continue
+		}
+		fmt.Fprintf(b, "\n%s\n", paint(fmt.Sprintf("%s (%d)", sev.title, len(fs)), sev.code, color))
+		writeFindings(b, fs, ic.Groups, gen)
+	}
+
+	if rows := decidingChecks(ic); len(rows) > 0 {
+		fmt.Fprintf(b, "\nSTILL DECIDING (%d)\n", len(rows))
+		var cells [][]string
+		for _, cs := range rows {
+			if cs.Hold == nil {
+				cells = append(cells, []string{cs.Name, "pending"})
+				continue
+			}
+			cells = append(cells, []string{cs.Name, fmt.Sprintf("%d held", cs.Hold.Count), "decides " + utc(cs.Hold.Until), cs.Hold.Reason})
+		}
+		table(b, "  ", cells)
+	}
+
+	writeNotChecked(b, ic.Checks)
+
+	passed := 0
+	for _, cs := range ic.Checks {
+		if cs.Passed() {
+			passed++
+		}
+	}
+	if len(ic.Checks) > 0 {
+		fmt.Fprintf(b, "\nPASSED: %d %s\n", passed, plural(passed, "check", "checks"))
+	}
+}
+
+// writeFindings prints fs in order; findings of one group with a cause print together under it.
+func writeFindings(b *strings.Builder, fs []view.CheckFinding, groups []view.CheckGroup, gen time.Time) {
+	causes := map[string]string{}
+	for _, g := range groups {
+		if g.Cause != nil {
+			causes[g.ID] = g.Cause.Kind + " " + g.Cause.String()
+		}
+	}
+	done := map[string]bool{}
+	for _, f := range fs {
+		cause, grouped := causes[f.Group]
+		if !grouped {
+			writeFinding(b, f, "  ", gen)
+			continue
+		}
+		if done[f.Group] {
+			continue
+		}
+		done[f.Group] = true
+		fmt.Fprintf(b, "  Likely cause: %s\n", cause)
+		for _, m := range fs {
+			if m.Group == f.Group {
+				writeFinding(b, m, "    ", gen)
+			}
+		}
+	}
+}
+
+func writeFinding(b *strings.Builder, f view.CheckFinding, indent string, gen time.Time) {
+	head := f.Code
+	if f.Resource != nil {
+		head += "  " + f.Resource.Kind + " " + f.Resource.String()
+	}
+	b.WriteString(indent + head + "  " + f.Message + "\n")
+	pad := indent + strings.Repeat(" ", len(f.Code)+2)
+	line := func(prefix, text string) {
+		for i, l := range strings.Split(text, "\n") {
+			if i > 0 {
+				prefix = strings.Repeat(" ", len(prefix))
+			}
+			b.WriteString(pad + prefix + l + "\n")
+		}
+	}
+	if f.Detail != "" {
+		line("", f.Detail)
+	}
+	if f.Since != nil {
+		// Same-day times drop the date to stay short.
+		at := stamp(*f.Since)
+		if f.Since.UTC().YearDay() == gen.UTC().YearDay() && f.Since.UTC().Year() == gen.UTC().Year() {
+			at = utc(*f.Since)
+		}
+		line("", "Since "+at+" UTC.")
+	}
+	for _, s := range f.NextSteps {
+		line("Next: ", s.Command)
+		if s.Note != "" {
+			line("Note: ", s.Note)
+		}
+	}
+	if f.Fix != nil {
+		line("Fix: ", f.Fix.Title)
+	}
+}
+
+// decidingChecks are the checks with a hold, and the pending ones without.
+func decidingChecks(ic view.InstallCheck) []view.CheckStatus {
+	var out []view.CheckStatus
+	for _, cs := range ic.Checks {
+		if cs.Hold != nil || cs.Pending && !cs.NotChecked() {
+			out = append(out, cs)
+		}
+	}
+	return out
+}
+
+// writeNotChecked lists the checks that could not run, one line per distinct reason text.
+func writeNotChecked(b *strings.Builder, checks []view.CheckStatus) {
+	var texts []string
+	names := map[string][]string{}
+	n := 0
+	for _, cs := range checks {
+		if !cs.NotChecked() {
+			continue
+		}
+		n++
+		t := firstNonEmpty(cs.Error, cs.Detail, cs.Unavailable)
+		if strings.Contains(strings.ToLower(t), "forbidden") {
+			t += " — see docs/rbac.yaml"
+		}
+		if names[t] == nil {
+			texts = append(texts, t)
+		}
+		names[t] = append(names[t], cs.Name)
+	}
+	if n == 0 {
+		return
+	}
+	fmt.Fprintf(b, "\nNOT CHECKED (%d)\n", n)
+	for _, t := range texts {
+		fmt.Fprintf(b, "  %s  %s\n", strings.Join(names[t], ", "), t)
+	}
+}
+
+func summary(c view.Counts, deciding int) string {
+	var parts []string
+	if c.Error > 0 {
+		parts = append(parts, fmt.Sprintf("%d %s", c.Error, plural(c.Error, "error", "errors")))
+	}
+	if c.Warning > 0 {
+		parts = append(parts, fmt.Sprintf("%d %s", c.Warning, plural(c.Warning, "warning", "warnings")))
+	}
+	if c.Info > 0 {
+		parts = append(parts, fmt.Sprintf("%d info", c.Info))
+	}
+	if len(parts) == 0 {
+		parts = append(parts, "No findings")
+	}
+	if deciding > 0 {
+		parts = append(parts, fmt.Sprintf("%d %s deciding", deciding, plural(deciding, "check", "checks")))
+	}
+	return strings.Join(parts, ", ") + "."
+}
+
+func paint(s, code string, color bool) string {
+	if !color {
+		return s
+	}
+	return "\x1b[" + code + "m" + s + "\x1b[0m"
+}
+
+// utc is HH:MM:SS in UTC.
+func utc(t time.Time) string { return t.UTC().Format("15:04:05") }
+
+// stamp is the UTC date and time.
+func stamp(t time.Time) string { return t.UTC().Format("2006-01-02 15:04:05") }
+
+// duration prints d rounded to seconds as "4m48s", "5m" or "1h2m".
+func duration(d time.Duration) string {
+	d = d.Round(time.Second)
+	h, m, s := int(d.Hours()), int(d.Minutes())%60, int(d.Seconds())%60
+	var out string
+	if h > 0 {
+		out += fmt.Sprintf("%dh", h)
+	}
+	if m > 0 {
+		out += fmt.Sprintf("%dm", m)
+	}
+	if s > 0 || out == "" {
+		out += fmt.Sprintf("%ds", s)
+	}
+	return out
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
+}
+
+func firstNonEmpty(ss ...string) string {
+	for _, s := range ss {
+		if s != "" {
+			return s
+		}
+	}
+	return ""
+}

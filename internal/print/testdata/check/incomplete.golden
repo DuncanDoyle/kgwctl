@@ -1,0 +1,10 @@
+kgwctl check · context prod · 2026-11-10 14:02:10 UTC · kgwctl v0.1.0-dev
+
+Install kgateway-system/kgateway (v2.5.1) · state: healthy
+
+PASSED: 3 checks
+
+INCOMPLETE INPUTS
+  pods: denied: forbidden
+
+No findings.

@@ -1,0 +1,12 @@
+kgwctl check · context prod · 2026-11-10 14:02:10 UTC · kgwctl v0.1.0-dev
+
+Install kgateway-system/kgateway (v2.5.1) · state: healthy
+
+NOT CHECKED (4)
+  proxy connection, proxy config  pods "proxy" is forbidden: cannot get pods/proxy — see docs/rbac.yaml
+  ext auth  not on this kgateway version
+  scrape  scrape timed out
+
+PASSED: 1 check
+
+No findings.
