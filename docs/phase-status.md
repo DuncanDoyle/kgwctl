@@ -14,8 +14,8 @@ Status: implementation
 - [x] Q5 Sub-phase 2.2 `check` (phase-2.2-complete.md)
 - [x] Q6 Sub-phase 2.3 `check --live` (phase-2.3-complete.md)
 - [x] Q7 Phase review (Codex), triage: reviews/phase-codex.md
-- [ ] Q7b Stabilization 2.4 ← CURRENT
-- [ ] Q8 Owner tries `check`; phase close after that
+- [x] Q7b Stabilization 2.4 (phase-2.4-complete.md)
+- [ ] Q8 Owner tries `check`; phase close after that ← CURRENT
 
 ### Exit gates
 - [ ] tests/vet pass (observed)
@@ -26,25 +26,7 @@ Status: implementation
 - [ ] phase-2-complete.md written, roadmap updated, tracked items closed
 
 ## Sub-phase
-Sub-phase: 2.4 — Phase review fixes
-Kind: stabilization
-Base: 3aef403
-Brief: docs/phases/phase-2/phase-2.4-brief.md
-
-### Allowed work
-bug fixes, missing designed behaviour, tests, docs
-
-### Not allowed
-new features, architecture changes, new dependencies
-
-### Queue
-- [ ] Q1 no hang on discovery (#1) ← CURRENT
-- [ ] Q2 honest coverage (#2)
-- [ ] Q3 no longer observed vs cleared (#3)
-- [ ] Q4 redact URLs (#4)
-- [ ] Q5 check availability events (#6)
-- [ ] Q6 live script asserts (#7)
-- [ ] Q7 observed keeps evidence (#8)
+n/a (2.4 complete: docs/phases/phase-2/phase-2.4-complete.md)
 
 ## Program
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
