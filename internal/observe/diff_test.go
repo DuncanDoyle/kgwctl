@@ -157,3 +157,84 @@ func TestTrackerClearAndReturn(t *testing.T) {
 	require.Equal(t, &t4, tr.Observed()[0].ClearedAt)
 	require.Equal(t, "warning", tr.Observed()[0].Severity)
 }
+
+func TestTrackerMessageOnlyChangeIsTransition(t *testing.T) {
+	tr := &Tracker{}
+	tr.Add(model([]view.CheckFinding{finding("a", "info", "m")}, nil), t0)
+	t1 := t0.Add(time.Second)
+	tr.Add(model([]view.CheckFinding{finding("a", "info", "m2")}, nil), t1)
+	obs := tr.Observed()
+	require.Len(t, obs, 1)
+	require.Equal(t, []view.SeverityAt{{Severity: "info", At: t0}}, obs[0].Severities)
+}
+
+func TestTrackerOrderAcrossInstalls(t *testing.T) {
+	mk := func(id, sev string) view.InstallCheck {
+		return view.InstallCheck{Install: view.InstallRef{ID: id}, Findings: []view.CheckFinding{finding("a", sev, "m")}}
+	}
+	for range 20 {
+		tr := &Tracker{}
+		tr.Add(view.Check{Installs: []view.InstallCheck{mk("i1", "info"), mk("i2", "info")}}, t0)
+		t1 := t0.Add(time.Second)
+		tr.Add(view.Check{Installs: []view.InstallCheck{mk("i1", "warning"), mk("i2", "error")}}, t1)
+		obs := tr.Observed()
+		require.Len(t, obs, 2)
+		require.Equal(t, "warning", obs[0].Severity)
+		require.Equal(t, "error", obs[1].Severity)
+	}
+}
+
+func inst(id string, fs []view.CheckFinding, checks []view.CheckStatus) view.InstallCheck {
+	return view.InstallCheck{Install: view.InstallRef{ID: id}, Findings: fs, Checks: checks}
+}
+
+func TestDiffPayloadAndInstalls(t *testing.T) {
+	u := t0.Add(time.Minute)
+	h := &view.Hold{Until: u, Count: 3, Reason: "wait"}
+	a := finding("a", "error", "m")
+
+	// Install disappears: its finding clears and its hold ends with the previous value.
+	prev := view.Check{Installs: []view.InstallCheck{inst("i1", []view.CheckFinding{a}, []view.CheckStatus{{Name: "status", Hold: h}})}}
+	es := Diff(prev, view.Check{}, t0)
+	require.Equal(t, []Event{
+		{At: t0, Kind: FindingCleared, Install: "i1", Code: "KGWUI-a", Severity: "error", Resource: a.Resource, Text: "m"},
+		{At: t0, Kind: HoldEnded, Install: "i1", Check: "status", Hold: h, Text: "wait"},
+	}, es)
+
+	// Install appears.
+	es = Diff(view.Check{}, prev, t0)
+	require.Equal(t, []EventKind{FindingRaised, HoldStarted}, kinds(es))
+	require.Equal(t, "i1", es[1].Install)
+	require.Equal(t, h, es[1].Hold)
+
+	// Same finding ID and check name in two installs stay independent.
+	both := view.Check{Installs: []view.InstallCheck{
+		inst("i1", []view.CheckFinding{a}, []view.CheckStatus{{Name: "status", Hold: h}}),
+		inst("i2", []view.CheckFinding{a}, []view.CheckStatus{{Name: "status", Hold: h}}),
+	}}
+	one := view.Check{Installs: []view.InstallCheck{
+		inst("i1", []view.CheckFinding{a}, []view.CheckStatus{{Name: "status", Hold: h}}),
+		inst("i2", nil, nil),
+	}}
+	es = Diff(both, one, t0)
+	require.Equal(t, 2, len(es))
+	require.Equal(t, "i2", es[0].Install)
+	require.Equal(t, "i2", es[1].Install)
+	require.Equal(t, []EventKind{FindingCleared, HoldEnded}, kinds(es))
+
+	// Nil and empty collections are the same.
+	require.Empty(t, Diff(view.Check{Installs: []view.InstallCheck{inst("i1", nil, nil)}},
+		view.Check{Installs: []view.InstallCheck{inst("i1", []view.CheckFinding{}, []view.CheckStatus{})}}, t0))
+	require.Empty(t, Diff(view.Check{}, view.Check{Incomplete: []load.Input{}}, t0))
+
+	// Hold change carries the new hold.
+	h2 := &view.Hold{Until: u, Count: 1, Reason: "wait"}
+	es = Diff(model(nil, []view.CheckStatus{{Name: "status", Hold: h}}), model(nil, []view.CheckStatus{{Name: "status", Hold: h2}}), t0)
+	require.Equal(t, []Event{{At: t0, Kind: HoldChanged, Install: "i1", Check: "status", Hold: h2, Text: "wait"}}, es)
+
+	// Input events carry the resource and reason.
+	es = Diff(model(nil, nil), model(nil, nil, load.Input{Resource: "pods", Reason: "forbidden"}), t0)
+	require.Equal(t, []Event{{At: t0, Kind: InputUnavailable, Input: "pods", Text: "forbidden"}}, es)
+	es = Diff(model(nil, nil, load.Input{Resource: "pods", Reason: "forbidden"}), model(nil, nil), t0)
+	require.Equal(t, []Event{{At: t0, Kind: InputAvailable, Input: "pods"}}, es)
+}

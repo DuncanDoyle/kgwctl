@@ -175,7 +175,9 @@ type Tracker struct {
 }
 
 type tracked struct {
-	f view.ObservedFinding
+	f       view.ObservedFinding
+	install string
+	message string
 	// transitioned is set once the finding is raised late, cleared or changes severity.
 	transitioned bool
 }
@@ -198,10 +200,14 @@ func (t *Tracker) Add(c view.Check, at time.Time) []Event {
 			e := t.entries[key]
 			if e == nil {
 				t.entries[key] = &tracked{f: view.ObservedFinding{ID: f.ID, Code: f.Code, Severity: f.Severity, Resource: f.Resource,
-					FirstSeen: at, Severities: []view.SeverityAt{{Severity: f.Severity, At: at}}}, transitioned: !first}
+					FirstSeen: at, Severities: []view.SeverityAt{{Severity: f.Severity, At: at}}}, install: ic.Install.ID, message: f.Message, transitioned: !first}
 				continue
 			}
 			e.f.ClearedAt = nil
+			if e.message != f.Message {
+				e.message = f.Message
+				e.transitioned = true
+			}
 			if e.f.Severity != f.Severity {
 				e.f.Severity = f.Severity
 				e.f.Severities = append(e.f.Severities, view.SeverityAt{Severity: f.Severity, At: at})
@@ -219,18 +225,23 @@ func (t *Tracker) Add(c view.Check, at time.Time) []Event {
 	return events
 }
 
-// Observed returns every finding with a transition, ordered by first-seen then ID.
+// Observed returns every finding with a transition, ordered by first-seen, then
+// finding ID, then install ID (ObservedFinding carries no install).
 func (t *Tracker) Observed() []view.ObservedFinding {
-	out := []view.ObservedFinding{}
+	var es []*tracked
 	for _, e := range t.entries {
 		if e.transitioned {
-			f := e.f
-			f.Severities = slices.Clone(f.Severities)
-			out = append(out, f)
+			es = append(es, e)
 		}
 	}
-	slices.SortFunc(out, func(a, b view.ObservedFinding) int {
-		return cmp.Or(a.FirstSeen.Compare(b.FirstSeen), cmp.Compare(a.ID, b.ID))
+	slices.SortFunc(es, func(a, b *tracked) int {
+		return cmp.Or(a.f.FirstSeen.Compare(b.f.FirstSeen), cmp.Compare(a.f.ID, b.f.ID), cmp.Compare(a.install, b.install))
 	})
+	out := make([]view.ObservedFinding, 0, len(es))
+	for _, e := range es {
+		f := e.f
+		f.Severities = slices.Clone(f.Severities)
+		out = append(out, f)
+	}
 	return out
 }
