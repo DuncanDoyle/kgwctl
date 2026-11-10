@@ -114,7 +114,11 @@ func writeCheckInstall(b *strings.Builder, ic view.InstallCheck, gen time.Time, 
 		var cells [][]string
 		for _, cs := range rows {
 			if cs.Hold == nil {
-				cells = append(cells, []string{clean(cs.Name), "pending"})
+				row := []string{clean(cs.Name), "pending"}
+				if why := clean(firstNonEmpty(cs.Error, cs.Detail)); why != "" {
+					row = append(row, "", why) // the reason lines up with the held checks' reasons
+				}
+				cells = append(cells, row)
 				continue
 			}
 			cells = append(cells, []string{clean(cs.Name), fmt.Sprintf("%d held", cs.Hold.Count), "decides " + utc(cs.Hold.Until), clean(cs.Hold.Reason)})
@@ -206,7 +210,7 @@ func writeFinding(b *strings.Builder, f view.CheckFinding, indent string, gen ti
 func decidingChecks(ic view.InstallCheck) []view.CheckStatus {
 	var out []view.CheckStatus
 	for _, cs := range ic.Checks {
-		if cs.Hold != nil || cs.Pending && !cs.NotChecked() {
+		if cs.Hold != nil || cs.Pending {
 			out = append(out, cs)
 		}
 	}

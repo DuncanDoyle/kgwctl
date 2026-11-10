@@ -59,16 +59,13 @@ func NewRootCommand(opts ...Option) *cobra.Command {
 func Execute(root *cobra.Command) int { return app.Execute(root) }
 
 // logIgnored logs each registry capability the CLI does not use: the UI-only
-// authorizer, capabilities and command hints. check runs the collectors and the proxy stats source.
+// authorizer and capabilities. check uses the collectors, proxy stats source and command hints.
 func logIgnored(r *extension.Registry) {
 	ignored := func(name string) { slog.Debug("ignored registry capability", "capability", name) }
-	// The default registry sets an authorizer and command hints; only a different type counts.
+	// The default registry sets an authorizer; only a different type counts.
 	def := extension.New()
 	if reflect.TypeOf(r.Authorizer) != reflect.TypeOf(def.Authorizer) {
 		ignored("authorizer")
-	}
-	if reflect.TypeOf(r.Commands) != reflect.TypeOf(def.Commands) {
-		ignored("commands")
 	}
 	if len(r.CapabilityStates()) > 0 {
 		ignored("capabilities")

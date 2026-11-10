@@ -2,6 +2,7 @@ package view_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -120,12 +121,15 @@ func TestBuildCheckUnavailable(t *testing.T) {
 		{Name: "b", OK: false, Error: "403 forbidden"},
 		{Name: "c", OK: false, Pending: true},
 		{Name: "d", OK: true},
+		// Pending or held with an error text is still deciding, not "not checked".
+		{Name: "e", OK: false, Pending: true, Error: "1 resource is being processed by the controller"},
+		{Name: "f", OK: false, Error: "waiting", Hold: &health.Hold{Until: computedAt, Count: 1, Reason: "r"}},
 	}}
 	cs := build(checkModel(rep, nil), view.CheckSelect{}).Installs[0].Checks
 	if cs[0].Unavailable != "denied" || cs[0].Error == "" {
 		t.Errorf("raw fields not kept: %+v", cs[0])
 	}
-	for i, want := range []struct{ notChecked, passed bool }{{true, false}, {true, false}, {false, false}, {false, true}} {
+	for i, want := range []struct{ notChecked, passed bool }{{true, false}, {true, false}, {false, false}, {false, true}, {false, false}, {false, false}} {
 		if cs[i].NotChecked() != want.notChecked || cs[i].Passed() != want.passed {
 			t.Errorf("%s: NotChecked=%v Passed=%v", cs[i].Name, cs[i].NotChecked(), cs[i].Passed())
 		}
@@ -328,5 +332,30 @@ func TestCheckJSONOmission(t *testing.T) {
 		if !strings.Contains(string(b), want) {
 			t.Errorf("install lacks %s: %s", want, b)
 		}
+	}
+}
+
+// A since not before ObservedFrom is only when the engine first looked, so it is dropped.
+func TestBuildCheckSinceBeforeObserving(t *testing.T) {
+	from := time.Date(2026, 11, 10, 14, 0, 0, 0, time.UTC)
+	before, at, after := from.Add(-time.Hour), from, from.Add(3*time.Second)
+	var fs []health.Finding
+	for i, s := range []time.Time{before, at, after} {
+		f := finding(fmt.Sprint("f", i), "X-1", health.SeverityWarning, ref("HTTPRoute", "shop", fmt.Sprint("r", i)))
+		f.Since = &s
+		fs = append(fs, f)
+	}
+	rep := health.Report{Findings: fs}
+	got := build(checkModel(rep, nil), view.CheckSelect{ObservedFrom: from}).Installs[0].Findings
+	if len(got) != 3 || got[0].Since == nil || !got[0].Since.Equal(before) || got[1].Since != nil || got[2].Since != nil {
+		t.Fatalf("since = %v %v %v, want only the one before observing", got[0].Since, got[1].Since, got[2].Since)
+	}
+	b, err := json.Marshal(got[2])
+	if err != nil || strings.Contains(string(b), "since") {
+		t.Errorf("json keeps since: %s (%v)", b, err)
+	}
+	all := build(checkModel(rep, nil), view.CheckSelect{}).Installs[0].Findings
+	if all[1].Since == nil || all[2].Since == nil {
+		t.Error("a zero ObservedFrom must keep every since")
 	}
 }

@@ -403,7 +403,7 @@ A reference with one extra field.
 | `resource` | Ref | The object the finding is about; absent for install-level findings. |
 | `message` | string | What is wrong. |
 | `detail` | string | More context; absent when empty. |
-| `since` | string | RFC3339 time the problem started, when known. |
+| `since` | string | RFC3339 time the problem started, when known and earlier than the run started observing. A later time only says when kgwctl first looked, so it is left out. |
 | `group` | string | ID of the diagnosis group the finding is in; absent when none. |
 | `evidence` | object | Typed evidence with a `kind` tag, passed through from the engine; absent when none. |
 | `nextSteps` | NextStep[] | Commands to learn more, with the kube context filled in; absent when none. |
@@ -448,7 +448,7 @@ A reference with one extra field.
 | `detail` | string | Extra context of an `ok` check; absent when empty. |
 | `hold` | Hold | Set while the check is still deciding on some items. |
 
-A check was not checked when `unavailable` is set, or when `ok` is false and `error` is set. It passed when `ok` is true, it has no `hold` and it was checked.
+A check is still deciding when `pending` is true or it has a `hold`. Otherwise it was not checked when `unavailable` is set, or when `ok` is false and `error` is set. It passed when `ok` is true, it has no `hold` and it was checked.
 
 ### Hold
 

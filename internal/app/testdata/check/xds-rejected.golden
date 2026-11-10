@@ -6,7 +6,6 @@ ERRORS (1)
   Likely cause: Gateway kgateway-system/http
     KGWUI-001  Gateway kgateway-system/http  Status says Programmed, but proxies reject its config
                Listener rejected on 1 stream.
-               Since hh:mm:ss UTC.
                Next: kubectl --context ctx-0 logs -n kgateway-system kgateway-7d9f8b6c5-abcde --since=1h | grep 'xds error' | grep http
                Note: Log lines and admin output can contain configuration values, including secrets. Share them with care.
                Next: kubectl --context ctx-0 logs -n kgateway-system deploy/http --since=1h | grep -i rejected

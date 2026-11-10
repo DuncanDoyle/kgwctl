@@ -5,15 +5,12 @@ Install kgateway-system/kgateway (v2.5.0) · state: error
 ERRORS (1)
   Likely cause: Deployment kgateway-system/kgateway
     KGWUI-005  Deployment kgateway-system/kgateway  Controller not ready (0 of 1 replicas)
-               Since hh:mm:ss UTC.
 
 INFO (2)
   KGWUI-008  Could not check xDS rejects
              no ready controller pod to scrape
-             Since hh:mm:ss UTC.
   KGWUI-008  Could not verify scope against the controller
              controller metrics unavailable
-             Since hh:mm:ss UTC.
 
 NOT CHECKED (3)
   scope matches controller  controller metrics unavailable

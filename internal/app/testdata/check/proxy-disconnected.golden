@@ -6,7 +6,6 @@ WARNINGS (1)
   Likely cause: Gateway kgateway-system/http
     KGWUI-026  Gateway kgateway-system/http  Proxy lost its connection to the controller
                http-6f7c9d8b4-ax0 lost its connection to the controller. It keeps serving its last config.
-               Since hh:mm:ss UTC.
 
 NOT CHECKED (1)
   withheld config  not-on-version

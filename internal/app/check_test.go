@@ -16,6 +16,7 @@ import (
 
 	"github.com/DuncanDoyle/snellius/pkg/cache"
 	"github.com/DuncanDoyle/snellius/pkg/ctrlmetrics"
+	"github.com/DuncanDoyle/snellius/pkg/engine"
 	"github.com/DuncanDoyle/snellius/pkg/extension"
 	"github.com/DuncanDoyle/snellius/pkg/install"
 	"github.com/DuncanDoyle/snellius/pkg/objects"
@@ -262,16 +263,70 @@ func TestCheckRouteBrokenGroup(t *testing.T) {
 	t.Fatalf("013 in no diagnosis group (group %q)\n%s", group, r.stdout)
 }
 
-func TestCheckNoInstall(t *testing.T) {
-	env := checkEnv(t)
-	r := runCheck(t, env, statsRegistry(fakeStats{}), fastHooks(metricsScraper{}), "check")
-	if r.code != 2 {
-		t.Errorf("exit %d, want 2; stderr: %s", r.code, r.stderr)
-	}
-	for _, s := range []string{"Error: no kgateway install found", "no kgateway install detected", "kgwctl version"} {
-		if !strings.Contains(r.stderr, s) {
-			t.Errorf("stderr = %q, want it to contain %q", r.stderr, s)
+// assertReport fails unless stdout is the report in format: text with its header,
+// or exactly one Check envelope with installs installs; contains must appear in it.
+func assertReport(t *testing.T, format, stdout string, installs int, contains ...string) {
+	t.Helper()
+	switch format {
+	case "text":
+		if !strings.HasPrefix(stdout, "kgwctl check · ") {
+			t.Errorf("text: no report header:\n%s", stdout)
 		}
+	case "yaml":
+		j, err := yaml.YAMLToJSON([]byte(stdout))
+		if err != nil {
+			t.Fatalf("yaml: %v", err)
+		}
+		oneEnvelope(t, j, installs)
+	default:
+		oneEnvelope(t, []byte(stdout), installs)
+	}
+	for _, c := range contains {
+		if !strings.Contains(stdout, c) {
+			t.Errorf("%s: report lacks %q:\n%s", format, c, stdout)
+		}
+	}
+}
+
+// TestCheckExit2WithReport: exit 2 wins over findings, and the report is still printed in every format.
+func TestCheckExit2WithReport(t *testing.T) {
+	const noInstall = "Error: no kgateway install found; run \"kgwctl version\" to see what the cluster runs\n"
+	cases := []struct {
+		name     string
+		fixtures []string
+		args     []string
+		deny     bool
+		installs int
+		stderr   string
+		contains []string
+	}{
+		{name: "no-install", installs: 0, stderr: noInstall},
+		{name: "install-not-matched", fixtures: []string{checkInstall, checkController}, args: []string{"--install", "nope/nope"}, installs: 0, stderr: noInstall},
+		// 005 alone would exit 1; unreadable HTTPRoutes make it 2.
+		{name: "error-and-core-denied", fixtures: []string{checkInstall, checkControllerDown}, deny: true, installs: 1,
+			contains: []string{"KGWUI-005", "httproutes.gateway.networking.k8s.io"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := checkEnv(t, tc.fixtures...)
+			if tc.deny {
+				env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindAcquire, Resource: httpRoutes}, testenv.Action{Status: http.StatusForbidden})
+			}
+			for _, format := range []string{"text", "json", "yaml"} {
+				args := append([]string{"check", "-o", format}, tc.args...)
+				r := runCheck(t, env, statsRegistry(fakeStats{}), fastHooks(metricsScraper{}), args...)
+				if r.code != 2 {
+					t.Errorf("%s: exit %d, want 2; stderr: %s", format, r.code, r.stderr)
+				}
+				if tc.stderr != "" && r.stderr != tc.stderr {
+					t.Errorf("%s: stderr = %q, want %q", format, r.stderr, tc.stderr)
+				}
+				if !strings.HasPrefix(r.stderr, "Error: ") {
+					t.Errorf("%s: stderr = %q, want an Error line", format, r.stderr)
+				}
+				assertReport(t, format, r.stdout, tc.installs, tc.contains...)
+			}
+		})
 	}
 }
 
@@ -358,8 +413,8 @@ func TestCheckCoreDenied(t *testing.T) {
 	}
 }
 
-// oneEnvelope fails unless s decodes as exactly one JSON value, a Check envelope.
-func oneEnvelope(t *testing.T, s []byte) {
+// oneEnvelope fails unless s decodes as exactly one JSON value, a Check envelope with installs installs.
+func oneEnvelope(t *testing.T, s []byte, installs int) {
 	t.Helper()
 	dec := json.NewDecoder(bytes.NewReader(s))
 	var doc struct {
@@ -369,8 +424,8 @@ func oneEnvelope(t *testing.T, s []byte) {
 	if err := dec.Decode(&doc); err != nil {
 		t.Fatalf("decode: %v\n%s", err, s)
 	}
-	if doc.Kind != "Check" || doc.SchemaVersion != "kgwctl.kgateway.dev/v1alpha1" || len(doc.Item.Installs) != 1 {
-		t.Errorf("envelope = %s %s with %d installs, want Check kgwctl.kgateway.dev/v1alpha1 with 1", doc.Kind, doc.SchemaVersion, len(doc.Item.Installs))
+	if doc.Kind != "Check" || doc.SchemaVersion != "kgwctl.kgateway.dev/v1alpha1" || len(doc.Item.Installs) != installs {
+		t.Errorf("envelope = %s %s with %d installs, want Check kgwctl.kgateway.dev/v1alpha1 with %d", doc.Kind, doc.SchemaVersion, len(doc.Item.Installs), installs)
 	}
 	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		t.Errorf("a second document follows the envelope: %v", err)
@@ -383,7 +438,7 @@ func TestCheckJSONOneDocument(t *testing.T) {
 	if r.code != 1 {
 		t.Errorf("exit %d, want 1; stderr: %s", r.code, r.stderr)
 	}
-	oneEnvelope(t, []byte(r.stdout))
+	oneEnvelope(t, []byte(r.stdout), 1)
 }
 
 func TestCheckYAMLOneDocument(t *testing.T) {
@@ -399,7 +454,7 @@ func TestCheckYAMLOneDocument(t *testing.T) {
 	if err != nil {
 		t.Fatalf("yaml: %v", err)
 	}
-	oneEnvelope(t, j)
+	oneEnvelope(t, j, 1)
 }
 
 func TestCheckNamespaceFilter(t *testing.T) {
@@ -496,25 +551,67 @@ func TestExecuteExitError(t *testing.T) {
 	}
 }
 
-// TestCheckInterrupted cancels the command context, as Ctrl-C does: exit 2 with the report so far.
+// TestCheckInterrupted cancels the command context, as Ctrl-C does, once a
+// model with the install exists: exit 2 with the report so far.
 func TestCheckInterrupted(t *testing.T) {
 	env := checkEnv(t, checkInstall, checkController)
-	h := fastHooks(hangScraper{})
-	h.FirstPublishWait = time.Hour // only the cancel ends this run
-	var out, errb bytes.Buffer
-	root := app.NewRootWithCheckHooks(app.Config{Registry: statsRegistry(fakeStats{}), Build: testBuild, Out: &out, Err: &errb, Now: testNow}, h)
-	root.SetArgs([]string{"--kubeconfig", env.Kubeconfig, "check"})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	stop := time.AfterFunc(time.Second, cancel)
-	defer stop.Stop()
-	err := root.ExecuteContext(ctx)
-	var ee *app.ExitError
-	if !errors.As(err, &ee) || ee.Code != 2 {
-		t.Fatalf("err = %v, want an exit 2", err)
+	h := fastHooks(hangScraper{})
+	h.FirstPublishWait = time.Hour // only the cancel ends this run
+	h.Waiting = func(p *engine.Published) {
+		if p != nil && p.Model.Snapshot != nil && p.Model.Snapshot.Synced && len(p.Model.Installs) > 0 {
+			cancel()
+		}
 	}
-	if !strings.Contains(out.String(), "Install kgateway-system/kgateway") {
-		t.Errorf("no report on stdout:\n%s", out.String())
+	out, code := executeCheck(t, ctx, env, h)
+	if code != 2 {
+		t.Fatalf("exit %d, want 2", code)
+	}
+	for _, s := range []string{"Install kgateway-system/kgateway", "controller-metrics: loading"} {
+		if !strings.Contains(out, s) {
+			t.Errorf("report lacks %q:\n%s", s, out)
+		}
 	}
 	waitNoWatches(t, env.Proxies[0])
+}
+
+// TestCheckInterruptedInDiscovery cancels while discovery hangs: exit 2, nothing on stdout.
+func TestCheckInterruptedInDiscovery(t *testing.T) {
+	env := checkEnv(t, checkInstall, checkController)
+	hits := env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindDiscovery, Resource: "*"}, testenv.Action{Delay: time.Hour})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		for hits.N() == 0 && ctx.Err() == nil {
+			time.Sleep(5 * time.Millisecond)
+		}
+		cancel()
+	}()
+	start := time.Now()
+	out, code := executeCheck(t, ctx, env, fastHooks(metricsScraper{}))
+	if code != 2 || out != "" {
+		t.Errorf("exit %d stdout %q, want 2 and empty", code, out)
+	}
+	if took := time.Since(start); took > 5*time.Second {
+		t.Errorf("returned after %v, want soon after the cancel", took)
+	}
+}
+
+// executeCheck runs check under ctx and returns stdout and the exit code Execute would give.
+func executeCheck(t *testing.T, ctx context.Context, env *testenv.Env, h app.CheckTestHooks) (string, int) {
+	t.Helper()
+	var out, errb bytes.Buffer
+	root := app.NewRootWithCheckHooks(app.Config{Registry: statsRegistry(fakeStats{}), Build: testBuild, Out: &out, Err: &errb, Now: testNow}, h)
+	root.SetArgs([]string{"--kubeconfig", env.Kubeconfig, "check", "--request-timeout", "0"})
+	err := root.ExecuteContext(ctx)
+	var ee *app.ExitError
+	switch {
+	case err == nil:
+		return out.String(), 0
+	case errors.As(err, &ee):
+		return out.String(), ee.Code
+	}
+	t.Logf("error: %v", err)
+	return out.String(), 1
 }

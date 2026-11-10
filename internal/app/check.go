@@ -33,6 +33,8 @@ type checkTestHooks struct {
 	Scraper                                  ctrlmetrics.Scraper
 	Clock                                    clock.WithTicker
 	Quiet, FirstPublishWait, MetricsInterval time.Duration
+	// Waiting is called with the current model each time check wakes while waiting for completion.
+	Waiting func(*engine.Published)
 }
 
 // newCheckCmd builds the check command (design §3.1, §4.5).
@@ -69,7 +71,12 @@ func newCheckCmd(reg *extension.Registry, build BuildInfo, now func() time.Time,
 			}
 			o := observe.Options{Scraper: hooks.Scraper, Clock: hooks.Clock, Quiet: hooks.Quiet,
 				FirstPublishWait: hooks.FirstPublishWait, MetricsInterval: hooks.MetricsInterval, Logger: engineLogger(cmd.ErrOrStderr())}
-			p, inputs, err := acquire(cmd.Context(), f, start, rc, reg, o)
+			// Since times from this moment on only say when kgwctl first looked (design §3.3).
+			sel.ObservedFrom = time.Now()
+			if hooks.Clock != nil {
+				sel.ObservedFrom = hooks.Clock.Now()
+			}
+			p, inputs, err := acquire(cmd.Context(), f, start, rc, reg, o, hooks.Waiting)
 			if err != nil {
 				return err
 			}
@@ -88,7 +95,9 @@ func newCheckCmd(reg *extension.Registry, build BuildInfo, now func() time.Time,
 // acquire starts a session bound to ctx and returns its model once complete,
 // or at the deadline of --request-timeout from start (design §4.5), with the inputs at that moment.
 // It fails with exit 2 when ctx ends first or discovery misses the deadline.
-func acquire(ctx context.Context, f *Flags, start time.Time, rc *rest.Config, reg *extension.Registry, o observe.Options) (*engine.Published, map[schema.GroupVersionResource]load.Input, error) {
+func acquire(ctx context.Context, f *Flags, start time.Time, rc *rest.Config, reg *extension.Registry, o observe.Options,
+	waiting func(*engine.Published),
+) (*engine.Published, map[schema.GroupVersionResource]load.Input, error) {
 	sctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	var deadline <-chan time.Time
@@ -137,6 +146,9 @@ func acquire(ctx context.Context, f *Flags, start time.Time, rc *rest.Config, re
 
 	stopped := false
 	for !stopped && !s.Complete() {
+		if waiting != nil {
+			waiting(s.Current())
+		}
 		select {
 		case <-s.Changed():
 		case <-deadline:
@@ -166,11 +178,7 @@ func checkExit(cmd *cobra.Command, p *engine.Published, c view.Check, f *Flags, 
 	case p.Model.Snapshot == nil || !p.Model.Snapshot.Synced:
 		return &ExitError{Code: 2, Err: fmt.Errorf("the cluster was not read within --%s %v", flagRequestTimeout, f.RequestTimeout)}
 	case len(c.Installs) == 0:
-		why := "no kgateway install detected"
-		if f.Install != "" {
-			why = fmt.Sprintf("install %q not detected", f.Install)
-		}
-		return &ExitError{Code: 2, Err: fmt.Errorf("no kgateway install found (%s); run %q to see what the cluster runs", why, name+" version")}
+		return &ExitError{Code: 2, Err: fmt.Errorf("no kgateway install found; run %q to see what the cluster runs", name+" version")}
 	}
 	for _, ic := range c.Installs {
 		for _, cs := range ic.Checks {

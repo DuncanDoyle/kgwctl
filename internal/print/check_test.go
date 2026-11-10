@@ -111,7 +111,11 @@ func TestCheckText(t *testing.T) {
 	holds.Checks = append(ok("a", "b"),
 		view.CheckStatus{Name: "status progress", OK: true, Hold: hold(12, gen.Add(5*time.Minute), "Waiting to see if status catches up")},
 		view.CheckStatus{Name: "proxy ack", OK: true, Hold: hold(1, gen.Add(3*time.Minute), "Waiting for proxies to acknowledge")},
-		view.CheckStatus{Name: "warming", Pending: true})
+		view.CheckStatus{Name: "warming", Pending: true},
+		// Pending or held with an error text is still deciding, never also under NOT CHECKED.
+		view.CheckStatus{Name: "resource status", Pending: true, Error: "1 resource is being processed by the controller"},
+		view.CheckStatus{Name: "xDS rejects", Pending: true, Error: "Waiting for rejects to return",
+			Hold: hold(1, gen.Add(time.Minute), "Waiting to see if rejects return")})
 
 	notChecked := inst("kgateway-system", "kgateway", "healthy")
 	notChecked.Checks = append(ok("a"),

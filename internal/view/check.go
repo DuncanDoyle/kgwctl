@@ -110,7 +110,13 @@ type CheckStatus struct {
 
 // NotChecked reports whether the check could not run: its input is unavailable,
 // or it failed with an error (a 403 from a scrape is OK=false with Error and no Unavailable).
-func (c CheckStatus) NotChecked() bool { return c.Unavailable != "" || !c.OK && c.Error != "" }
+// A pending or holding check is still deciding, never not checked.
+func (c CheckStatus) NotChecked() bool {
+	if c.Pending || c.Hold != nil {
+		return false
+	}
+	return c.Unavailable != "" || !c.OK && c.Error != ""
+}
 
 // Passed reports whether the check is OK, holds nothing and was checked.
 func (c CheckStatus) Passed() bool { return c.OK && c.Hold == nil && !c.NotChecked() }
@@ -158,6 +164,9 @@ type CheckSelect struct {
 	Install string
 	// AllControllers is carried for the command; every detected install is shown either way.
 	AllControllers bool
+	// ObservedFrom is when the command started observing. A since not before it is only
+	// when kgwctl first looked, so it is left out; zero keeps every since.
+	ObservedFrom time.Time
 }
 
 // Validate returns the error of a malformed Install selector, for the command to report as a usage error.
@@ -251,7 +260,7 @@ func installCheck(m *engine.Model, im *engine.InstallModel, reg *extension.Regis
 	})
 	for _, i := range kept {
 		f := &fs[i]
-		ic.Findings = append(ic.Findings, checkFinding(f, in, cmds))
+		ic.Findings = append(ic.Findings, checkFinding(f, in, cmds, sel.ObservedFrom))
 		switch f.Severity {
 		case health.SeverityError:
 			ic.Counts.Error++
@@ -290,11 +299,11 @@ func inNamespace(f health.Finding, ns string) bool {
 	return ns == "" || f.Resource == nil || f.Resource.Namespace == "" || f.Resource.Namespace == ns
 }
 
-// checkFinding maps f; in and cmds build its next steps.
-func checkFinding(f *health.Finding, in diagnose.Input, cmds diagnose.Commands) CheckFinding {
+// checkFinding maps f; in and cmds build its next steps. A since not before from is dropped.
+func checkFinding(f *health.Finding, in diagnose.Input, cmds diagnose.Commands, from time.Time) CheckFinding {
 	cf := CheckFinding{ID: f.ID, Code: f.Code, Slug: f.Slug, Severity: string(f.Severity), Resource: f.Resource,
 		Message: f.Message, Detail: f.Detail, Group: f.Group}
-	if f.Since != nil {
+	if f.Since != nil && (from.IsZero() || f.Since.Before(from)) {
 		cf.Since = new(f.Since.UTC())
 	}
 	if f.Facts != nil {
