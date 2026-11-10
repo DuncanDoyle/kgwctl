@@ -4,6 +4,7 @@
 #   hack/live-check.sh setup               create the cluster, install kgateway and the fixtures
 #   hack/live-check.sh verify <kubeconfig> run kgwctl against it, outputs in hack/live/out/<name>/
 #
+# verify also runs `check`, with two scenarios as admin: controller down, route to a missing Service.
 # Env: KUBECONFIG_FILE (admin kubeconfig, default hack/live/out/admin.kubeconfig),
 # KGW_VERSION (default: latest stable kgateway release).
 set -euo pipefail
@@ -89,6 +90,47 @@ EOF
   )
 }
 
+# Breaks the install twice, checks the report, restores. Reads dir, bin, kc and failed from verify (dynamic scope).
+check_scenarios() {
+  local replicas
+  replicas="$(k -n "$KGW_NS" get deployment kgateway -o jsonpath='{.spec.replicas}')"
+  restore_controller() { k -n "$KGW_NS" scale deployment kgateway --replicas="$replicas" >/dev/null; }
+  restore_route() { k -n "$FIX_NS" delete httproute check-missing-svc --ignore-not-found >/dev/null; }
+  trap 'restore_controller; restore_route' EXIT
+
+  log "scenario: controller scaled to 0"
+  k -n "$KGW_NS" scale deployment kgateway --replicas=0
+  k -n "$KGW_NS" wait --for=delete pod -l app.kubernetes.io/name=kgateway --timeout=120s
+  expect_exit controller-down.txt 1 "$kc" -n "$FIX_NS"
+  grep -Eq 'KGWUI-005|[Cc]ontroller' "$dir/check-controller-down.txt" ||
+    { log "FAIL check-controller-down.txt shows no controller finding"; failed=1; }
+  restore_controller
+  k -n "$KGW_NS" rollout status deployment kgateway --timeout=180s
+
+  log "scenario: route to a missing Service"
+  k apply -f - <<MANIFEST
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: check-missing-svc
+  namespace: $FIX_NS
+spec:
+  parentRefs:
+    - name: web
+  rules:
+    - backendRefs:
+        - name: no-such-service
+          port: 8080
+MANIFEST
+  k -n "$FIX_NS" wait --for=jsonpath='{.status.parents[0].controllerName}'=kgateway.dev/kgateway \
+    httproute/check-missing-svc --timeout=120s
+  expect_exit missing-service.txt 1 "$kc" -n "$FIX_NS"
+  grep -q 'KGWUI-013' "$dir/check-missing-service.txt" ||
+    { log "FAIL check-missing-service.txt shows no KGWUI-013"; failed=1; }
+  restore_route
+  trap - EXIT
+}
+
 verify() {
   local kc="${1:?usage: verify <kubeconfig>}"
   [ -f "$kc" ] || { echo "no kubeconfig at $kc" >&2; exit 1; }
@@ -125,6 +167,42 @@ verify() {
     run "describe-httproute-$r.txt" describe httproute "$r" -n "$FIX_NS"
     run "describe-httproute-$r.json" describe httproute "$r" -n "$FIX_NS" -o json
   done
+
+  # check_run <file> <kubeconfig> <args...>: records stdout, stderr and the exit code as check-<file>*; returns the code.
+  check_run() {
+    local f="$1" kcfg="$2" code=0; shift 2
+    "$bin" --kubeconfig "$kcfg" --context "$CONTEXT" check "$@" >"$dir/check-$f" 2>"$dir/check-$f.stderr" || code=$?
+    echo "$code" >"$dir/check-$f.exit"
+    log "check $f: exit $code"
+    return "$code"
+  }
+  # expect_exit <file> <want> <kubeconfig> <args...>: runs check and fails verify on another exit code.
+  expect_exit() {
+    local f="$1" want="$2" kcfg="$3" code=0; shift 3
+    check_run "$f" "$kcfg" "$@" || code=$?
+    if [ "$code" -ne "$want" ]; then
+      log "FAIL check-$f: exit $code, want $want"
+      failed=1
+    fi
+  }
+
+  # The fixtures hold broken routes on purpose, so exit 0, 1 and 2 are all recorded; 3 or more is a crash.
+  local code=0
+  check_run healthy.txt "$kc" -n "$FIX_NS" || code=$?
+  [ "$code" -le 2 ] || { log "FAIL check-healthy.txt: exit $code"; failed=1; }
+  code=0
+  check_run healthy.json "$kc" -n "$FIX_NS" -o json || code=$?
+  [ "$code" -le 2 ] || { log "FAIL check-healthy.json: exit $code"; failed=1; }
+  # With docs/rbac.yaml no check may be unavailable because a read was denied.
+  if grep -qi 'forbidden' "$dir/check-healthy.txt"; then
+    log "FAIL check-healthy.txt mentions forbidden; see $dir"
+    failed=1
+  fi
+
+  # The scenarios change the cluster, so they run once, with the admin kubeconfig.
+  if [ "$kc" = "$KUBECONFIG_FILE" ]; then
+    check_scenarios
+  fi
 
   if ! awk -v ns="$FIX_NS" '$1 == ns && $2 == "orphan" { found = 1 } END { exit !found }' \
     "$dir/get-httproutes.table"; then
