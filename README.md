@@ -81,7 +81,7 @@ A check that could not run or is still deciding never counts as passed.
 kgwctl check -n live
 ```
 
-Exit codes: `0` when clean, `1` when there are error or warning findings, `2` when something could not be checked. `get`, `describe` and `version` keep `0` and `1`. Use `-o json|yaml` for a versioned envelope ([`docs/output.md`](docs/output.md)), `-n` or `-A` to pick the namespaces, and `--install <ns>/<name>` to pick one install.
+Exit codes: `0` when clean, `1` when there are error or warning findings, `2` when something could not be checked. `get`, `describe` and `version` keep `0` and `1`. Use `-o json|yaml` for a versioned envelope ([`docs/output.md`](docs/output.md)), `-n` or `-A` to pick the namespaces (install-level findings, such as a controller that is down, always show), and `--install <ns>/<name>` to pick one install.
 
 `check` reads controller metrics and Envoy stats through the API server's `pods/proxy`. If that is denied, those checks show under Not checked with the RBAC line to add. The run does not fail. See [Permissions](#permissions).
 

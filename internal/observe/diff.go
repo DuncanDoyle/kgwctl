@@ -200,12 +200,12 @@ func (t *Tracker) Add(c view.Check, at time.Time) []Event {
 			e := t.entries[key]
 			if e == nil {
 				t.entries[key] = &tracked{f: view.ObservedFinding{ID: f.ID, Install: ic.Install.ID, Code: f.Code, Severity: f.Severity, Resource: f.Resource,
-					FirstSeen: at, Severities: []view.SeverityAt{{Severity: f.Severity, At: at}}}, install: ic.Install.ID, message: f.Message, transitioned: !first}
+					Message: f.Message, FirstSeen: at, Severities: []view.SeverityAt{{Severity: f.Severity, At: at}}}, install: ic.Install.ID, message: f.Message, transitioned: !first}
 				continue
 			}
 			e.f.ClearedAt = nil
 			if e.message != f.Message {
-				e.message = f.Message
+				e.message, e.f.Message = f.Message, f.Message
 				e.transitioned = true
 			}
 			if e.f.Severity != f.Severity {

@@ -65,6 +65,9 @@ func writeObserved(b *strings.Builder, o view.Observation, withInstall bool) {
 		if f.Resource != nil {
 			head += "  " + clean(f.Resource.Kind) + " " + clean(f.Resource.String())
 		}
+		if f.Message != "" {
+			head += "  " + clean(f.Message)
+		}
 		if withInstall {
 			head += "  (install " + clean(f.Install) + ")"
 		}

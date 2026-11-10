@@ -141,10 +141,12 @@ type Observation struct {
 type ObservedFinding struct {
 	ID string `json:"id"`
 	// Install is the install ID; two installs can raise the same finding ID.
-	Install    string       `json:"install"`
-	Code       string       `json:"code"`
-	Severity   string       `json:"severity"`
-	Resource   *objects.Ref `json:"resource,omitempty"`
+	Install  string       `json:"install"`
+	Code     string       `json:"code"`
+	Severity string       `json:"severity"`
+	Resource *objects.Ref `json:"resource,omitempty"`
+	// Message is the latest message.
+	Message    string       `json:"message"`
 	FirstSeen  time.Time    `json:"firstSeen"`
 	ClearedAt  *time.Time   `json:"clearedAt,omitempty"`
 	Severities []SeverityAt `json:"severities"`
@@ -253,7 +255,7 @@ func installCheck(m *engine.Model, im *engine.InstallModel, reg *extension.Regis
 
 	kept := make([]int, 0, len(fs))
 	for i := range fs {
-		if inNamespace(fs[i], sel.Namespace) {
+		if inNamespace(fs[i], sel.Namespace, r.Namespace) {
 			kept = append(kept, i)
 		}
 	}
@@ -296,9 +298,10 @@ func installCheck(m *engine.Model, im *engine.InstallModel, reg *extension.Regis
 	return ic
 }
 
-// inNamespace keeps a finding without a namespaced resource, and one in ns; "" keeps all.
-func inNamespace(f health.Finding, ns string) bool {
-	return ns == "" || f.Resource == nil || f.Resource.Namespace == "" || f.Resource.Namespace == ns
+// inNamespace keeps a finding without a namespaced resource, one in ns, and one in
+// the install's namespace (installNS), which affects every namespace; "" keeps all.
+func inNamespace(f health.Finding, ns, installNS string) bool {
+	return ns == "" || f.Resource == nil || f.Resource.Namespace == "" || f.Resource.Namespace == ns || f.Resource.Namespace == installNS
 }
 
 // checkFinding maps f; in and cmds build its next steps. A since not before from is dropped.

@@ -115,9 +115,9 @@ func TestCheckTextObserved(t *testing.T) {
 		Install: view.InstallRef{ID: "kgateway-system.kgateway", Namespace: "kgateway-system", Name: "kgateway"}, State: "warning",
 	}}, Observation: &view.Observation{StartedAt: gen, EndedAt: gen.Add(6 * time.Minute), StopReason: "timeout",
 		Observed: []view.ObservedFinding{
-			{ID: "a", Install: "kgateway-system.kgateway", Code: "KGWUI-003", Severity: "warning", Resource: httpRef("shop", "web"), FirstSeen: gen,
+			{ID: "a", Install: "kgateway-system.kgateway", Code: "KGWUI-003", Severity: "warning", Resource: httpRef("shop", "web"), Message: "Not yet processed", FirstSeen: gen,
 				Severities: []view.SeverityAt{{Severity: "info", At: gen}, {Severity: "warning", At: gen.Add(time.Minute)}}},
-			{ID: "b", Install: "kgateway-system.kgateway", Code: "KGWUI-013", Severity: "warning", Resource: httpRef("shop", "cart\x1b[1m"), FirstSeen: gen,
+			{ID: "b", Install: "kgateway-system.kgateway", Code: "KGWUI-013", Severity: "warning", Resource: httpRef("shop", "cart\x1b[1m"), Message: "Backend not found\x1b[2J", FirstSeen: gen,
 				ClearedAt: &cleared, Severities: []view.SeverityAt{{Severity: "warning", At: gen}}},
 		}}}
 	got := render(t, c, false)

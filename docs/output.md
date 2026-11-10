@@ -352,7 +352,7 @@ A reference with one extra field.
 
 ## Check
 
-`check` prints one report per selected install. With `-n`, findings on objects of other namespaces are dropped; findings without a namespace stay, and `state` is still the engine's. Times are UTC.
+`check` prints one report per selected install. With `-n`, findings on objects of other namespaces are dropped; findings without a namespace or in the install's own namespace (such as its controller) stay, since they affect every namespace, and `state` is still the engine's. Times are UTC.
 
 ### Check
 
@@ -476,6 +476,7 @@ A check is still deciding when `pending` is true or it has a `hold`. Otherwise i
 | `code` | string | Finding code. |
 | `severity` | string | Latest severity. |
 | `resource` | Ref | The object the finding is about. |
+| `message` | string | Latest message. |
 | `firstSeen` | string | RFC3339 time first seen. |
 | `clearedAt` | string | RFC3339 time it cleared; absent while it was still present at the end. |
 | `severities` | SeverityAt[] | Severity changes, oldest first. |

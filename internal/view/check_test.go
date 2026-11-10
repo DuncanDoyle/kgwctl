@@ -96,6 +96,24 @@ func TestBuildCheckNamespaceFilter(t *testing.T) {
 	}
 }
 
+// TestBuildCheckNamespaceKeepsInstallLevel: a finding in the install's namespace
+// (a controller down) affects every namespace, so -n never hides it.
+func TestBuildCheckNamespaceKeepsInstallLevel(t *testing.T) {
+	ctrl := &objects.Ref{Group: "apps", Kind: "Deployment", Namespace: "kgateway-system", Name: "kgateway"}
+	rep := health.Report{State: health.StateError, Findings: []health.Finding{
+		finding("ctrl", "X-5", health.SeverityError, ctrl),
+		finding("shop", "X-1", health.SeverityWarning, ref("HTTPRoute", "shop", "r")),
+	}}
+	c := build(checkModel(rep, nil), view.CheckSelect{Namespace: "live"})
+	ic := c.Installs[0]
+	if got := strings.Join(ids(ic.Findings), ","); got != "ctrl" {
+		t.Errorf("kept = %s, want the controller's finding only", got)
+	}
+	if ic.Counts != (view.Counts{Error: 1}) || c.ExitCode() != 1 {
+		t.Errorf("counts %+v exit %d, want 1 error and exit 1", ic.Counts, c.ExitCode())
+	}
+}
+
 func TestBuildCheckHold(t *testing.T) {
 	until := time.Date(2026, 11, 10, 15, 7, 12, 0, time.FixedZone("x", 3600))
 	rep := health.Report{Checks: []health.CheckResult{

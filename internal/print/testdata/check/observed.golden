@@ -3,10 +3,10 @@ kgwctl check · context prod · 2026-11-10 14:08:10 UTC · kgwctl v0.1.0-dev
 Install kgateway-system/kgateway · state: warning
 
 OBSERVED DURING THIS RUN (2) · 14:02:10 to 14:08:10 UTC, stopped by timeout
-  KGWUI-003  HTTPRoute shop/web
+  KGWUI-003  HTTPRoute shop/web  Not yet processed
              First seen 14:02:10, still present.
              Severity: info from 14:02:10, warning from 14:03:10.
-  KGWUI-013  HTTPRoute shop/cart[1m
+  KGWUI-013  HTTPRoute shop/cart[1m  Backend not found[2J
              First seen 14:02:10, cleared 14:05:10.
              Severity: warning from 14:02:10.
 

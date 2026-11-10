@@ -102,8 +102,9 @@ check_scenarios() {
   k -n "$KGW_NS" scale deployment kgateway --replicas=0
   k -n "$KGW_NS" wait --for=delete pod -l app.kubernetes.io/name=kgateway --timeout=120s
   expect_exit controller-down.txt 1 "$kc" -n "$FIX_NS"
-  grep -Eq 'KGWUI-005|[Cc]ontroller' "$dir/check-controller-down.txt" ||
-    { log "FAIL check-controller-down.txt shows no controller finding"; failed=1; }
+  # The controller is in $KGW_NS, not $FIX_NS: -n must still show its 005.
+  grep -q 'KGWUI-005' "$dir/check-controller-down.txt" ||
+    { log "FAIL check-controller-down.txt shows no KGWUI-005 under -n $FIX_NS"; failed=1; }
   restore_controller
   k -n "$KGW_NS" rollout status deployment kgateway --timeout=180s
 
@@ -125,8 +126,11 @@ MANIFEST
   k -n "$FIX_NS" wait --for=jsonpath='{.status.parents[0].controllerName}'=kgateway.dev/kgateway \
     httproute/check-missing-svc --timeout=120s
   expect_exit missing-service.txt 1 "$kc" -n "$FIX_NS"
-  grep -q 'KGWUI-013' "$dir/check-missing-service.txt" ||
-    { log "FAIL check-missing-service.txt shows no KGWUI-013"; failed=1; }
+  if ! grep -Eq "KGWUI-013 +HTTPRoute $FIX_NS/check-missing-svc" "$dir/check-missing-service.txt" ||
+    ! grep -q 'no-such-service' "$dir/check-missing-service.txt"; then
+    log "FAIL check-missing-service.txt shows no KGWUI-013 on check-missing-svc naming no-such-service"
+    failed=1
+  fi
   restore_route
   trap - EXIT
 }
