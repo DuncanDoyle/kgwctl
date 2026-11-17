@@ -50,6 +50,8 @@ One command that collects what support asks for, so nobody hand-collects it (D-0
 - One `tar.gz`; namespace, install and time-window filters.
 - Secrets redacted by default, with an explicit opt-in. Redaction is its own tested component.
 - Bundle collectors are a registry extension point for vendor builds (D-009).
+- Prior art: `agctl bug-report` ([agentgateway#3991](https://github.com/agentgateway/agentgateway/pull/3991)). Borrow kind discovery by CRD category (`kgateway`), partial results with an `errors.txt` under a global `--timeout`, and previous-container logs only after a restart (D-019).
+- Open design point: agctl captures ConfigMaps and redacted Secrets. kgwctl's RBAC reads neither, and the bundle needs `pods/log`.
 
 ### Phase 5 — Full analysis
 **Status:** Not started
