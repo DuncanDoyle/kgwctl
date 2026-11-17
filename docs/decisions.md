@@ -92,3 +92,9 @@ Append-only. Newest at the bottom. Supersede, don't edit.
 **Alternatives:** Display strings in JSON (as text prints them) — rejected: JSON is the stable interface (§8).
 **Consequences:** `docs/output.md` documents the schema; `TestOutputDocMatchesSchema` keeps it in step with the Go types.
 
+
+## D-019 — Support bundle: agctl prior art, CLI only (2026-11-17, phase 4)
+**Context:** `agctl bug-report` (agentgateway#3991) ships a support bundle much like Phase 4. D-014 to D-018 are on the unmerged Phase 2 branch.
+**Decision:** Phase 4 borrows three ideas from it: kind discovery by CRD category, partial results with `errors.txt`, and previous-container logs only after a restart. The bundle stays a CLI feature, with no shared library for now.
+**Alternatives:** A Snellius "download bundle" — deferred: a bundle crosses the per-Gateway authorization of D-013 in Snellius. The owner revisits it after Snellius Phase 12.
+**Consequences:** Phase 4's design settles Secret and ConfigMap capture and the `pods/log` RBAC grant. Collector, manifest and redaction interfaces stay free of CLI concerns, so they can move to Snellius `pkg/` later.
