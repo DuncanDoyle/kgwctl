@@ -1,0 +1,10 @@
+kgwctl check · context ctx-0 · YYYY-MM-DD hh:mm:ss UTC · kgwctl v0.1.0
+
+Install kgateway-system/kgateway (v2.5.0) · state: healthy
+
+NOT CHECKED (1)
+  withheld config  not-on-version
+
+CHECKS RUN: 20
+
+No findings, 1 not checked.

@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DuncanDoyle/kgateway-ui/pkg/install"
+	"github.com/DuncanDoyle/snellius/pkg/install"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
@@ -173,6 +173,14 @@ func TestNoAccumulation(t *testing.T) {
 	}
 }
 
+// forbiddenSnellius reports whether pkg is the Snellius package sub or below it.
+func forbiddenSnellius(pkg, sub string) bool {
+	p := "github.com/DuncanDoyle/snellius/" + sub
+	return pkg == p || strings.HasPrefix(pkg, p+"/")
+}
+
+// TestBinaryDeps keeps the Snellius server (pkg/app) out of the binary. pkg/api
+// is allowed transitively (pkg/extension imports it); see TestNoDirectServerImports.
 func TestBinaryDeps(t *testing.T) {
 	cmd := exec.Command("go", "list", "-deps", "./cmd/kgwctl", "./examples/downstream")
 	cmd.Dir = "../.." // module root
@@ -182,8 +190,31 @@ func TestBinaryDeps(t *testing.T) {
 	}
 	for _, pkg := range strings.Fields(string(out)) {
 		if strings.HasPrefix(pkg, "sigs.k8s.io/controller-runtime") ||
-			pkg == "github.com/DuncanDoyle/kgateway-ui/pkg/app" || strings.HasPrefix(pkg, "github.com/DuncanDoyle/kgateway-ui/pkg/app/") {
+			forbiddenSnellius(pkg, "pkg/app") ||
+			strings.HasPrefix(pkg, "github.com/DuncanDoyle/kgateway-ui") {
 			t.Errorf("binary depends on %s", pkg)
+		}
+	}
+}
+
+// TestNoDirectServerImports checks that no kgwctl package imports Snellius
+// pkg/api or pkg/app itself, tests included.
+func TestNoDirectServerImports(t *testing.T) {
+	cmd := exec.Command("go", "list", "-test", "-f", `{{.ImportPath}} {{join .Imports " "}} {{join .TestImports " "}} {{join .XTestImports " "}}`, "./...")
+	cmd.Dir = "../.." // module root
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("go list: %v\n%s", err, out)
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		f := strings.Fields(line)
+		if len(f) == 0 {
+			continue
+		}
+		for _, imp := range f[1:] {
+			if forbiddenSnellius(imp, "pkg/app") || forbiddenSnellius(imp, "pkg/api") {
+				t.Errorf("%s imports %s directly", f[0], imp)
+			}
 		}
 	}
 }
@@ -235,6 +266,19 @@ func TestExecPluginHangsPastDeadline(t *testing.T) {
 			t.Errorf("%v: exit %d, stdout %q; want 1 and empty", args, r.code, r.stdout)
 		}
 		if r.stderr != "Error: timed out during discovery\n" {
+			t.Errorf("%v: stderr = %q, want the discovery timeout", args, r.stderr)
+		}
+		if r.took > 2*time.Second {
+			t.Errorf("%v: returned after %v, want within 2s of start", args, r.took)
+		}
+	}
+	// check is exit 2: it could not check (design §3.4).
+	for _, args := range [][]string{{"check"}, {"check", "--live", "--timeout", "1m"}} {
+		r := runCmd(t, &execEnv, append(args, "--request-timeout", "1s")...)
+		if r.code != 2 || r.stdout != "" {
+			t.Errorf("%v: exit %d, stdout %q; want 2 and empty", args, r.code, r.stdout)
+		}
+		if !strings.Contains(r.stderr, "discovery did not finish") {
 			t.Errorf("%v: stderr = %q, want the discovery timeout", args, r.stderr)
 		}
 		if r.took > 2*time.Second {

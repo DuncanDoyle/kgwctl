@@ -6,11 +6,11 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/DuncanDoyle/kgateway-ui/pkg/cache"
-	"github.com/DuncanDoyle/kgateway-ui/pkg/engine"
-	"github.com/DuncanDoyle/kgateway-ui/pkg/kinds"
-	"github.com/DuncanDoyle/kgateway-ui/pkg/objects"
-	"github.com/DuncanDoyle/kgateway-ui/pkg/process"
+	"github.com/DuncanDoyle/snellius/pkg/cache"
+	"github.com/DuncanDoyle/snellius/pkg/engine"
+	"github.com/DuncanDoyle/snellius/pkg/kinds"
+	"github.com/DuncanDoyle/snellius/pkg/objects"
+	"github.com/DuncanDoyle/snellius/pkg/process"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/DuncanDoyle/kgwctl/internal/load"
@@ -92,7 +92,7 @@ func Version(b BuildInfo, r *load.Result, f *Filter) (VersionView, error) {
 	}
 	for _, gvr := range append(slices.Clone(owners), cache.ProxyPodsGVR, cache.CRDsGVR) {
 		if in, ok := r.Inputs[gvr]; ok && in.State != load.StateOK {
-			v.Incomplete = append(v.Incomplete, in)
+			v.Incomplete = append(v.Incomplete, RedactInput(in))
 		}
 	}
 	slices.SortFunc(v.Incomplete, func(a, b load.Input) int { return cmp.Compare(a.Resource, b.Resource) })

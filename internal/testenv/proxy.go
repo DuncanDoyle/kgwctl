@@ -16,8 +16,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/DuncanDoyle/kgateway-ui/pkg/extension"
-	"github.com/DuncanDoyle/kgateway-ui/pkg/install"
+	"github.com/DuncanDoyle/snellius/pkg/extension"
+	"github.com/DuncanDoyle/snellius/pkg/install"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 )
@@ -35,9 +35,10 @@ const (
 // holdAfterList is how long HoldWatchThenStatus keeps a watch open after the matching LIST.
 const holdAfterList = 200 * time.Millisecond
 
-// Match selects requests by kind, resource and label selector.
+// Match selects requests by kind, resource and label selector, or a named
+// object's subresource.
 type Match struct {
-	// Kind is KindAcquire, KindWatch or KindDiscovery.
+	// Kind is KindAcquire, KindWatch or KindDiscovery; it is ignored when Subresource is set.
 	Kind string
 	// Resource is "pods" for the core group and "<resource>.<group>" otherwise.
 	// For discovery it is "*" for every request, or the group version ("v1",
@@ -45,6 +46,9 @@ type Match struct {
 	Resource string
 	// LabelSelector is compared as a parsed selector; "" matches any.
 	LabelSelector string
+	// Subresource, if set, selects GETs of an object's subresource, such as
+	// "proxy" for pods/<name>/proxy/...; Kind and LabelSelector are then ignored.
+	Subresource string
 }
 
 // Action is the fault applied to a matching request. Delay runs first, then
@@ -75,9 +79,11 @@ type rule struct {
 
 // request is the classified form of one incoming request.
 type request struct {
-	kind     string // a Kind constant, or "" when no rule can match
+	kind     string // a Kind constant, or "" when no Kind rule can match
 	resource string
 	selector string // canonical label selector
+	// subresource is set for a GET of a named object's subresource.
+	subresource string
 }
 
 // Proxy is an httptest reverse proxy in front of envtest that injects faults.
@@ -301,6 +307,9 @@ func (p *Proxy) waitForList(r *http.Request, req request) bool {
 }
 
 func (ru *rule) matches(req request) bool {
+	if ru.m.Subresource != "" {
+		return req.subresource == ru.m.Subresource && (ru.m.Resource == "*" || ru.m.Resource == req.resource)
+	}
 	if req.kind == "" || ru.m.Kind != req.kind {
 		return false
 	}
@@ -337,12 +346,16 @@ func classify(r *http.Request) request {
 	if len(rest) >= 3 && rest[0] == "namespaces" {
 		rest = rest[2:]
 	}
-	if len(rest) != 1 {
-		return request{} // a named object or subresource
-	}
 	resource := rest[0]
 	if group != "" {
 		resource += "." + group
+	}
+	// <resource>/<name>/<subresource>[/...]: only Subresource rules match it.
+	if len(rest) >= 3 {
+		return request{resource: resource, subresource: rest[2]}
+	}
+	if len(rest) != 1 {
+		return request{} // a named object
 	}
 	q := r.URL.Query()
 	sel := ""

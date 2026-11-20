@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"reflect"
 
-	"github.com/DuncanDoyle/kgateway-ui/pkg/extension"
+	"github.com/DuncanDoyle/snellius/pkg/extension"
 	"github.com/spf13/cobra"
 
 	"github.com/DuncanDoyle/kgwctl/internal/app"
@@ -29,6 +29,9 @@ type Option func(*options)
 func WithName(name string) Option { return func(o *options) { o.name = name } }
 
 // WithRegistry sets the registry whose kinds, detectors and checks reach the commands.
+// A vendor's checks, collectors and kinds belong in its own Snellius pack
+// (extension.WithPack). extension.WithDetectors attaches detectors to the
+// default kgateway pack, so the installs they claim get the kgateway checks.
 func WithRegistry(r *extension.Registry) Option { return func(o *options) { o.registry = r } }
 
 // WithCommands adds top-level commands.
@@ -58,24 +61,14 @@ func NewRootCommand(opts ...Option) *cobra.Command {
 // It replaces klog's logger process-wide, so call it before the host starts any client-go goroutine.
 func Execute(root *cobra.Command) int { return app.Execute(root) }
 
-// logIgnored logs each registry capability the CLI does not use: the
-// long-running collectors and the UI-only authorizer, capabilities and
-// command hints.
+// logIgnored logs each registry capability the CLI does not use: the UI-only
+// authorizer and capabilities. check uses the collectors, proxy stats source and command hints.
 func logIgnored(r *extension.Registry) {
 	ignored := func(name string) { slog.Debug("ignored registry capability", "capability", name) }
-	if len(r.Collectors()) > 0 {
-		ignored("collectors")
-	}
-	if r.ProxyStats != nil {
-		ignored("proxy stats source")
-	}
-	// The default registry sets an authorizer and command hints; only a different type counts.
+	// The default registry sets an authorizer; only a different type counts.
 	def := extension.New()
 	if reflect.TypeOf(r.Authorizer) != reflect.TypeOf(def.Authorizer) {
 		ignored("authorizer")
-	}
-	if reflect.TypeOf(r.Commands) != reflect.TypeOf(def.Commands) {
-		ignored("commands")
 	}
 	if len(r.CapabilityStates()) > 0 {
 		ignored("capabilities")

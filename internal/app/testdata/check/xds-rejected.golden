@@ -1,0 +1,22 @@
+kgwctl check · context ctx-0 · YYYY-MM-DD hh:mm:ss UTC · kgwctl v0.1.0
+
+Install kgateway-system/kgateway (v2.5.0) · state: error
+
+ERRORS (1)
+  Likely cause: Gateway kgateway-system/http
+    KGWUI-001  Gateway kgateway-system/http  Status says Programmed, but proxies reject its config
+               Listener rejected on 1 stream.
+               Next: kubectl --context ctx-0 logs -n kgateway-system kgateway-7d9f8b6c5-abcde --since=1h | grep 'xds error' | grep http
+               Note: Log lines and admin output can contain configuration values, including secrets. Share them with care.
+               Next: kubectl --context ctx-0 logs -n kgateway-system deploy/http --since=1h | grep -i rejected
+               Note: Log lines and admin output can contain configuration values, including secrets. Share them with care.
+               Next: kubectl --context ctx-0 port-forward -n kgateway-system deploy/http 19000:19000
+                     curl -s localhost:19000/stats | grep -E 'update_(rejected|success)'
+               Note: This command opens a connection to the proxy's admin port. Log lines and admin output can contain configuration values, including secrets. Share them with care.
+
+NOT CHECKED (1)
+  withheld config  not-on-version
+
+CHECKS RUN: 20
+
+1 error, 1 not checked.

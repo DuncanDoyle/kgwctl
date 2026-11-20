@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/DuncanDoyle/kgateway-ui/pkg/explore"
-	"github.com/DuncanDoyle/kgateway-ui/pkg/kinds"
-	"github.com/DuncanDoyle/kgateway-ui/pkg/objects"
+	"github.com/DuncanDoyle/snellius/pkg/explore"
+	"github.com/DuncanDoyle/snellius/pkg/kinds"
+	"github.com/DuncanDoyle/snellius/pkg/objects"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/util/duration"
 

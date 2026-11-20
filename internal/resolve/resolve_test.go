@@ -5,7 +5,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/DuncanDoyle/kgateway-ui/pkg/kinds"
+	"github.com/DuncanDoyle/snellius/pkg/kinds"
 
 	"github.com/DuncanDoyle/kgwctl/internal/resolve"
 )

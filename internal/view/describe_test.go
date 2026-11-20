@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DuncanDoyle/kgateway-ui/pkg/extension"
-	"github.com/DuncanDoyle/kgateway-ui/pkg/objects"
+	"github.com/DuncanDoyle/snellius/pkg/extension"
+	"github.com/DuncanDoyle/snellius/pkg/objects"
 
 	"github.com/DuncanDoyle/kgwctl/internal/load"
 	"github.com/DuncanDoyle/kgwctl/internal/resolve"

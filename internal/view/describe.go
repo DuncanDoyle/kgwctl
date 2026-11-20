@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/DuncanDoyle/kgateway-ui/pkg/explore"
-	"github.com/DuncanDoyle/kgateway-ui/pkg/kinds"
-	"github.com/DuncanDoyle/kgateway-ui/pkg/objects"
+	"github.com/DuncanDoyle/snellius/pkg/explore"
+	"github.com/DuncanDoyle/snellius/pkg/kinds"
+	"github.com/DuncanDoyle/snellius/pkg/objects"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -526,7 +526,7 @@ func incomplete(r *load.Result, k kinds.Served) []load.Input {
 	var in []load.Input
 	for _, gvr := range gvrs {
 		if x, ok := r.Inputs[gvr]; ok && x.State != load.StateOK && !slices.ContainsFunc(in, func(y load.Input) bool { return y.Resource == x.Resource }) {
-			in = append(in, x)
+			in = append(in, RedactInput(x))
 		}
 	}
 	slices.SortFunc(in, func(a, b load.Input) int { return cmp.Compare(a.Resource, b.Resource) })

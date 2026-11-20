@@ -1,0 +1,23 @@
+kgwctl check · context prod · 2026-11-10 14:02:10 UTC · kgwctl v0.1.0-dev
+
+Install kgateway-system/kgateway (v2.5.1) · state: error
+
+ERRORS (1)
+  KGWUI-001  Gateway edge/public  Envoy rejects configuration
+             2 of 3 proxies reject the latest config.
+             Since 13:58:01 UTC.
+             Next: kubectl --context prod -n edge describe gateway public
+
+WARNINGS (3)
+  Likely cause: Service shop/cart-v2
+    KGWUI-013  HTTPRoute shop/cart  backendRef Service shop/cart-v2 not found
+               Fix: create Service shop/cart-v2, or change the backendRef
+    KGWUI-013  HTTPRoute shop/cart-b  backendRef Service shop/cart-v2 not found
+  KGWUI-003  HTTPRoute shop/web  Route not attached to its parent
+
+INFO (1)
+  KGWUI-020  HTTPRoute shop/x  Listener has no routes
+
+CHECKS RUN: 2
+
+1 error, 3 warnings, 1 info.

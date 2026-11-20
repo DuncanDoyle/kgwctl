@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DuncanDoyle/kgateway-ui/pkg/cache"
-	"github.com/DuncanDoyle/kgateway-ui/pkg/extension"
-	"github.com/DuncanDoyle/kgateway-ui/pkg/install"
-	"github.com/DuncanDoyle/kgateway-ui/pkg/kinds"
+	"github.com/DuncanDoyle/snellius/pkg/cache"
+	"github.com/DuncanDoyle/snellius/pkg/extension"
+	"github.com/DuncanDoyle/snellius/pkg/install"
+	"github.com/DuncanDoyle/snellius/pkg/kinds"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -290,5 +290,30 @@ func TestProxyCountsConnsAndWatches(t *testing.T) {
 	}
 	if p.OpenConns() != 0 || p.WatchesSeen() != 1 {
 		t.Errorf("after cancel: open conns %d, watches seen %d; want 0 and 1", p.OpenConns(), p.WatchesSeen())
+	}
+}
+
+// TestProxySubresourceMatch checks that a Subresource rule answers pods/<name>/proxy
+// requests and leaves the Pod's own GET and list requests alone.
+func TestProxySubresourceMatch(t *testing.T) {
+	env := testenv.New(t, testenv.Options{Fixtures: []string{healthy}})
+	hits := env.Proxies[0].Rule(testenv.Match{Resource: "pods", Subresource: "proxy"}, testenv.Action{Status: http.StatusForbidden})
+	c := clients(t, env)
+	const ns, pod = "kgateway-system", "kgateway-7d9f8b6c5-abcde"
+
+	var code int
+	c.Kube.CoreV1().RESTClient().Get().Namespace(ns).Resource("pods").Name("http:" + pod + ":9092").
+		SubResource("proxy").Suffix("metrics").Do(t.Context()).StatusCode(&code)
+	if code != http.StatusForbidden {
+		t.Fatalf("pods/proxy GET: status %d, want 403", code)
+	}
+	if _, err := c.Kube.CoreV1().Pods(ns).Get(t.Context(), pod, metav1.GetOptions{}); err != nil {
+		t.Fatalf("Pod GET: %v", err)
+	}
+	if _, err := c.Kube.CoreV1().Pods(ns).List(t.Context(), metav1.ListOptions{}); err != nil {
+		t.Fatalf("Pod list: %v", err)
+	}
+	if hits.N() != 1 {
+		t.Fatalf("rule hits = %d, want 1", hits.N())
 	}
 }

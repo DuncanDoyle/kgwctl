@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DuncanDoyle/kgateway-ui/pkg/extension"
-	"github.com/DuncanDoyle/kgateway-ui/pkg/kinds"
+	"github.com/DuncanDoyle/snellius/pkg/extension"
+	"github.com/DuncanDoyle/snellius/pkg/kinds"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/tools/clientcmd"

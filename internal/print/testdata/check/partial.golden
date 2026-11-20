@@ -1,0 +1,21 @@
+kgwctl check · context prod · 2026-11-10 14:02:10 UTC · kgwctl v0.1.0-dev
+
+Install kgateway-system/kgateway (v2.5.1) · state: warning
+
+WARNINGS (1)
+  KGWUI-025  HTTPRoute edge/public  Proxy disconnected
+
+STILL DECIDING (1)
+  proxy config warming  1 held  decides 14:04:10  Waiting for proxies to finish loading config
+
+NOT CHECKED (1)
+  process  Proxy Pods are not watched, so proxies were not checked
+
+PARTIAL COVERAGE (3)
+  proxy connection      1 of 2 Gateways have no proxy stats.
+  version skew          Versions are compared 10 minutes after a controller rollout ends
+  proxy config warming  1 of 2 Gateways have no proxy stats.
+
+CHECKS RUN: 5
+
+1 warning, 1 check deciding, 1 not checked, 3 with partial coverage.

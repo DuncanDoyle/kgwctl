@@ -10,7 +10,7 @@ import (
 	"os/signal"
 	"time"
 
-	"github.com/DuncanDoyle/kgateway-ui/pkg/extension"
+	"github.com/DuncanDoyle/snellius/pkg/extension"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"k8s.io/client-go/rest"
@@ -144,9 +144,11 @@ func (f *Flags) Context(parent context.Context) (context.Context, context.Cancel
 	return context.WithTimeout(parent, f.RequestTimeout)
 }
 
-// NewRoot builds the root command with the global flags, get, describe, version,
-// completion and cfg.Commands.
-func NewRoot(cfg Config) *cobra.Command {
+// NewRoot builds the root command with the global flags, get, describe, check,
+// version, completion and cfg.Commands.
+func NewRoot(cfg Config) *cobra.Command { return newRoot(cfg, checkTestHooks{}) }
+
+func newRoot(cfg Config, hooks checkTestHooks) *cobra.Command {
 	if cfg.Name == "" {
 		cfg.Name = "kgwctl"
 	}
@@ -174,21 +176,52 @@ func NewRoot(cfg Config) *cobra.Command {
 	root.SetOut(cfg.Out)
 	root.SetErr(cfg.Err)
 	(&Flags{}).Bind(root.PersistentFlags())
-	root.AddCommand(newGetCmd(cfg.Registry, cfg.Now), newDescribeCmd(cfg.Registry, cfg.Now), newVersionCmd(cfg.Registry, cfg.Build))
+	root.AddCommand(newGetCmd(cfg.Registry, cfg.Now), newDescribeCmd(cfg.Registry, cfg.Now), newVersionCmd(cfg.Registry, cfg.Build),
+		newCheckCmd(cfg.Registry, cfg.Build, cfg.Now, hooks))
 	root.AddCommand(cfg.Commands...)
 	return root
 }
 
+// signalStopKey holds Execute's NotifyContext stop func in the command context.
+type signalStopKey struct{}
+
+// defaultOnCancel restores the default interrupt handling once ctx ends, so a
+// second Ctrl-C ends the process at once. The returned func stops watching.
+func defaultOnCancel(ctx context.Context) func() bool { return restoreOnCancel(ctx, nil) }
+
+// restoreOnCancel is defaultOnCancel; done, if set, runs once the handling is restored (tests).
+func restoreOnCancel(ctx context.Context, done func()) func() bool {
+	stop, ok := ctx.Value(signalStopKey{}).(context.CancelFunc)
+	if !ok {
+		return func() bool { return false }
+	}
+	return context.AfterFunc(ctx, func() {
+		stop()
+		if done != nil {
+			done()
+		}
+	})
+}
+
 // Execute runs root until it returns or the process is interrupted. An error
-// prints as "Error: <msg>" on stderr and gives 1; success gives 0. It
-// silences client-go's klog output once per process: commands report inputs as warnings.
+// prints as "Error: <msg>" on stderr and gives 1; an ExitError gives its code
+// and prints only when it carries an error; success gives 0. It silences
+// client-go's klog output once per process: commands report inputs as warnings.
 func Execute(root *cobra.Command) int {
 	quiet.Klog()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	if err := root.ExecuteContext(ctx); err != nil {
-		fmt.Fprintf(root.ErrOrStderr(), "Error: %v\n", err)
-		return 1
+	err := root.ExecuteContext(context.WithValue(ctx, signalStopKey{}, stop))
+	if err == nil {
+		return 0
 	}
-	return 0
+	var ee *ExitError
+	if errors.As(err, &ee) {
+		if ee.Err != nil {
+			fmt.Fprintf(root.ErrOrStderr(), "Error: %v\n", ee.Err)
+		}
+		return ee.Code
+	}
+	fmt.Fprintf(root.ErrOrStderr(), "Error: %v\n", err)
+	return 1
 }

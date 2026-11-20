@@ -1,6 +1,6 @@
 # kgwctl — Roadmap
 
-**Last updated:** 2026-11-05
+**Last updated:** 2026-11-20
 **Program:** [kgateway-tooling `program.md`](https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md) (local checkout: `../kgateway-tooling-claude`)
 
 ## Goal
@@ -18,23 +18,29 @@ A command-line tool for operators to inspect and troubleshoot kgateway installat
 - Output: table, `-o yaml`, `-o json`.
 
 ### Phase 2 — `check`
-**Status:** Not started
+**Status:** Complete 2026-11-20 — `docs/phases/phase-2/phase-2-complete.md`
 **Docs:** `docs/phases/phase-2/`
-**Waits on:** none — E8 delivered in kgateway-ui v0.3.0
+**Waits on:** none — E3, E8, E9 delivered (Snellius `v0.8.2`)
 
-One-shot install and config health, for CI gates after install or upgrade and as the first step in support triage.
-- xDS rejections are built and tested first: "Accepted, but Envoy rejected it" is the costliest support theme (D-010).
-- Version skew between controller, proxies and Gateway API CRDs (the library's skew check).
-- Controller and proxy Deployments and Pods ready; Gateway API and kgateway resources with failing or missing status conditions (including `ResolvedRefs`); routes not attached; xDS rejections from the controller's metrics.
-- Documented exit codes, the same in every output format: 0 clean, 1 problems found, 2 could not check.
-- `-o json` keyed by finding code and finding ID, both stable; severity is data on each finding.
-- `--exclude` / `--only` by check name or code, `--fail-on <severity>`, `--timeout`.
-- Read-only by default: no port-forward unless a flag allows it. Signals that need two samples or a time window are reported as pending, not failing.
+A support engineer's first command on a cluster they troubleshoot: what is wrong, what could not be checked, what is still deciding. Readable in the terminal, pasteable into Slack or a ticket (D-014).
+- All 26 Snellius checks in one pass, built on Snellius `v0.8.2` (E3, E8, E9). xDS rejections stay first in testing (D-010).
+- Text report plus `-o json|yaml` keyed by finding code and finding ID, both stable; severity is data on each finding.
+- Exit codes: 0 clean, 1 problems found, 2 could not check.
+- `--live`: observe for a bounded time so grace periods and holds decide; progress on stderr, one report on stdout (D-016).
+- Controller metrics and proxy stats through the apiserver pod proxy; no port-forward (D-017).
+- Deferred: `--only`, `--exclude`, `--fail-on`, controller logs (D-015).
+- Compared with `glooctl check` (2026-11-20). Candidate checks for Snellius, which owns the rules:
+  - proxy xDS `update_failure` growth, which shows a flapping control-plane connection that KGWUI-026 misses;
+  - a missing GatewayClass;
+  - kgateway CRD drift against the installed chart, as `glooctl check-crds` does.
+- Vendor builds add auth and rate-limit checks through the registry: config status, refs to missing configs, and server health and connectivity.
+- A repeatable `-n` joins the deferred flags.
+- Next step after the Phase 2 MVP (user, 2026-11-09): `-o agent`, an output for AI agents (Codex, Claude, Snellius AI-assisted diagnosis). Per finding: what the code means, the evidence objects, the suggested fix; plus what was not checked or is pending. Cluster text is marked as untrusted data; never Secret material. Phase 2 fixes the finding schema so this format adds no new data. Aim for one finding schema with the Snellius MCP server (a new program edge, Snellius as provider).
 
 ### Phase 3 — Data plane
 **Status:** Not started
 **Docs:** `docs/phases/phase-3/`
-**Waits on:** program edge E1 (krp `pkg/envoy` `v0.1.0`)
+**Waits on:** none — E1 delivered (xdsview `v0.3.0`, formerly krp)
 
 - `proxy routes`: the Envoy listeners, filter chains, routes and HTTP filters for a Gateway, optionally narrowed to one HTTPRoute and rule.
 - Sources: port-forward to the proxy admin port, or a config dump file.
@@ -56,9 +62,8 @@ One command that collects what support asks for, so nobody hand-collects it (D-0
 ### Phase 5 — Full analysis
 **Status:** Not started
 **Docs:** `docs/phases/phase-5/`
-**Waits on:** program edge E3 (kgateway-ui analyzer package)
+**Waits on:** none — E3 delivered; the analyzer runs in `check` from Phase 2
 
-- `check` grows to the full ranked analysis of the UI analyzer (references, conflicts, rollouts, CRD and version skew, backends without endpoints).
 - `analyze -f <file>`: validate manifests before applying, reporting new, fixed and unchanged problems against the live cluster.
 
 ### Phase 6 — Topology and policies

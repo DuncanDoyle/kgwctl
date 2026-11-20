@@ -9,14 +9,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/DuncanDoyle/kgateway-ui/pkg/cache"
-	"github.com/DuncanDoyle/kgateway-ui/pkg/engine"
-	"github.com/DuncanDoyle/kgateway-ui/pkg/extension"
-	"github.com/DuncanDoyle/kgateway-ui/pkg/health"
-	"github.com/DuncanDoyle/kgateway-ui/pkg/kinds"
-	"github.com/DuncanDoyle/kgateway-ui/pkg/setup"
+	"github.com/DuncanDoyle/snellius/pkg/cache"
+	"github.com/DuncanDoyle/snellius/pkg/engine"
+	"github.com/DuncanDoyle/snellius/pkg/extension"
+	"github.com/DuncanDoyle/snellius/pkg/health"
+	"github.com/DuncanDoyle/snellius/pkg/kinds"
+	"github.com/DuncanDoyle/snellius/pkg/setup"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/discovery"
 )
 
 // Needs are the inputs a command waits for beyond the core inputs (design §4.1).
@@ -153,7 +154,7 @@ func Load(ctx context.Context, c Clients, reg *extension.Registry, needs Needs) 
 	defer cancel()
 	ca := cache.New(cfg.Cache)
 	ca.Start(cctx)
-	snap, pending := wait(ctx, ca, optional(needs))
+	snap, pending := wait(ctx, ca, append(optional(needs), listOnly(served)...))
 	cancel()
 
 	inputs := classify(snap.Access, pending)
@@ -228,6 +229,13 @@ func (m *memoDiscovery) ServerResourcesForGroupVersion(gv string) (*metav1.APIRe
 	return a.l, a.err
 }
 
+// MemoDiscovery returns a kinds.DiscoveryClient whose requests run under ctx
+// and that answers each group version once. It lists no Catalog. It is not
+// safe for concurrent use.
+func MemoDiscovery(ctx context.Context, c discovery.DiscoveryInterface) kinds.DiscoveryClient {
+	return &memoDiscovery{dc: Discovery(ctx, c), seen: map[string]answer{}}
+}
+
 // fixedSnapshot hands Compute the snapshot Load classified its inputs from.
 type fixedSnapshot struct{ s *cache.Snapshot }
 
@@ -242,6 +250,17 @@ func optional(needs Needs) []schema.GroupVersionResource {
 	}
 	if needs.CRDs {
 		out = append(out, cache.CRDsGVR)
+	}
+	return out
+}
+
+// listOnly returns the Access keys of the served list-only kinds; a one-shot caller waits for them (Snellius setup doc).
+func listOnly(served []kinds.Served) []schema.GroupVersionResource {
+	var out []schema.GroupVersionResource
+	for _, s := range served {
+		if s.ListOnly {
+			out = append(out, s.GVR())
+		}
 	}
 	return out
 }
@@ -302,6 +321,12 @@ func wait(ctx context.Context, ca *cache.Cache, opt []schema.GroupVersionResourc
 	snap := *final
 	snap.Access = acc
 	return &snap, pending
+}
+
+// Classify maps each Access entry to an Input: ok, loading while it has no
+// error yet, denied or failed.
+func Classify(acc map[schema.GroupVersionResource]cache.Access) map[schema.GroupVersionResource]Input {
+	return classify(acc, nil)
 }
 
 // classify maps each Access entry to an Input; pending inputs that are not

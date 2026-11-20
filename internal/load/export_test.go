@@ -1,6 +1,6 @@
 package load
 
-import "github.com/DuncanDoyle/kgateway-ui/pkg/cache"
+import "github.com/DuncanDoyle/snellius/pkg/cache"
 
 // SetCoreSettledHook sets the core-settled hook and returns a func that clears it.
 func SetCoreSettledHook(f func()) func() {

@@ -1,0 +1,14 @@
+kgwctl check · context prod · 2026-11-10 14:02:10 UTC · kgwctl v0.1.0-dev
+
+Install kgateway-system/kgateway (v2.5.1) · state: healthy
+
+STILL DECIDING (5)
+  status progress  12 held  decides 14:07:10  Waiting to see if status catches up
+  proxy ack        1 held   decides 14:05:10  Waiting for proxies to acknowledge
+  warming          pending
+  resource status  pending                    1 resource is being processed by the controller
+  xDS rejects      1 held   decides 14:03:10  Waiting to see if rejects return
+
+CHECKS RUN: 4
+
+No findings, 5 checks deciding.

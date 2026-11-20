@@ -7,7 +7,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/DuncanDoyle/kgateway-ui/pkg/objects"
+	"github.com/DuncanDoyle/snellius/pkg/objects"
 
 	"github.com/DuncanDoyle/kgwctl/internal/view"
 )

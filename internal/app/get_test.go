@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DuncanDoyle/kgateway-ui/pkg/install"
+	"github.com/DuncanDoyle/snellius/pkg/install"
 
 	"github.com/DuncanDoyle/kgwctl/internal/testenv"
 )

@@ -1,6 +1,6 @@
-# Least-privilege, read-only access for kgwctl (design §6.3): get, list and
-# watch on the served kinds, Namespaces, Pods, Deployments and CRDs.
-# No Secrets, no ConfigMaps, no pods/portforward, no write verbs.
+# Least-privilege, read-only access for kgwctl (design §5, D-017): get, list and
+# watch on the kinds the checks read, plus get on pods/proxy for controller metrics and Envoy stats.
+# No Secrets, no ConfigMaps, no pods/portforward, no pods/log, no write verbs.
 # Bind the ClusterRole to your own user or group; the ServiceAccount below is
 # the one the live check uses.
 apiVersion: rbac.authorization.k8s.io/v1
@@ -18,6 +18,7 @@ rules:
       - tcproutes
       - tlsroutes
       - backendtlspolicies
+      - referencegrants
     verbs: ["get", "list", "watch"]
   - apiGroups: ["gateway.networking.x-k8s.io"]
     resources: ["xlistenersets"]
@@ -30,9 +31,17 @@ rules:
       - backendconfigpolicies
       - gatewayparameters
       - backends
+      - directresponses
+      - gatewayextensions
     verbs: ["get", "list", "watch"]
   - apiGroups: [""]
-    resources: ["namespaces", "pods"]
+    resources: ["namespaces", "pods", "events", "services"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/proxy"]
+    verbs: ["get"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["apps"]
     resources: ["deployments"]

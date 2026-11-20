@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/DuncanDoyle/kgateway-ui/pkg/extension"
+	"github.com/DuncanDoyle/snellius/pkg/extension"
 	"github.com/spf13/cobra"
 
 	"github.com/DuncanDoyle/kgwctl/internal/print"

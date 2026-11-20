@@ -1,0 +1,15 @@
+kgwctl check · context ctx-0 · YYYY-MM-DD hh:mm:ss UTC · kgwctl v0.1.0
+
+Install kgateway-system/kgateway (v2.5.0) · state: warning
+
+WARNINGS (1)
+  Likely cause: Gateway kgateway-system/http
+    KGWUI-026  Gateway kgateway-system/http  Proxy lost its connection to the controller
+               http-6f7c9d8b4-ax0 lost its connection to the controller. It keeps serving its last config.
+
+NOT CHECKED (1)
+  withheld config  not-on-version
+
+CHECKS RUN: 20
+
+1 warning, 1 not checked.
