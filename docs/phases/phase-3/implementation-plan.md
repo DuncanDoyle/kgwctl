@@ -44,7 +44,7 @@ envtest (`internal/testenv`) runs no kubelet, so no port-forward can complete th
 
 | Sub-phase | Delivers | Tasks | Waits on |
 |---|---|---|---|
-| 3.1 | Capture, `proxy dump`, RBAC Role, golden dumps | 3.1.1–3.1.4 | none (`proxy dump` in Phase 3 is the design's open item 1; if the owner moves it to Phase 4, 3.1.3 keeps the dialer and drops the command, and 3.1.4 captures with `kubectl port-forward` + `curl`) |
+| 3.1 | Capture, `proxy dump`, RBAC Role, golden dumps | 3.1.1–3.1.4 | none (`proxy dump` in Phase 3 is the design's open item 1; if the owner moves it to Phase 4, 3.1.3 keeps the dialer and drops the command, 3.1.4 captures with `kubectl port-forward` + `curl`, and its two RBAC live checks move to `proxy routes` in 3.3.1) |
 | 3.2 | `proxy routes` on xdsview E11 | 3.2.1–3.2.3 | xdsview release with E11 |
 | 3.3 | Live check and docs for `proxy routes` | 3.3.1 | 3.2 |
 
@@ -60,7 +60,7 @@ Each sub-phase ends with `make test`, `go vet ./...`, gofmt clean.
 - Create: `internal/proxydump/pod.go`, `internal/proxydump/pod_test.go`, `internal/proxydump/testdata/pods.yaml`
 
 **Interfaces:**
-- Produces: `func SelectPod(ctx context.Context, kube kubernetes.Interface, gw types.NamespacedName, pod string) (types.NamespacedName, error)`. `pod == ""` picks; otherwise validates.
+- Produces: `func SelectPod(ctx context.Context, c load.Clients, gw types.NamespacedName, pod string) (types.NamespacedName, error)`. `pod == ""` picks; otherwise validates.
 - Produces: `var ErrNoReplica = errors.New("no ready replica")` and `var ErrNotReplica = errors.New("pod is not a replica of the Gateway")`, wrapped with detail.
 
 - [ ] **Step 1: Write the failing tests** (envtest, fixtures: Gateway `team-a/web`; pods `web-a` Ready started T0, `web-b` Ready started T0-1m, `web-c` Ready but `deletionTimestamp` set, `web-d` not Ready, `other-x` labelled for Gateway `other`):
@@ -71,7 +71,7 @@ Each sub-phase ends with `make test`, `go vet ./...`, gofmt clean.
   - `TestSelectPodRejectsOtherGateway`: `pod="other-x"` → `errors.Is(err, ErrNotReplica)`.
   - `TestSelectPodGatewayNotFound`: `gw=team-a/nope` → error text `Gateway team-a/nope not found`.
 - [ ] **Step 2:** `go test ./internal/proxydump/ -run TestSelectPod` fails (undefined).
-- [ ] **Step 3:** Implement `SelectPod`: get the Gateway (apiVersion `gateway.networking.k8s.io/v1`, via the dynamic or typed client already in `load.Clients`; pick whichever the package can take without new deps), then list pods with `gateway.networking.k8s.io/gateway-name=<name>` in its namespace. Ready = `PodReady` condition True; order by `status.startTime`, then name.
+- [ ] **Step 3:** Implement `SelectPod`: get the Gateway through `c.Dynamic` (`gateway.networking.k8s.io/v1`, resource `gateways`), then list pods through `c.Kube` with `gateway.networking.k8s.io/gateway-name=<name>` in its namespace. Ready = `PodReady` condition True; order by `status.startTime`, then name.
 - [ ] **Step 4:** Tests pass.
 - [ ] **Step 5:** Commit `feat(proxydump): pick the Gateway replica to dump`.
 
@@ -119,7 +119,7 @@ Each sub-phase ends with `make test`, `go vet ./...`, gofmt clean.
   - `TestProxyDumpPortForwardForbidden`: real `NewPortForwarder` against envtest with the deny match → exit 2; stderr contains `create pods/portforward` and `docs/rbac.yaml`.
   - `TestProxyDumpDeadline`: `--request-timeout 300ms`, blocking fake server → exit 2 within 3 s.
   - `TestProxyDumpUpgradeHangs`: envtest serves the Gateway and Pod reads; the testenv proxy stalls only the `pods/portforward` request (a delay `Match` on that subresource, from Step 1). `--request-timeout 2s` → exit 2 within 5 s; the proxy recorded the port-forward request (so the timeout hit the upgrade, not discovery) and saw its connection closed.
-  - `TestProxyDumpUpgradeHangsViaProxy`: same, with the kubeconfig `proxy-url` pointing at an HTTP CONNECT proxy in the test that stalls. The command still exits 2 at the deadline; the socket may outlive the call until process exit, which is acceptable for a CLI (xdsview#26).
+  - `TestProxyDumpUpgradeHangsViaProxy`: the kubeconfig `proxy-url` points at an HTTP CONNECT proxy in the test that forwards to the testenv proxy, so discovery passes, and the testenv proxy stalls only the port-forward request. Assert: the port-forward request arrived, exit 2 at the deadline (within `--request-timeout` + 3 s). Socket closure is not asserted on this path (design §4.1).
   - `TestProxyDumpExecPlugin`: add `proxy dump` to the lifecycle suite's credential exec plugin cases (`internal/app/lifecycle_test.go:222` onward), so a hanging plugin ends at `--request-timeout`.
   - `TestCheckAsReader`: one `check` command test run as an envtest user bound only to `kgwctl-reader` from `docs/rbac.yaml` (envtest `AddUser` plus the ClusterRole and a binding applied as admin), asserting the same findings as the admin run. This proves the reader role alone still serves `check`.
 - [ ] **Step 3:** Implement. `proxy dump` copies `Capture.Body` to stdout with `io.Copy`, no cap. Help text carries §3.2's redaction paragraph verbatim. Error mapping: a typed Forbidden (from the API or the preserved upgrade status) → the RBAC line.

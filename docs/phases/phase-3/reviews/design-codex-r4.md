@@ -1,0 +1,15 @@
+Cross-model: YES (author: Claude Opus 5.5, reviewer: Codex, command: codex exec --sandbox read-only)
+Scope: phase 3 design r4 + implementation plan r3
+Diff: 10089cd..3d84a81
+Timing: on time
+
+- **P1 · Still open, proxied upgrade teardown.** The plan returns at the deadline but leaves the proxied upgrade socket open until process exit. The design requires teardown on cancellation. The new CONNECT-proxy test can also time out during Gateway or Pod discovery if the proxy stalls before forwarding those requests. It needs to pass discovery, observe the upgrade request, and verify socket closure. [Plan:110](/Users/ddoyle/Development/claude/kgwctl-claude-phase3/docs/phases/phase-3/implementation-plan.md:110) · [Plan:122](/Users/ddoyle/Development/claude/kgwctl-claude-phase3/docs/phases/phase-3/implementation-plan.md:122) · [Design:79](/Users/ddoyle/Development/claude/kgwctl-claude-phase3/docs/phases/phase-3/design.md:79)
+- **P2 · Still open, deferring `proxy dump` leaves the RBAC live check without a command.** The fallback covers fixture capture, oversized-dump recovery, and replay parity. Task 3.1.4 still requires `proxy dump` for both the Role-enabled and reader-only live checks. If the command moves to Phase 4, the plan needs to move those checks to `proxy routes` in 3.3 or specify another way to exercise the same authorization cases. [Plan:47](/Users/ddoyle/Development/claude/kgwctl-claude-phase3/docs/phases/phase-3/implementation-plan.md:47) · [Plan:143](/Users/ddoyle/Development/claude/kgwctl-claude-phase3/docs/phases/phase-3/implementation-plan.md:143)
+- **P2 · New, the selection interface cannot perform the required Gateway lookup.** `SelectPod` accepts only `kubernetes.Interface`, while its implementation step requires fetching a Gateway API resource. The existing Gateway-capable dynamic client is a separate field on `load.Clients`. Pass that client into selection or assign the Gateway lookup to the caller. [Plan:63](/Users/ddoyle/Development/claude/kgwctl-claude-phase3/docs/phases/phase-3/implementation-plan.md:63) · [Plan:74](/Users/ddoyle/Development/claude/kgwctl-claude-phase3/docs/phases/phase-3/implementation-plan.md:74) · [Clients:21](/Users/ddoyle/Development/claude/kgwctl-claude-phase3/internal/load/clients.go:21)
+## Triage
+
+| # | Finding | Decision |
+|---|---|---|
+| P1 | Proxied upgrade socket stays open until process exit; test may stall in discovery | accept with a design change: design §4.1 states the exception (an HTTP proxy in the path; the command returns at the deadline, the socket closes at process exit, as xdsview#26 accepts for short-lived use). The test forwards discovery through the CONNECT proxy, stalls only the port-forward request, asserts it arrived and the deadline exit; it does not assert closure on this path. Owner to confirm (Phase 3 open items). |
+| P2 | RBAC live checks need `proxy dump` if it moves to Phase 4 | accept: the fallback moves both RBAC live checks to `proxy routes` in 3.3.1. |
+| P2 | `SelectPod` can't look up the Gateway with `kubernetes.Interface` | accept: `SelectPod` takes `load.Clients`; Gateway via `c.Dynamic`, pods via `c.Kube`. |
