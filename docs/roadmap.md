@@ -40,7 +40,7 @@ A support engineer's first command on a cluster they troubleshoot: what is wrong
 ### Phase 3 — Data plane
 **Status:** Design
 **Docs:** `docs/phases/phase-3/`
-**Waits on:** none — E1 delivered (xdsview `v0.3.0`, formerly krp)
+**Waits on:** E11 (xdsview renderer, effective chain, listener state; xdsview#27) for sub-phase 3.2. E1 delivered (xdsview `v0.3.0`, formerly krp)
 
 - `proxy routes`: the Envoy listeners, filter chains, routes and HTTP filters for a Gateway, optionally narrowed to one HTTPRoute and rule.
 - Sources: port-forward to the proxy admin port, or a config dump file.

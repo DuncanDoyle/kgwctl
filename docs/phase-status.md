@@ -7,9 +7,10 @@ Docs: docs/phases/phase-3/
 Status: design
 
 ### Queue
-- [ ] Q1 Phase 3 design (`design.md`) ← CURRENT
-- [ ] Q2 Phase 3 implementation plan
-- [ ] Q3 Cross-model review of design + plan, triage; owner go-ahead
+- [x] Q1 Phase 3 design (`design.md`) r1: ab40189
+- [ ] Q1b xdsview E11 (xdsview#27): agreed by the xdsview session; starts when the owner confirms there. Blocks 3.2 only
+- [ ] Q2 Phase 3 implementation plan ← CURRENT
+- [ ] Q3 Cross-model review of design + plan, triage; owner go-ahead (design r1 reviewed: reviews/design-codex.md, 11 accepted; r2 written)
 
 ### Exit gates
 - [ ] tests/vet pass
@@ -26,6 +27,7 @@ n/a
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
 - Read 2026-11-20 at kgateway-tooling `dcab679`.
 - Available: E1 — xdsview `v0.3.0` (`github.com/DuncanDoyle/xdsview/pkg/envoy/...`, formerly krp; kgwctl#1).
+- Requested: E11 — xdsview renderer, effective chain, listener state (xdsview#27, 2026-11-20).
 - Waiting on: E7 (Phase 6).
 - Consumers: none
 
