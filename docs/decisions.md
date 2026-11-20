@@ -127,3 +127,9 @@ Append-only. Newest at the bottom. Supersede, don't edit.
 **Decision:** Phase 4 borrows three ideas from it: kind discovery by CRD category, partial results with `errors.txt`, and previous-container logs only after a restart. The bundle stays a CLI feature, with no shared library for now.
 **Alternatives:** A Snellius "download bundle" — deferred: a bundle crosses Snellius's per-Gateway authorization (Snellius D-013). The owner revisits it after Snellius Phase 12.
 **Consequences:** Phase 4's design settles Secret and ConfigMap capture and the `pods/log` RBAC grant. Collector, manifest and redaction interfaces stay free of CLI concerns, so they can move to Snellius `pkg/` later.
+
+## D-020 — Ctrl-C ends `check --live` like `--timeout` (2026-11-20, phase 2)
+**Context:** Design §15 kept exit 2 for an interrupted `--live` and said to revisit it if it annoyed in use. In the owner's try-out, Ctrl-C printed the report and then `Error: interrupted`, which read like a crash.
+**Decision:** A Ctrl-C during `--live` after an install was found prints the report, then `Stopped by Ctrl-C.` on stderr. The findings decide the exit code, as with `--timeout`. Exit 2 keeps meaning "could not check": a plain `check` interrupted, or `--live` interrupted before an install was found. The text footer says "stopped by Ctrl-C" or "stopped at --timeout"; JSON keeps `stopReason: interrupted`.
+**Alternatives:** Keep exit 2 and only reword the message — rejected by the owner: the report is a valid check of the state the user watched.
+**Consequences:** Scripts tell a deliberate stop from a failure by exit code. Design §3.2, §3.4 and the README updated (sub-phase 2.5).

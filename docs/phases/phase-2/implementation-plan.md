@@ -30,7 +30,7 @@
 1. **A cluster with no kgateway install.** The user expects exit 2 and "no install found", never a clean report. Covered in Task 2.2.4.
 2. **`pods/proxy` forbidden** (the common case for a restricted support account). The user expects 001/007/024/025/026 under "Not checked" with the error text, other findings intact, exit code unaffected. Covered in Tasks 2.2.1 and 2.2.4.
 3. **Collectors never publish because discovery found no install, or the scrape hangs.** The user expects `check` to finish at `--request-timeout`, not hang. Covered in Task 2.2.1.
-4. **Ctrl-C during `--live`.** The user expects a report and exit 2 after the first Ctrl-C, an immediate exit after the second, and no leaked watches. Covered in Task 2.3.2.
+4. **Ctrl-C during `--live`.** The user expects a report and exit 2 after the first Ctrl-C (D-020: the findings now decide the exit), an immediate exit after the second, and no leaked watches. Covered in Task 2.3.2.
 5. **A vendor pack's unknown check code with a hold.** The user expects it rendered like any core check. Covered in Task 2.2.5.
 
 ## Test harness
@@ -245,14 +245,14 @@ Behaviour: layout per design §3.3 rules 1–8. Sections omitted when empty. "Pa
 - Produces: `print.Progress(w io.Writer, e observe.Event) error` (one timestamped line, §3.2), `print.Heartbeat(w io.Writer, elapsed, total time.Duration, c view.Check) error`.
 - Flags: `--live` (bool), `--timeout` (duration, default 6m, only valid with `--live`; otherwise usage error exit 1).
 - Flow: as 2.2.4, then keep the session until `--timeout` (kgwctl's clock; a fake clock in tests) or the first Ctrl-C. For every model from `Models()` in order: build the view and feed the `Tracker`; write its events to stderr if `print.IsTerminal(os.Stderr)`; heartbeat every 30s. At stop: `Stop()`, set `Observation{StartedAt, EndedAt, StopReason: "timeout"|"interrupted", Observed}`, print one report to stdout.
-- Ctrl-C: the first interrupt stops observing and reports (exit 2); after it, restore default signal handling so a second interrupt kills the process. `Execute`'s `signal.NotifyContext` is adapted so `check --live` can do this; other commands keep today's behaviour.
+- Ctrl-C: the first interrupt stops observing and reports (exit 2; D-020 changed it to the findings' exit); after it, restore default signal handling so a second interrupt kills the process. `Execute`'s `signal.NotifyContext` is adapted so `check --live` can do this; other commands keep today's behaviour.
 - `--request-timeout` still bounds the initial acquisition; `--timeout` bounds the observation.
 
 - [ ] **Step 1: Failing tests** (command level, fake clock and scraper):
   - `TestLiveTimeout`: `--live --timeout 30s` with the fake clock; returns after the clock passes 30s; exit from findings; JSON has `observation.stopReason: timeout`.
   - `TestLiveHoldDecides`: ready controller, 10 never-statused routes; step the clock in ≤ 10s steps through grace and then the 5m hold; final report has 003 (warning) and 018; Observed shows 003's info → warning change and 018 raised; progress (forced terminal writer in the test hook) shows the `WAITING` line, then the changed and raised lines.
   - `TestLiveClears`: a finding present at start, fixture fixed mid-run (create the missing Service) → final report without it, Observed shows it cleared.
-  - `TestLiveInterrupt`: cancel the command context mid-run → report printed, exit 2, `stopReason: interrupted`.
+  - `TestLiveInterrupt`: cancel the command context mid-run → report printed, exit 2 (D-020: exit from the findings), `stopReason: interrupted`.
   - `TestLiveJSONOneDocument` and `TestLiveNoANSIOffTerminal`.
   - `TestLiveNoLeaks`: no watches/connections after return; goroutines back to baseline within a 5s poll.
   - `TestLiveIntermittent`: a finding that appears and clears between two renders still appears in Observed.

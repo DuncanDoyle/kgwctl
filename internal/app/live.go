@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"time"
@@ -78,7 +79,7 @@ func (l *liveRun) feed(p observe.Publication, render bool) {
 
 // runLive keeps a's session until --timeout on kgwctl's clock or the first
 // Ctrl-C, then prints one report with the Observation (design §3.2). A Ctrl-C
-// any time before the exit code is chosen gives exit 2.
+// before any install was found gives exit 2; after that, the findings decide.
 func runLive(cmd *cobra.Command, a *acquired, cfg liveConfig) error {
 	defer a.stop()
 	ctx := cmd.Context()
@@ -152,8 +153,9 @@ func runLive(cmd *cobra.Command, a *acquired, cfg liveConfig) error {
 	if err := writeCheck(cmd, cfg.output, c, cfg.build, ended); err != nil {
 		return err
 	}
-	if reason == stopInterrupted || ctx.Err() != nil {
-		return interrupted()
+	// A deliberate Ctrl-C ends the run like --timeout: the report counts (D-020).
+	if reason == stopInterrupted {
+		fmt.Fprintln(cmd.ErrOrStderr(), "Stopped by Ctrl-C.")
 	}
 	return reportExit(l.last.Published, c, "during the run", cfg.build.Name)
 }

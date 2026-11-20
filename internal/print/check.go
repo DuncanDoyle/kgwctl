@@ -65,8 +65,8 @@ func CheckTextFor(w io.Writer, c view.Check, _ time.Time, color bool, build view
 // writeObserved prints the --live section: every finding with a transition during the run (design §3.2).
 // withInstall names each entry's install, for reports of more than one.
 func writeObserved(b *strings.Builder, o view.Observation, withInstall bool) {
-	fmt.Fprintf(b, "\nOBSERVED DURING THIS RUN (%d) · %s to %s UTC, stopped by %s\n",
-		len(o.Observed), utc(o.StartedAt), utc(o.EndedAt), clean(o.StopReason))
+	fmt.Fprintf(b, "\nOBSERVED DURING THIS RUN (%d) · %s to %s UTC, %s\n",
+		len(o.Observed), utc(o.StartedAt), utc(o.EndedAt), stopText(o.StopReason))
 	for _, f := range o.Observed {
 		code := clean(f.Code)
 		head := "  " + code
@@ -398,4 +398,15 @@ func cleanLines(s string) []string {
 		lines[i] = clean(l)
 	}
 	return lines
+}
+
+// stopText words an Observation's stop reason for the footer.
+func stopText(reason string) string {
+	switch reason {
+	case "interrupted":
+		return "stopped by Ctrl-C"
+	case "timeout":
+		return "stopped at --timeout"
+	}
+	return "stopped by " + clean(reason)
 }

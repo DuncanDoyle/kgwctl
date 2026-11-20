@@ -29,6 +29,12 @@ A support engineer's first command on a cluster they troubleshoot: what is wrong
 - `--live`: observe for a bounded time so grace periods and holds decide; progress on stderr, one report on stdout (D-016).
 - Controller metrics and proxy stats through the apiserver pod proxy; no port-forward (D-017).
 - Deferred: `--only`, `--exclude`, `--fail-on`, controller logs (D-015).
+- Compared with `glooctl check` (2026-11-20). Candidate checks for Snellius, which owns the rules:
+  - proxy xDS `update_failure` growth, which shows a flapping control-plane connection that KGWUI-026 misses;
+  - a missing GatewayClass;
+  - kgateway CRD drift against the installed chart, as `glooctl check-crds` does.
+- Vendor builds add auth and rate-limit checks through the registry: config status, refs to missing configs, and server health and connectivity.
+- A repeatable `-n` joins the deferred flags.
 - Next step after the Phase 2 MVP (user, 2026-11-09): `-o agent`, an output for AI agents (Codex, Claude, Snellius AI-assisted diagnosis). Per finding: what the code means, the evidence objects, the suggested fix; plus what was not checked or is pending. Cluster text is marked as untrusted data; never Secret material. Phase 2 fixes the finding schema so this format adds no new data. Aim for one finding schema with the Snellius MCP server (a new program edge, Snellius as provider).
 
 ### Phase 3 — Data plane

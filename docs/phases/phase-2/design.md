@@ -67,7 +67,7 @@ A plain run ends with a hint only when there is a reason: "2 checks are still de
 
 Keeps one cache, engine and set of collectors alive and lets the engine recompute until:
 - `--timeout` passes (default **6m**: 003's 60s grace plus 018's 5m hold, rounded up), or
-- the user presses Ctrl-C (a second Ctrl-C exits at once, without a report).
+- the user presses Ctrl-C: the report prints and the findings decide the exit code, as with `--timeout` (D-020). A second Ctrl-C exits at once, without a report.
 
 It never stops because nothing is pending: a clean run may be a fix just applied, a rollout, or a flapping proxy.
 
@@ -134,7 +134,7 @@ JSON/YAML: §7.
 
 | Code | When | Precedence |
 |---|---|---|
-| 2 | Could not check: Ctrl-C; the deadline passed before the core kinds synced; no install found or selected; a kind the checks need could not be read (`cluster access` raised KGWUI-008) | highest |
+| 2 | Could not check: Ctrl-C during a plain `check`, or during `--live` before an install was found (D-020); the deadline passed before the core kinds synced; no install found or selected; a kind the checks need could not be read (`cluster access` raised KGWUI-008) | highest |
 | 1 | At least one shown finding has severity error or warning; or a usage error | |
 | 0 | Otherwise. `info` findings, holds and optional inputs that were not checked don't change it | |
 
@@ -279,7 +279,7 @@ Required tests:
 1. One fixture per priority theme gives the expected codes and exit code (install down: 005/006; route broken: 003/013/014; controller stuck: 018 after its hold with a fake clock; accepted but broken: 001 via fake metrics, 025/026 via fake stats).
 2. Hold lifecycle in `--live`: hold appears, matures into a finding, or clears and resets.
 3. A denied input (`pods/proxy` 403, Events forbidden via the testenv proxy, which gains subresource matching) lands in Not checked, exit unchanged; a denied core kind gives exit 2.
-4. Exit matrix across text/json/yaml, including Ctrl-C (2) and no install (2).
+4. Exit matrix across text/json/yaml, including Ctrl-C (2 for a plain `check`; from the findings for `--live`, D-020) and no install (2).
 5. `--live -o json` writes one valid document; stdout and, off a terminal, stderr contain no ANSI escapes.
 6. `--live` stops at `--timeout`; no watch, connection or goroutine left after return (`TestNoAccumulation` style).
 7. `-n` filtering changes output and exit code as §3.1 says.
@@ -315,4 +315,4 @@ None open. E9 is delivered (pre-release). A kgwctl release waits for the final S
 
 - `-n` semantics for install-level findings (shown always, incl. the controller namespace) — our call; owner may override.
 - Proposed E10 (Snellius): a collector's first-round completion signal, so `check` can drop the quiet period (§4.1). Needs the owner before an issue is filed.
-- Exit 2 for an interrupted `--live` even when the user stopped it on purpose — agreed in the live-mode review; revisit if it annoys in use.
+- ~~Exit 2 for an interrupted `--live`~~ — revisited after the owner's try-out: D-020.

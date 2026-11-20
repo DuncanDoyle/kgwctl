@@ -2,7 +2,7 @@ kgwctl check · context prod · 2026-11-10 14:08:10 UTC · kgwctl v0.1.0-dev
 
 Install kgateway-system/kgateway · state: warning
 
-OBSERVED DURING THIS RUN (2) · 14:02:10 to 14:08:10 UTC, stopped by timeout
+OBSERVED DURING THIS RUN (2) · 14:02:10 to 14:08:10 UTC, stopped at --timeout
   KGWUI-003  HTTPRoute shop/web  Not yet processed
              First seen 14:02:10, still present.
              Severity: info from 14:02:10, warning from 14:03:10.

@@ -102,7 +102,7 @@ kgwctl check --live --timeout 10m
 On a terminal, progress lines go to stderr. The report goes to stdout once, at the end. It adds an **Observed during this run** section: findings that appeared, cleared or changed severity, with their times. A failure that came and went stays in the report.
 
 ```
-OBSERVED DURING THIS RUN (2) · 18:09:44 to 18:11:18 UTC, stopped by timeout
+OBSERVED DURING THIS RUN (2) · 18:09:44 to 18:11:18 UTC, stopped at --timeout
   KGWUI-003  HTTPRoute live/orphan  Not attached: parent not found
              First seen 18:09:48, still present.
              Severity: info from 18:09:48, warning from 18:10:45.
@@ -113,7 +113,7 @@ OBSERVED DURING THIS RUN (2) · 18:09:44 to 18:11:18 UTC, stopped by timeout
 
 `--timeout` sets how long the run lasts (default `6m`). It is only valid with `--live`. `--request-timeout` still bounds the first read of the cluster.
 
-The first Ctrl-C stops the run and prints the report. The exit code is `2`, because the run ended early. A second Ctrl-C exits at once, without a report.
+The first Ctrl-C stops the run and prints the report, then `Stopped by Ctrl-C.` on stderr. The exit code follows the findings, as with `--timeout`. A Ctrl-C before an install was found gives exit `2` and no report. A second Ctrl-C exits at once, without a report.
 
 Exit codes follow the same rules as `check`, applied to the final state. With `-o json|yaml` you get one document at the end, with an `observation` block ([`docs/output.md`](docs/output.md)).
 

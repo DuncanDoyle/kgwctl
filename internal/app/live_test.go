@@ -425,14 +425,38 @@ func TestLiveInterrupt(t *testing.T) {
 	r.step(5 * time.Second)
 	cancel()
 	res := r.wait()
-	if res.code != 2 {
-		t.Errorf("exit %d, want 2; stderr: %s", res.code, res.stderr)
-	}
+	stoppedByUser(t, res, 1)
 	doc := decodeLive(t, res.stdout)
 	if doc.Item.Observation.StopReason != "interrupted" || !doc.has("KGWUI-013", "") {
 		t.Errorf("want an interrupted report with 013:\n%s", res.stdout)
 	}
 	waitNoWatches(t, env.Proxies[0])
+}
+
+// stoppedByUser checks a deliberate Ctrl-C: exit from the findings, a calm stderr line, no error.
+func stoppedByUser(t *testing.T, res result, code int) {
+	t.Helper()
+	if res.code != code {
+		t.Errorf("exit %d, want %d; stderr: %s", res.code, code, res.stderr)
+	}
+	if !strings.HasSuffix(res.stderr, "Stopped by Ctrl-C.\n") || strings.Contains(res.stderr, "Error:") {
+		t.Errorf("stderr = %q, want it to end with \"Stopped by Ctrl-C.\" and no error", res.stderr)
+	}
+}
+
+// TestLiveInterruptText: the text footer names Ctrl-C as the stop reason.
+func TestLiveInterruptText(t *testing.T) {
+	env := checkEnv(t, checkInstall, checkController, checkRouteBroken)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r := startLive(t, env, liveOpts{ctx: ctx, noProgress: true}, fastHooks(metricsScraper{}))
+	r.step(5 * time.Second)
+	cancel()
+	res := r.wait()
+	stoppedByUser(t, res, 1)
+	if !strings.Contains(res.stdout, "stopped by Ctrl-C") {
+		t.Errorf("footer lacks \"stopped by Ctrl-C\":\n%s", res.stdout)
+	}
 }
 
 // TestLiveInterruptNoInstall: interrupted before any model had an install, nothing is reported.
@@ -481,7 +505,7 @@ func TestLiveNoANSIOffTerminal(t *testing.T) {
 	if res.stderr != "" {
 		t.Errorf("stderr = %q, want no progress off a terminal", res.stderr)
 	}
-	for _, s := range []string{"OBSERVED DURING THIS RUN", "stopped by timeout", "KGWUI-013"} {
+	for _, s := range []string{"OBSERVED DURING THIS RUN", "stopped at --timeout", "KGWUI-013"} {
 		if !strings.Contains(res.stdout, s) {
 			t.Errorf("report lacks %q:\n%s", s, res.stdout)
 		}
@@ -604,7 +628,7 @@ func TestLiveIntermittent(t *testing.T) {
 	t.Errorf("observed lacks 001 raised and cleared:\n%s", res.stdout)
 }
 
-// TestLiveInterruptDuringShutdown: a Ctrl-C while the session stops after the timeout still gives exit 2.
+// TestLiveInterruptDuringShutdown: a Ctrl-C while the session stops after the timeout wins as the stop reason.
 func TestLiveInterruptDuringShutdown(t *testing.T) {
 	env := checkEnv(t, checkInstall, checkController, checkRouteBroken)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -617,9 +641,7 @@ func TestLiveInterruptDuringShutdown(t *testing.T) {
 	cancel()
 	close(release)
 	res := r.wait()
-	if res.code != 2 {
-		t.Errorf("exit %d, want 2; stderr: %s", res.code, res.stderr)
-	}
+	stoppedByUser(t, res, 1)
 	if doc := decodeLive(t, res.stdout); doc.Item.Observation.StopReason != "interrupted" {
 		t.Errorf("stopReason %q, want interrupted", doc.Item.Observation.StopReason)
 	}
@@ -637,7 +659,7 @@ func (w *gateWriter) Write(p []byte) (int, error) {
 	return w.buf.Write(p)
 }
 
-// TestLiveInterruptDuringOutput: a Ctrl-C while the report is written still gives exit 2.
+// TestLiveInterruptDuringOutput: a Ctrl-C while the report is written still gives one complete report.
 func TestLiveInterruptDuringOutput(t *testing.T) {
 	env := checkEnv(t, checkInstall, checkController, checkRouteBroken)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -647,8 +669,9 @@ func TestLiveInterruptDuringOutput(t *testing.T) {
 	r.stepUntilClosed(w.entered)
 	cancel()
 	close(w.release)
-	if res := r.wait(); res.code != 2 {
-		t.Errorf("exit %d, want 2; stderr: %s", res.code, res.stderr)
+	// The run already ended at --timeout; the late Ctrl-C neither changes the exit nor adds an error.
+	if res := r.wait(); res.code != 1 || strings.Contains(res.stderr, "Error:") {
+		t.Errorf("exit %d, stderr %q; want 1 and no error", res.code, res.stderr)
 	}
 	oneEnvelope(t, []byte(w.buf.String()), 1)
 }
