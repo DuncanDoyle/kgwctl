@@ -78,7 +78,7 @@ kgwctl writes its own source; xdsview v0.3.0 `source/kube` returns only a reader
 - Pod: pods labelled `gateway.networking.k8s.io/gateway-name=<name>` in the Gateway's namespace. Pick the Ready, non-terminating pod with the oldest start time, then by name, so repeated runs pick the same replica. `--pod` must carry the Gateway's label, or exit 2.
 - Transport: client-go SPDY port-forward to 19000 on an OS-assigned loopback port. One HTTP client with redirects refused. The tunnel closes on success, error, cancellation and an oversized body.
 - Request: plain `GET /config_dump`, no query parameters.
-- Limits: one deadline over discovery, tunnel and read, default 30 s (`--timeout`). Parsing (`proxy routes`, live or `--file`) caps the body at 64 MiB, enforced before the parser reads it, raised with `--max-size`. Over the cap: exit 2 with the size and the flag.
+- Limits: one deadline over discovery, tunnel and read, default 30 s (the global `--request-timeout`). Parsing (`proxy routes`, live or `--file`) caps the body at 64 MiB, enforced before the parser reads it, raised with `--max-size`. Over the cap: exit 2 with the size and the flag.
 - Errors name the RBAC to add (D-021).
 
 ### 4.2 Origins and narrowing
