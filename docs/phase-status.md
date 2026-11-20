@@ -9,8 +9,8 @@ Status: design
 ### Queue
 - [x] Q1 Phase 3 design (`design.md`) r1: ab40189
 - [ ] Q1b xdsview E11 (xdsview#27): agreed by the xdsview session; starts when the owner confirms there. Blocks 3.2 only
-- [ ] Q2 Phase 3 implementation plan ← CURRENT
-- [ ] Q3 Cross-model review of design + plan, triage; owner go-ahead (design r1 reviewed: reviews/design-codex.md, 11 accepted; r2 written)
+- [x] Q2 Phase 3 implementation plan (r4)
+- [ ] Q3 Cross-model review of design + plan (5 rounds, reviews/design-codex*.md; last finding fixed), owner go-ahead ← CURRENT
 
 ### Exit gates
 - [ ] tests/vet pass

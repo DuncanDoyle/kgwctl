@@ -76,7 +76,7 @@ file: os.Open      ─┴─► Capture ─► → narrow by origin (--route/--r
 kgwctl writes its own source; xdsview v0.3.0 `source/kube` returns only a reader, picks the first Ready pod, and `source.Admin` follows redirects.
 - Result: `Capture{Pod (ns/name, or empty for a file), CapturedAt, Body io.ReadCloser}`. The same type serves `proxy dump` and, later, Phase 4's per-pod collection with its own redaction and partial failures.
 - Pod: pods labelled `gateway.networking.k8s.io/gateway-name=<name>` in the Gateway's namespace. Pick the Ready, non-terminating pod with the oldest start time, then by name, so repeated runs pick the same replica. `--pod` must carry the Gateway's label, or exit 2.
-- Transport: client-go SPDY port-forward to 19000 on an OS-assigned loopback port. One HTTP client with redirects refused. The tunnel closes on success, error, cancellation and an oversized body. Exception: with an HTTP proxy between kgwctl and the API server (kubeconfig `proxy-url` or the environment), a stalled upgrade can't be torn down from kgwctl; the command still returns at the deadline, and the socket closes when the process exits (a CLI is short-lived; xdsview#26 tracks the same gap for long-running consumers).
+- Transport: client-go SPDY port-forward to 19000 on an OS-assigned loopback port. One HTTP client with redirects refused. The tunnel closes on success, error, cancellation and an oversized body. Exception: with an HTTP or SOCKS5 proxy between kgwctl and the API server (kubeconfig `proxy-url` or the environment), a stalled upgrade can't be torn down from kgwctl; the command still returns at the deadline, and the socket closes when the process exits (a CLI is short-lived; xdsview#26 tracks the same gap for long-running consumers).
 - Request: plain `GET /config_dump`, no query parameters.
 - Limits: one deadline over discovery, tunnel and read, default 30 s (the global `--request-timeout`). Parsing (`proxy routes`, live or `--file`) caps the body at 64 MiB, enforced before the parser reads it, raised with `--max-size`. Over the cap: exit 2 with the size and the flag.
 - Errors name the RBAC to add (D-021).
@@ -128,4 +128,4 @@ Follows `docs/output.md`: `{schemaVersion: "kgwctl.kgateway.dev/v1alpha1", kind:
 ## 12. Open items (owner)
 1. `proxy dump` in Phase 3 (recommended: it is the recovery path for an oversized dump and the ticket workflow) or Phase 4?
 2. An upstream kgateway opt-in diagnostics endpoint for config_dump (Codex, 2026-11-20): a fixed GET path, authenticated, admin kept on loopback. Not a dependency.
-3. A stalled port-forward behind an HTTP proxy leaves its socket open until kgwctl exits (§4.1 exception, Codex round 4). Accept for a CLI, or require a fix in xdsview#26 first?
+3. A stalled port-forward behind an HTTP or SOCKS5 proxy leaves its socket open until kgwctl exits (§4.1 exception, Codex round 4). Accept for a CLI, or require a fix in xdsview#26 first?
