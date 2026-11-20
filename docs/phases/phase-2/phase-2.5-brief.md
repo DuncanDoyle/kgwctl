@@ -21,11 +21,11 @@ The owner chose option A (2026-11-20): a deliberate Ctrl-C ends a live run like 
 
 | Input / action | Expected |
 |---|---|
-| `check --live`, first Ctrl-C after an install was found | Full report on stdout. stderr ends with `Stopped by Ctrl-C.` and has no `Error:` line. Exit 0 or 1 from the findings, by the same rules as a `--timeout` stop, so design §3.4's other exit-2 conditions still apply. |
+| `check --live`, first Ctrl-C after an install was found | Full report on stdout. stderr has `Stopped by Ctrl-C.` Exit 0 or 1 from the findings, by the same rules as a `--timeout` stop, with no `Error:` line. Design §3.4's other exit-2 conditions still apply and print their error, as after a timeout. |
 | Same, with `-o json` or `-o yaml` | `stopReason: interrupted` (schema unchanged). stderr and exit as above. |
 | `check --live`, Ctrl-C while the session stops after `--timeout` | `stopReason: interrupted`. Exit 0 or 1 from the findings. |
 | `check --live`, Ctrl-C while the report is being written | One complete report. The run already ended, so its stop reason stays and no stop line prints. Exit 0 or 1 from the findings. |
-| `check` or `check --live`, the report write fails | `Error: <write error>`, exit 2 (review 2.5, finding 2). |
+| `check` or `check --live`, writing the report returns an error | `Error: <write error>`, exit 2 (review 2.5, finding 2). A closed pipe on Unix ends the process with SIGPIPE first, as before. |
 | `check --live`, Ctrl-C before any install was found | No report, exit 2 (unchanged). |
 | `check --live`, second Ctrl-C | Exits at once, no report (unchanged). |
 | Plain `check`, Ctrl-C | Exit 2 (unchanged): the run did not finish its checks. |

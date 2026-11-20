@@ -673,17 +673,21 @@ func TestLiveInterruptDuringOutput(t *testing.T) {
 	r.stepUntilClosed(w.entered)
 	cancel()
 	close(w.release)
-	// The run already ended at --timeout; the late Ctrl-C neither changes the exit nor adds an error.
-	if res := r.wait(); res.code != 1 || strings.Contains(res.stderr, "Error:") {
-		t.Errorf("exit %d, stderr %q; want 1 and no error", res.code, res.stderr)
+	// The run already ended at --timeout; the late Ctrl-C changes neither the report nor the exit.
+	res := r.wait()
+	if res.code != 1 || res.stderr != "" {
+		t.Errorf("exit %d, stderr %q; want 1 and nothing on stderr", res.code, res.stderr)
+	}
+	if doc := decodeLive(t, w.buf.String()); doc.Item.Observation.StopReason != "timeout" {
+		t.Errorf("stopReason %q, want timeout", doc.Item.Observation.StopReason)
 	}
 	oneEnvelope(t, []byte(w.buf.String()), 1)
 }
 
-// failWriter fails every write, as a full disk or a closed pipe does.
+// failWriter takes half of a write, then fails, as a disk that fills up does.
 type failWriter struct{}
 
-func (failWriter) Write([]byte) (int, error) { return 0, errors.New("no space left on device") }
+func (failWriter) Write(p []byte) (int, error) { return len(p) / 2, errors.New("no space left on device") }
 
 // TestLiveWriteError: a report that could not be written is exit 2, never a findings exit.
 func TestLiveWriteError(t *testing.T) {
