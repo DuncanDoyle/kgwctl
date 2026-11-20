@@ -21,7 +21,7 @@
 - `install` is `namespace/name` of the owning install, as in `get`.
 - Optional fields are omitted when empty, not printed as null. Fields documented as always present are printed even when empty.
 - Data goes to stdout and errors to stderr. Warnings never appear in JSON or YAML output.
-- Exit codes: `get`, `describe` and `version` use `0` for success and `1` for any error. `check` uses `0` when no shown finding is an error or warning, `1` when one is (or on a usage error), and `2` when it could not check, as with no install found. Exit codes are the same in every output format.
+- Exit codes: `get`, `describe` and `version` use `0` for success and `1` for any error. `check` uses `0` when no shown finding is an error or warning, `1` when one is (or on a usage error), and `2` when it could not check, as with no install found, or could not write the report. Exit codes are the same in every output format.
 
 ## Stability
 

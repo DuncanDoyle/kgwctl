@@ -71,7 +71,7 @@ Keeps one cache, engine and set of collectors alive and lets the engine recomput
 
 It never stops because nothing is pending: a clean run may be a fix just applied, a rollout, or a flapping proxy.
 
-Progress goes to **stderr, only when stderr is a terminal**. Off a terminal, stderr carries only warnings and errors. The first version appends timestamped lines; no redraw, no TUI library:
+Progress goes to **stderr, only when stderr is a terminal**. Off a terminal, stderr carries only warnings, errors and the `Stopped by Ctrl-C.` line (D-020). The first version appends timestamped lines; no redraw, no TUI library:
 
 ```
 14:02:10  observing prod: kgateway-system/kgateway for 6m (Ctrl-C: stop and report)
@@ -134,7 +134,7 @@ JSON/YAML: §7.
 
 | Code | When | Precedence |
 |---|---|---|
-| 2 | Could not check: Ctrl-C during a plain `check`, or during `--live` before an install was found (D-020); the deadline passed before the core kinds synced; no install found or selected; a kind the checks need could not be read (`cluster access` raised KGWUI-008) | highest |
+| 2 | Could not check: Ctrl-C during a plain `check`, or during `--live` before an install was found (D-020); the deadline passed before the core kinds synced; no install found or selected; a kind the checks need could not be read (`cluster access` raised KGWUI-008); the report could not be written | highest |
 | 1 | At least one shown finding has severity error or warning; or a usage error | |
 | 0 | Otherwise. `info` findings, holds and optional inputs that were not checked don't change it | |
 

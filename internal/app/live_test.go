@@ -115,7 +115,11 @@ func startLive(t *testing.T, env *testenv.Env, o liveOpts, h app.CheckTestHooks,
 		var ee *app.ExitError
 		switch err := root.ExecuteContext(ctx); {
 		case errors.As(err, &ee):
+			// As Execute: an ExitError prints only when it carries an error.
 			code = ee.Code
+			if ee.Err != nil {
+				errb.WriteString("Error: " + ee.Err.Error() + "\n")
+			}
 		case err != nil:
 			code = 1
 			errb.WriteString("Error: " + err.Error() + "\n")
@@ -674,6 +678,20 @@ func TestLiveInterruptDuringOutput(t *testing.T) {
 		t.Errorf("exit %d, stderr %q; want 1 and no error", res.code, res.stderr)
 	}
 	oneEnvelope(t, []byte(w.buf.String()), 1)
+}
+
+// failWriter fails every write, as a full disk or a closed pipe does.
+type failWriter struct{}
+
+func (failWriter) Write([]byte) (int, error) { return 0, errors.New("no space left on device") }
+
+// TestLiveWriteError: a report that could not be written is exit 2, never a findings exit.
+func TestLiveWriteError(t *testing.T) {
+	env := checkEnv(t, checkInstall, checkController, checkRouteBroken)
+	res := startLive(t, env, liveOpts{out: failWriter{}}, fastHooks(metricsScraper{}), "--timeout", "30s").finish()
+	if res.code != 2 || !strings.Contains(res.stderr, "no space left on device") {
+		t.Errorf("exit %d, stderr %q; want 2 and the write error", res.code, res.stderr)
+	}
 }
 
 // flakyCollector publishes its one key, then fails (true) or publishes (false) on command.

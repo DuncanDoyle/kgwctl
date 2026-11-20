@@ -267,9 +267,17 @@ func reportExit(p *engine.Published, c view.Check, within, name string) error {
 	return nil
 }
 
-// writeCheck prints c as text with its hint line, or as one envelope.
+// writeCheck prints c as text with its hint line, or as one envelope. A report
+// that could not be written is exit 2, so it never reads as a findings exit.
 func writeCheck(cmd *cobra.Command, output string, c view.Check, build BuildInfo, now time.Time) error {
-	w := cmd.OutOrStdout()
+	if err := writeCheckTo(cmd.OutOrStdout(), output, c, build, now); err != nil {
+		return &ExitError{Code: 2, Err: err}
+	}
+	return nil
+}
+
+// writeCheckTo is writeCheck on w.
+func writeCheckTo(w io.Writer, output string, c view.Check, build BuildInfo, now time.Time) error {
 	if output != print.FormatText {
 		return print.Envelope(w, output, "Check", c)
 	}
