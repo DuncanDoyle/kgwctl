@@ -107,18 +107,19 @@ Each sub-phase ends with `make test`, `go vet ./...`, gofmt clean.
 
 **Interfaces:**
 - Consumes: `SelectPod`, `Fetch`, `Capture`, `AdminPort`.
-- Produces: `func NewPortForwarder(cfg *rest.Config) Dialer` (client-go `tools/portforward`, local address `127.0.0.1`, port `0`, stops on ctx cancel and on `stop`). The SPDY upgrade must honour ctx: client-go's stock dialer sends the upgrade without a context and reads the response with no deadline. Use the technique of xdsview `pkg/envoy/source/kube/portforward.go:187-228` (`ctxDialer`): send the upgrade with ctx and close the connection once ctx is done. Read the upgrade response status before the upgrader consumes it, so a 403 stays a typed Forbidden.
+- Produces: `func NewPortForwarder(cfg *rest.Config) Dialer` (client-go `tools/portforward`, local address `127.0.0.1`, port `0`, stops on ctx cancel and on `stop`). The SPDY upgrade must honour ctx: client-go's stock dialer sends the upgrade without a context and reads the response with no deadline. Use the technique of xdsview `pkg/envoy/source/kube/portforward.go:187-228` (`ctxDialer`): send the upgrade with ctx and close the connection once ctx is done. Read the upgrade response status before the upgrader consumes it, so a 403 stays a typed Forbidden. With a kubeconfig or environment proxy, xdsview's socket-close hook doesn't reach the connection; `Fetch` must still return at the deadline (run the dial in a goroutine and stop waiting on ctx), leaving the stuck socket to process exit.
 - Produces: `kgwctl proxy` (no-op parent with help) and `kgwctl proxy dump <gateway> [--pod <pod>]`, honouring `-n`, `--context`, `--kubeconfig`, `--request-timeout`.
 - Produces: `internal/app` test hook to inject a `Dialer` (same pattern as Phase 2's `checkTestHooks`).
 
-- [ ] **Step 1:** If the testenv proxy can't deny `create pods/portforward` (a POST/upgrade on the subresource), extend `Match` to match the subresource for any verb, with a test in `internal/testenv`.
+- [ ] **Step 1:** If the testenv proxy can't deny `create pods/portforward` (a POST/upgrade on the subresource), extend `Match` to match the subresource for any verb, for both deny and delay, with a test in `internal/testenv`.
 - [ ] **Step 2: Write the failing tests** (envtest + fake dialer):
   - `TestProxyDumpStreams`: stdout equals the fake server body byte for byte; exit 0; stderr empty.
   - `TestProxyDumpNoGatewayArg`: exit 2, usage error.
   - `TestProxyDumpNoReplica`: exit 2; stderr names the Gateway and `--pod`.
   - `TestProxyDumpPortForwardForbidden`: real `NewPortForwarder` against envtest with the deny match → exit 2; stderr contains `create pods/portforward` and `docs/rbac.yaml`.
   - `TestProxyDumpDeadline`: `--request-timeout 300ms`, blocking fake server → exit 2 within 3 s.
-  - `TestProxyDumpUpgradeHangs`: real `NewPortForwarder` pointed (via a kubeconfig) at a TCP server that accepts and never answers the upgrade; `--request-timeout 300ms` → exit 2 within 3 s; the server sees the connection closed.
+  - `TestProxyDumpUpgradeHangs`: envtest serves the Gateway and Pod reads; the testenv proxy stalls only the `pods/portforward` request (a delay `Match` on that subresource, from Step 1). `--request-timeout 2s` → exit 2 within 5 s; the proxy recorded the port-forward request (so the timeout hit the upgrade, not discovery) and saw its connection closed.
+  - `TestProxyDumpUpgradeHangsViaProxy`: same, with the kubeconfig `proxy-url` pointing at an HTTP CONNECT proxy in the test that stalls. The command still exits 2 at the deadline; the socket may outlive the call until process exit, which is acceptable for a CLI (xdsview#26).
   - `TestProxyDumpExecPlugin`: add `proxy dump` to the lifecycle suite's credential exec plugin cases (`internal/app/lifecycle_test.go:222` onward), so a hanging plugin ends at `--request-timeout`.
   - `TestCheckAsReader`: one `check` command test run as an envtest user bound only to `kgwctl-reader` from `docs/rbac.yaml` (envtest `AddUser` plus the ClusterRole and a binding applied as admin), asserting the same findings as the admin run. This proves the reader role alone still serves `check`.
 - [ ] **Step 3:** Implement. `proxy dump` copies `Capture.Body` to stdout with `io.Copy`, no cap. Help text carries §3.2's redaction paragraph verbatim. Error mapping: a typed Forbidden (from the API or the preserved upgrade status) → the RBAC line.
@@ -155,19 +156,21 @@ Task-level only. Exact xdsview signatures are filled in when the release is tagg
 
 - Add `github.com/DuncanDoyle/xdsview@<E11 tag>`. Extend `TestBinaryDeps` to ban `github.com/charmbracelet/` and `github.com/muesli/`; prove it fails on a temporary blank import of `github.com/charmbracelet/lipgloss`, then revert.
 - `internal/proxyview`: `Build(body []byte, gw *types.NamespacedName, known []model.Ref, sel Selection) (View, error)`: `parser.Parse` → `origin.Annotate(origin.Kgateway{Gateway, Known})` → `chain.Annotate` (attaches `Route.Chain` per route within its HCM) → `filter.Filter` on resolved origin, plus `filter.Ambiguous` for the routes to list as ambiguous. Parser warnings kept in `View.Warnings`. (xdsview Phase 6 names, design r2 at xdsview `15b3fe1`; confirm against the tag.)
-- Selection rule: a route drives `--route` only when its origin is Exact, or Inferred from the route name alone. An Inferred origin that needed `Known` to break a tie is shown with "(inferred from cluster routes)" and is never the only basis for a match without that marker. If xdsview's released `filter.Filter` doesn't expose that distinction, stop and raise it with xdsview before implementing.
+- Selection rule (design §4.2): a route drives `--route` only when its origin is Exact, or Inferred with `RouteAnnotation.NarrowedByKnown == false` (xdsview `5d82113`). xdsview's `filter.Filter` still matches a `NarrowedByKnown` route; kgwctl removes such routes from the selection after `filter.Filter` and lists them as ambiguous with "one candidate exists in the cluster".
 - Tests on the 3.1 goldens, split by expected result:
   - Exact selection: `collide-meta.json` with `--route kgwctl-proxy/orders` returns only that route.
   - Ambiguity: `collide.json` with the same flag returns no match and lists both colliding routes as ambiguous, live Known or not.
+  - Single survivor: `collide.json` with `Known` holding only `kgwctl-proxy/orders` (the other HTTPRoute deleted) → no match; the route is listed as ambiguous with "one candidate exists in the cluster", never shown as `kgwctl-proxy/orders`.
   - A non-active listener survives narrowing (a hand-edited copy of `demo.json` with one listener moved to `warming_state`).
   - A malformed section (a hand-edited copy of `demo.json` with one route config broken) shows a parser warning in both the tree and JSON, next to the surviving routes.
   - `policies.json`: ext_authz `enabled` at `Level` route on `orders`, `disabled` on the second route; response order omits request-only filters and marks unknown ones `?`.
 
 ### Task 3.2.2: `proxy routes` command and tree
 
-- `kgwctl proxy routes [<gateway>] [--file] [--pod] [--route ns/name] [--rule i] [--max-size 64Mi] [-o json|yaml]`. Live: `SelectPod` + `Fetch` + `ReadCapped`, Known HTTPRoutes from kgwctl's one-shot load (`load.Load`). File: open + `ReadCapped`, and never any Kubernetes call, even when a cluster is reachable (D-021); Known is empty. A test with an unreachable kubeconfig and one with a reachable envtest proves both give identical output and that the envtest proxy sees no request.
+- `kgwctl proxy routes [<gateway>] [--file [--gateway <ns>/<name>]] [--pod] [--route ns/name] [--rule i] [--max-size 64Mi] [-o json|yaml]`. Live: `SelectPod` + `Fetch` + `ReadCapped`, Known HTTPRoutes from kgwctl's one-shot load (`load.Load`). File: open + `ReadCapped`, and never any Kubernetes call, even when a cluster is reachable (D-021); Known is empty, and `--gateway` (file only; an error live) supplies the Gateway ref for listener and route-config origins. A test with an unreachable kubeconfig and one with a reachable envtest proves both give identical output and that the envtest proxy sees no request.
 - Tree from `render.Text` with kgwctl's header line (§3.1). Response order shown only where xdsview reports an encoder; otherwise the §3.1 wording.
-- Exit 2 for: cap exceeded (message names `--max-size` and `proxy dump`), parse error, and every 3.1 capture error.
+- Exit 2 for: cap exceeded (message names `--max-size` and `proxy dump`, or `kubectl port-forward` + `curl` if `proxy dump` moved to Phase 4), parse error, and every 3.1 capture error.
+- `TestProxyRoutesCapClosesTunnel`: live `proxy routes` with `--max-size 1Ki` through the loopback fake dialer of 3.1.2 and a 2 KiB body → exit 2 naming `--max-size`; the server sees the connection closed and the tunnel listener refuses connections.
 - Golden text tests per fixture dump.
 
 ### Task 3.2.3: JSON contract and docs
@@ -180,7 +183,7 @@ Task-level only. Exact xdsview signatures are filled in when the release is tagg
 
 ### Task 3.3.1: `proxy routes` live check
 
-- `hack/live-check.sh`: `proxy routes proxy -n kgwctl-proxy --route kgwctl-proxy/orders` as reader + Role; assert the three filters in request order with their policies. Same against a file from `proxy dump` taken with `enableRouteSourceMetadata: true`, identical output except the header. Without metadata, the file view lists the colliding routes as ambiguous; the live view may resolve them, marked as inferred.
+- `hack/live-check.sh`: `proxy routes proxy -n kgwctl-proxy --route kgwctl-proxy/orders` as reader + Role; assert the three filters in request order with their policies. Same against a file from `proxy dump` (or `kubectl port-forward` + `curl` if `proxy dump` moved to Phase 4) taken with `enableRouteSourceMetadata: true`, run with `--file --gateway kgwctl-proxy/proxy`: identical output except the header. Without metadata, both the file and the live view list the colliding routes as ambiguous.
 - README walkthrough: "does my transformation run before ext_authz?" answered from the live tree.
 
 ## Phase close prerequisites (not done by the implementer)
