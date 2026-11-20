@@ -16,12 +16,12 @@ Status: implementation
 - [x] Q7 Phase review (Codex), triage: reviews/phase-codex.md
 - [x] Q7b Stabilization 2.4 (phase-2.4-complete.md)
 - [x] Q7c Snellius `v0.8.2` (final release, D-018): `d095f1b`; tests pass; demo use cases match Snellius's expected findings
-- [ ] Q8 Owner tries `check`: `check` approved 2026-11-20; `--live` try-out pending
-- [ ] Q9 Stabilization 2.5: Ctrl-C in `--live` (phase-2.5-brief.md) ← CURRENT
+- [ ] Q8 Owner tries `check`: `check` approved 2026-11-20; `--live` try-out pending ← CURRENT
+- [x] Q9 Stabilization 2.5: Ctrl-C in `--live` (phase-2.5-complete.md)
 - [ ] Q10 Phase close
 
 ### Exit gates
-- [ ] tests/vet pass (observed)
+- [x] tests/vet pass (observed 2026-11-20 at c9f2164)
 - [ ] all queue items done or deferred
 - [x] design+plan cross-model review + triage: docs/phases/phase-2/reviews/design-codex.md (+ -r2, -r3)
 - [x] phase cross-model review + triage: docs/phases/phase-2/reviews/phase-codex.md
@@ -29,13 +29,7 @@ Status: implementation
 - [ ] phase-2-complete.md written, roadmap updated, tracked items closed
 
 ## Sub-phase
-Sub-phase: 2.5 — Ctrl-C in `check --live` (stabilization)
-Base: d095f1b
-Brief: docs/phases/phase-2/phase-2.5-brief.md
-Queue:
-- [ ] S1 (P3) Ctrl-C with a report exits from the findings, stderr `Stopped by Ctrl-C.`, footer wording (D-020) ← CURRENT
-- [ ] S2 (P4) Roadmap notes from the `glooctl check` comparison
-- [ ] S3 Cross-model review + triage
+n/a (2.5 complete: docs/phases/phase-2/phase-2.5-complete.md)
 
 ## Program
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
