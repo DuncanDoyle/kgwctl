@@ -1,6 +1,6 @@
 # Phase 3 — `proxy routes`: Design
 
-**Status:** draft r3, 2026-11-20 (reviewed: reviews/design-codex.md, design-codex-r2.md)
+**Status:** draft r4, 2026-11-20 (reviewed: reviews/design-codex.md, -r2, -r3)
 **Base:** 44be3b6
 
 ## 1. Goal and scope
