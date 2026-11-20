@@ -3,7 +3,7 @@ module github.com/DuncanDoyle/kgwctl
 go 1.26.0
 
 require (
-	github.com/DuncanDoyle/snellius v0.7.0-alpha.1
+	github.com/DuncanDoyle/snellius v0.8.2
 	github.com/go-logr/logr v1.4.3
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.9

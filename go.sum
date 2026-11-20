@@ -1,5 +1,5 @@
-github.com/DuncanDoyle/snellius v0.7.0-alpha.1 h1:2Av4xQHYxchPMUN/7sr0OhGmoaAJmnnH13/4OXIZSDo=
-github.com/DuncanDoyle/snellius v0.7.0-alpha.1/go.mod h1:uoiPmMo4PYUzvpqfxojJX5rqHY9gSJITimJ8S+pPong=
+github.com/DuncanDoyle/snellius v0.8.2 h1:fHHuukF03cgTX1WhYHLW1GBGy0tKev1LmgD9iZJ2bhI=
+github.com/DuncanDoyle/snellius v0.8.2/go.mod h1:6qEzc4tf6SU27vjjeqKNZu9xCBgREQL8rqKkEnzd0bY=
 github.com/Masterminds/semver/v3 v3.4.0 h1:Zog+i5UMtVoCU8oKka5P7i9q9HgrJeGzI9SA1Xbatp0=
 github.com/Masterminds/semver/v3 v3.4.0/go.mod h1:4V+yj/TJE1HU9XfppCwVMZq3I84lprf4nC11bSS5beM=
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=
