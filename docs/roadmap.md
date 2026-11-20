@@ -38,7 +38,7 @@ A support engineer's first command on a cluster they troubleshoot: what is wrong
 - Next step after the Phase 2 MVP (user, 2026-11-09): `-o agent`, an output for AI agents (Codex, Claude, Snellius AI-assisted diagnosis). Per finding: what the code means, the evidence objects, the suggested fix; plus what was not checked or is pending. Cluster text is marked as untrusted data; never Secret material. Phase 2 fixes the finding schema so this format adds no new data. Aim for one finding schema with the Snellius MCP server (a new program edge, Snellius as provider).
 
 ### Phase 3 — Data plane
-**Status:** Not started
+**Status:** Design
 **Docs:** `docs/phases/phase-3/`
 **Waits on:** none — E1 delivered (xdsview `v0.3.0`, formerly krp)
 

@@ -2,12 +2,12 @@
 
 ## Phase
 Phase: 3 — Data plane (`proxy routes`)
-Base: tbd (main HEAD after the Phase 2 merge)
+Base: 44be3b6
 Docs: docs/phases/phase-3/
-Status: not started
+Status: design
 
 ### Queue
-- [ ] Q1 Phase 3 design (`design.md`)
+- [ ] Q1 Phase 3 design (`design.md`) ← CURRENT
 - [ ] Q2 Phase 3 implementation plan
 - [ ] Q3 Cross-model review of design + plan, triage; owner go-ahead
 
