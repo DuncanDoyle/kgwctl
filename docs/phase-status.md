@@ -1,52 +1,41 @@
 # Phase status
 
 ## Phase
-Phase: 2 — `check`
-Base: 980d32d (rebased onto `967fb63` on 2026-11-20; review diffs from now on use `967fb63`)
-Docs: docs/phases/phase-2/
-Status: implementation
+Phase: 3 — Data plane (`proxy routes`)
+Base: tbd (main HEAD after the Phase 2 merge)
+Docs: docs/phases/phase-3/
+Status: not started
 
 ### Queue
-- [x] Q1 Phase 2 design (`design.md`), taking in the carry-over below — approved 2026-11-10
-- [x] Q2 Phase 2 implementation plan
-- [x] Q3 Cross-model review of design + plan (3 rounds), triage; owner go-ahead 2026-11-10
-- [x] Q4 Sub-phase 2.1 Snellius upgrade
-- [x] Q5 Sub-phase 2.2 `check` (phase-2.2-complete.md)
-- [x] Q6 Sub-phase 2.3 `check --live` (phase-2.3-complete.md)
-- [x] Q7 Phase review (Codex), triage: reviews/phase-codex.md
-- [x] Q7b Stabilization 2.4 (phase-2.4-complete.md)
-- [x] Q7c Snellius `v0.8.2` (final release, D-018): `d095f1b`; tests pass; demo use cases match Snellius's expected findings
-- [ ] Q8 Owner tries `check`: `check` approved 2026-11-20; `--live` try-out pending ← CURRENT
-- [x] Q9 Stabilization 2.5: Ctrl-C in `--live` (phase-2.5-complete.md)
-- [ ] Q10 Phase close
+- [ ] Q1 Phase 3 design (`design.md`)
+- [ ] Q2 Phase 3 implementation plan
+- [ ] Q3 Cross-model review of design + plan, triage; owner go-ahead
 
 ### Exit gates
-- [x] tests/vet pass (observed 2026-11-20 at c9f2164)
+- [ ] tests/vet pass
 - [ ] all queue items done or deferred
-- [x] design+plan cross-model review + triage: docs/phases/phase-2/reviews/design-codex.md (+ -r2, -r3)
-- [x] phase cross-model review + triage: docs/phases/phase-2/reviews/phase-codex.md
+- [ ] design+plan cross-model review + triage
+- [ ] phase cross-model review + triage
 - [ ] decisions.md / design / plan in sync with code
-- [ ] phase-2-complete.md written, roadmap updated, tracked items closed
+- [ ] phase-3-complete.md written, roadmap updated, tracked items closed
 
 ## Sub-phase
-n/a (2.5 complete: docs/phases/phase-2/phase-2.5-complete.md)
+n/a
 
 ## Program
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
-- Read 2026-11-10 at kgateway-tooling `10b77d2`. Open `cross-repo` issues: kgwctl #1–#7 (all "available" notices, none blocking). Snellius has two open from kgwctl, not needed for Phase 2: #18 list-only one-shot snapshot, #19 namespace-scoped listing for restricted users.
-- Available: E8 — Snellius `v0.6.0`: `engine.Compute` one-shot; controller metrics via `ctrlmetrics.CollectOnce` + `Publish` (kgwctl#5–#7). go.mod still on kgateway-ui `v0.3.0`; Phase 2 moves to `github.com/DuncanDoyle/snellius`.
-- Available: E3 — Snellius analyzer over a snapshot, all 26 checks (kgwctl#4); Phase 2 runs all of them (Phase 5 keeps `analyze -f`).
-- Available: E9 — check holds, `CheckResult.Hold` (snellius#33, closed), now from Snellius `v0.8.2`. Used by `check --live`.
-- Notices since: kgwctl#8 (v0.7.0 list-only and namespace-scoped reads; not used yet, a later sub-phase) and kgwctl#9 (v0.8.0 route signals; no change to `check` output).
-- Available: E2 (Phase 1), E1, E5 (Phase 3/6).
+- Read 2026-11-20 at kgateway-tooling `dcab679`.
+- Available: E1 — xdsview `v0.3.0` (`github.com/DuncanDoyle/xdsview/pkg/envoy/...`, formerly krp; kgwctl#1).
 - Waiting on: E7 (Phase 6).
 - Consumers: none
 
 ## Carry-over (deferred to later phases)
-- Phase 2 (taken by design §4): `check` keeps one engine across recomputes so grace periods and holds mature; `load.Load` returns a model only (reviews/phase-codex.md#8).
-- Later phase (D-015): a narrow `pkg/cli` facade for vendor cluster commands — flags, REST config, deadline, load (reviews/phase-codex.md#9, D-009 follow-up).
+- kgwctl#8: Snellius list-only and namespace-scoped reads; owner to schedule.
+- `get`/`describe` for list-only kinds (Phase 2.1 ruling).
+- `--only`, `--exclude`, `--fail-on`, repeatable `-n`, controller logs (D-015).
+- A narrow `pkg/cli` facade for vendor cluster commands (D-015).
 
 ## Notes
-- 2026-11-10 Ruling (2.1): Snellius's catalogue now has list-only kinds (DirectResponse, GatewayExtension, ReferenceGrant; kgwctl#17). `get`/`describe` keep Phase 1 behaviour and skip `ListOnly` kinds, because `load.Load` doesn't wait for them and could print a false empty list. Supporting them in `get`/`describe` is a follow-up for a later sub-phase or phase (owner to schedule).
 - GitHub repo: https://github.com/DuncanDoyle/kgwctl (`kgwctl` remains a working name, D-006).
 - 2026-11-06 Phase 1 closed: docs/phases/phase-1/phase-1-complete.md.
+- 2026-11-20 Phase 2 closed: docs/phases/phase-2/phase-2-complete.md.

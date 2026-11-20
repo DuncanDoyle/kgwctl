@@ -1,6 +1,6 @@
 # kgwctl — Roadmap
 
-**Last updated:** 2026-11-05
+**Last updated:** 2026-11-20
 **Program:** [kgateway-tooling `program.md`](https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md) (local checkout: `../kgateway-tooling-claude`)
 
 ## Goal
@@ -18,12 +18,12 @@ A command-line tool for operators to inspect and troubleshoot kgateway installat
 - Output: table, `-o yaml`, `-o json`.
 
 ### Phase 2 — `check`
-**Status:** Not started
+**Status:** Complete 2026-11-20 — `docs/phases/phase-2/phase-2-complete.md`
 **Docs:** `docs/phases/phase-2/`
-**Waits on:** none — E3, E8 delivered; E9 in Snellius `v0.7.0-alpha.1`
+**Waits on:** none — E3, E8, E9 delivered (Snellius `v0.8.2`)
 
 A support engineer's first command on a cluster they troubleshoot: what is wrong, what could not be checked, what is still deciding. Readable in the terminal, pasteable into Slack or a ticket (D-014).
-- All 26 Snellius checks in one pass, built on Snellius `v0.7.0` (E3, E8, E9). xDS rejections stay first in testing (D-010).
+- All 26 Snellius checks in one pass, built on Snellius `v0.8.2` (E3, E8, E9). xDS rejections stay first in testing (D-010).
 - Text report plus `-o json|yaml` keyed by finding code and finding ID, both stable; severity is data on each finding.
 - Exit codes: 0 clean, 1 problems found, 2 could not check.
 - `--live`: observe for a bounded time so grace periods and holds decide; progress on stderr, one report on stdout (D-016).
@@ -40,7 +40,7 @@ A support engineer's first command on a cluster they troubleshoot: what is wrong
 ### Phase 3 — Data plane
 **Status:** Not started
 **Docs:** `docs/phases/phase-3/`
-**Waits on:** program edge E1 (krp `pkg/envoy` `v0.1.0`)
+**Waits on:** none — E1 delivered (xdsview `v0.3.0`, formerly krp)
 
 - `proxy routes`: the Envoy listeners, filter chains, routes and HTTP filters for a Gateway, optionally narrowed to one HTTPRoute and rule.
 - Sources: port-forward to the proxy admin port, or a config dump file.
