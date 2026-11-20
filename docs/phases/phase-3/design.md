@@ -1,6 +1,6 @@
 # Phase 3 — `proxy routes`: Design
 
-**Status:** draft r2, 2026-11-20 (r1 reviewed: reviews/design-codex.md)
+**Status:** draft r3, 2026-11-20 (reviewed: reviews/design-codex.md, design-codex-r2.md)
 **Base:** 44be3b6
 
 ## 1. Goal and scope
@@ -24,7 +24,7 @@ In scope:
 - Measured on kind, kgateway v2.5.1 (2026-11-20):
   - Envoy admin listens on 127.0.0.1:19000 only. `pods/proxy` to 19000: connection refused. The 9091 stats listener serves `/stats/prometheus`; `/config_dump` there: NotFound.
   - A dump of the `team-a` Gateway: 134 KB, one listener (`listener~80`), five virtual hosts, route names that embed the HTTPRoute, namespace and rule index (`…-httproute-orders-team-a-1-0-matcher-0`).
-- Route names are ambiguous: HTTPRoute `orders` in `team-a` and `orders-team` in `a` both encode `httproute-orders-team-a-`. xdsview v0.3.0 `filter.Filter` falls back to that substring when a route has no `route_source` metadata (`filter.go:142-182`).
+- Route names are ambiguous: HTTPRoute `orders` in `team-a` and `orders-team` in `a` both encode `httproute-orders-team-a-`. xdsview v0.3.0 `filter.Filter` falls back to that substring when a route has no `route_source` metadata (`filter.go:142-182`). kgateway attaches that metadata only with the Helm value `enableRouteSourceMetadata: true` (default `false`).
 - Prior art: glooctl `proxy dump` shells out to `kubectl port-forward`. krp (xdsview's CLI) uses client-go port-forward. Neither restricts or documents the admin write access a port-forward gives.
 
 ## 3. Commands
@@ -82,7 +82,7 @@ kgwctl writes its own source; xdsview v0.3.0 `source/kube` returns only a reader
 - Errors name the RBAC to add (D-021).
 
 ### 4.2 Origins and narrowing
-kgwctl passes `origin.Kgateway` the Gateway ref and the known HTTPRoutes from its own one-shot load, so route origins resolve without xdsview's cluster-wide `kube.HTTPRoutes` list. `--route`/`--rule` narrow on the resolved origin (an E11 addition to xdsview, §7). A route whose origin stays Ambiguous is never shown as a match; the output lists it as ambiguous. With `--file` and no cluster access, origins come from `route_source` metadata only, and narrowing on an Ambiguous route says so.
+kgwctl passes `origin.Kgateway` the Gateway ref and the known HTTPRoutes from its own one-shot load, so route origins resolve without xdsview's cluster-wide `kube.HTTPRoutes` list. `--route`/`--rule` narrow on the resolved origin (an E11 addition to xdsview, §7). A route drives a match only when its origin is Exact, or Inferred from the route name alone. One that needed the known routes to break a tie shows "(inferred from cluster routes)": Envoy may still serve a deleted route whose name collides with a live one. A route whose origin stays Ambiguous is never shown as a match; the output lists it as ambiguous. `--file` never calls Kubernetes, even when a cluster is reachable; origins come from route names and `route_source` metadata only, so a dump without metadata can leave colliding routes ambiguous.
 
 ### 4.3 Listener state
 Active, warming, draining and rejected state come from xdsview (E11). Non-active listeners survive narrowing. A warming-only or rejected listener shows its state and error, never an empty tree. Sections xdsview skipped with parser warnings are printed as warnings in the tree and in JSON, so a partial result never looks complete.
@@ -97,12 +97,11 @@ Follows `docs/output.md`: `{schemaVersion: "kgwctl.kgateway.dev/v1alpha1", kind:
 
 ## 7. Dependencies
 - xdsview `v0.3.0` (E1, E5): parser, origin, model. Same Go, client-go and cobra as kgwctl; no conflict with Snellius v0.8.2.
-- xdsview next minor (E11, xdsview#27), expected shapes from the xdsview session (2026-11-20), plus review additions:
-  - `render.Text(w io.Writer, snap *model.EnvoySnapshot, opts render.Options) error`, stdlib only.
-  - `EffectiveChain(hcm, vh, route)`, reachable per route within each HCM; entries `{filter, requestPos, state: on|enabled-by-route|enabled-by-vhost|disabled-by-route, source: route|vhost|hcm, policies[]}`. A list of policy contributions, not one ref, so Phase 6 can tell inherited from merged policy.
-  - Response-path knowledge per known filter type (has an encoder: yes / no / unknown).
-  - `model.Listener.State` (active|warming|draining), `ErrorState`, `LastUpdated`; non-active listeners survive narrowing.
-  - Narrowing on resolved origin, not the route-name substring.
+- xdsview `v0.4.0` (E11, xdsview#27), its Phase 6 design r2 (xdsview `15b3fe1`, awaiting the owner):
+  - `pkg/envoy/render`: stdlib-only deterministic text, generic `Style` and `Extra` hooks.
+  - `pkg/envoy/chain`: `Effective(hcm, vh, r)` and `Annotate(snap, mapper)`, attaching `Route.Chain` per route inside its HCM. Entries carry a state (on, off, enabled, disabled, unknown), a `Level` (route, virtualHost, routeConfig), `Request` and `Response` sides (yes, no, unknown) and `Contributions []{Kind: extension|policy, Ref, Field}`. `RequestOrder()` and `ResponseOrder()` drop "no" sides; unknown stays, marked "?". `Conditional` marks a baseline that a weighted backend can override.
+  - `filter.Filter` narrows on Exact or single-candidate Inferred origins, never Ambiguous; `filter.Ambiguous(snap, opts)` names the ambiguous routes. kgwctl adds the tie-break marker of §4.2.
+  - Listener state (active, warming, draining, rejected) with error and last update; non-active listeners survive narrowing.
 - kgwctl must not compile charmbracelet modules; a test asserts `go list -deps ./cmd/kgwctl` has none.
 
 ## 8. Testing

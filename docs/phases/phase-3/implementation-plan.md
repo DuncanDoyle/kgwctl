@@ -44,7 +44,7 @@ envtest (`internal/testenv`) runs no kubelet, so no port-forward can complete th
 
 | Sub-phase | Delivers | Tasks | Waits on |
 |---|---|---|---|
-| 3.1 | Capture, `proxy dump`, RBAC Role, golden dumps | 3.1.1–3.1.4 | none |
+| 3.1 | Capture, `proxy dump`, RBAC Role, golden dumps | 3.1.1–3.1.4 | none (`proxy dump` in Phase 3 is the design's open item 1; if the owner moves it to Phase 4, 3.1.3 keeps the dialer and drops the command, and 3.1.4 captures with `kubectl port-forward` + `curl`) |
 | 3.2 | `proxy routes` on xdsview E11 | 3.2.1–3.2.3 | xdsview release with E11 |
 | 3.3 | Live check and docs for `proxy routes` | 3.3.1 | 3.2 |
 
@@ -87,12 +87,12 @@ Each sub-phase ends with `make test`, `go vet ./...`, gofmt clean.
 - Produces: `func Fetch(ctx context.Context, d Dialer, pod types.NamespacedName, now func() time.Time) (*Capture, error)`
 - Produces: `func ReadCapped(r io.Reader, max int64) ([]byte, error)` and `var ErrTooLarge` (error text includes the limit; used by 3.2).
 
-- [ ] **Step 1: Write the failing tests** with a fake `Dialer` returning an `httptest.Server` URL and counting `stop` calls:
+- [ ] **Step 1: Write the failing tests** with a fake `Dialer` whose `Dial` starts a real loopback TCP listener in front of an `httptest.Server` handler (a stand-in tunnel) and whose `stop` closes that listener. Tests observe closure on the server side (`http.Server.ConnState` reaching `StateClosed`, the listener refusing new connections), not only callback counts:
   - `TestFetchOneGet`: the server records exactly one request, `GET /config_dump`, empty query; `Capture.Pod` and `CapturedAt` set; body bytes equal.
-  - `TestFetchRefusesRedirect`: server answers 302 to `/elsewhere`; error mentions `redirect`; `/elsewhere` never requested; `stop` called once.
-  - `TestFetchNon200`: 503 → error includes the status; `stop` called once.
-  - `TestFetchDeadline`: handler blocks; `ctx` with 200 ms timeout → `errors.Is(err, context.DeadlineExceeded)` within 2 s; `stop` called once.
-  - `TestFetchCloseStopsTunnel`: after `Body.Close()`, `stop` called once; a second `Close` doesn't call it again.
+  - `TestFetchRefusesRedirect`: server answers 302 to `/elsewhere`; error mentions `redirect`; `/elsewhere` never requested; the tunnel listener is closed.
+  - `TestFetchNon200`: 503 → error includes the status; the tunnel listener is closed.
+  - `TestFetchDeadline`: handler blocks mid-body; `ctx` with 200 ms timeout → `errors.Is(err, context.DeadlineExceeded)` within 2 s; the server sees the connection closed and the tunnel listener is closed.
+  - `TestFetchCloseStopsTunnel`: after `Body.Close()` partway through the body, the server sees the connection closed and the listener refuses connections; a second `Close` is a no-op.
   - `TestReadCappedOver`: 65 bytes with `max=64` → `errors.Is(err, ErrTooLarge)`; `TestReadCappedAt`: 64 bytes → ok.
 - [ ] **Step 2:** Tests fail.
 - [ ] **Step 3:** Implement. Own `http.Client` with `CheckRedirect` returning an error, request built with `http.NewRequestWithContext`. `ReadCapped` reads through `io.LimitReader(r, max+1)`.
@@ -107,7 +107,7 @@ Each sub-phase ends with `make test`, `go vet ./...`, gofmt clean.
 
 **Interfaces:**
 - Consumes: `SelectPod`, `Fetch`, `Capture`, `AdminPort`.
-- Produces: `func NewPortForwarder(cfg *rest.Config) Dialer` (client-go `transport/spdy` + `tools/portforward`, local address `127.0.0.1`, port `0`, stops on ctx cancel and on `stop`).
+- Produces: `func NewPortForwarder(cfg *rest.Config) Dialer` (client-go `tools/portforward`, local address `127.0.0.1`, port `0`, stops on ctx cancel and on `stop`). The SPDY upgrade must honour ctx: client-go's stock dialer sends the upgrade without a context and reads the response with no deadline. Use the technique of xdsview `pkg/envoy/source/kube/portforward.go:187-228` (`ctxDialer`): send the upgrade with ctx and close the connection once ctx is done. Read the upgrade response status before the upgrader consumes it, so a 403 stays a typed Forbidden.
 - Produces: `kgwctl proxy` (no-op parent with help) and `kgwctl proxy dump <gateway> [--pod <pod>]`, honouring `-n`, `--context`, `--kubeconfig`, `--request-timeout`.
 - Produces: `internal/app` test hook to inject a `Dialer` (same pattern as Phase 2's `checkTestHooks`).
 
@@ -118,9 +118,11 @@ Each sub-phase ends with `make test`, `go vet ./...`, gofmt clean.
   - `TestProxyDumpNoReplica`: exit 2; stderr names the Gateway and `--pod`.
   - `TestProxyDumpPortForwardForbidden`: real `NewPortForwarder` against envtest with the deny match → exit 2; stderr contains `create pods/portforward` and `docs/rbac.yaml`.
   - `TestProxyDumpDeadline`: `--request-timeout 300ms`, blocking fake server → exit 2 within 3 s.
-  - `TestCheckUnaffected`: existing check tests still pass with `kgwctl-reader` only (no change expected; run them).
-- [ ] **Step 3:** Implement. `proxy dump` copies `Capture.Body` to stdout with `io.Copy`, no cap. Help text carries §3.2's redaction paragraph verbatim. Error mapping: `apierrors.IsForbidden` (or a 403 from the SPDY upgrade) → the RBAC line.
-- [ ] **Step 4:** `docs/rbac.yaml`: keep `kgwctl-reader`; add a commented, namespaced `Role` `kgwctl-proxy-portforward` with `pods/portforward` `create` and a `RoleBinding` example. Replace the header's "no pods/portforward" with: the reader role grants none; the optional Role adds it for `proxy` commands. README: a `proxy dump` section with §5's wording and §3.2's redaction note.
+  - `TestProxyDumpUpgradeHangs`: real `NewPortForwarder` pointed (via a kubeconfig) at a TCP server that accepts and never answers the upgrade; `--request-timeout 300ms` → exit 2 within 3 s; the server sees the connection closed.
+  - `TestProxyDumpExecPlugin`: add `proxy dump` to the lifecycle suite's credential exec plugin cases (`internal/app/lifecycle_test.go:222` onward), so a hanging plugin ends at `--request-timeout`.
+  - `TestCheckAsReader`: one `check` command test run as an envtest user bound only to `kgwctl-reader` from `docs/rbac.yaml` (envtest `AddUser` plus the ClusterRole and a binding applied as admin), asserting the same findings as the admin run. This proves the reader role alone still serves `check`.
+- [ ] **Step 3:** Implement. `proxy dump` copies `Capture.Body` to stdout with `io.Copy`, no cap. Help text carries §3.2's redaction paragraph verbatim. Error mapping: a typed Forbidden (from the API or the preserved upgrade status) → the RBAC line.
+- [ ] **Step 4:** `docs/rbac.yaml`: keep `kgwctl-reader`; add a commented, namespaced `Role` `kgwctl-proxy-portforward` with `pods/portforward` `create` and a `RoleBinding` example. Directly above that Role, put §5's admin-write warning verbatim, because operators copy the grant from this file. Replace the header's "no pods/portforward" with: the reader role grants none; the optional Role adds it for `proxy` commands. README: a `proxy dump` section with §5's wording and §3.2's redaction note.
 - [ ] **Step 5:** Tests pass; `make test`, `go vet ./...`.
 - [ ] **Step 6:** Commit `feat: kgwctl proxy dump over port-forward (D-021)`.
 
@@ -131,14 +133,15 @@ Each sub-phase ends with `make test`, `go vet ./...`, gofmt clean.
 - Modify: `hack/live-check.sh`
 
 **Interfaces:**
-- Produces: golden dumps used by 3.2: `demo.json` (snellius-demo use cases), `policies.json`, `collide.json`.
+- Produces: golden dumps used by 3.2: `demo.json` (snellius-demo use cases), `policies.json`, `collide.json` (no route metadata), `collide-meta.json` (route metadata on).
 
-- [ ] **Step 1:** `hack/live/proxy-fixtures.yaml` in namespace `kgwctl-proxy` with its own Gateway `proxy`:
+- [ ] **Step 1:** `hack/live/proxy-fixtures.yaml` in namespace `kgwctl-proxy` with its own Gateway `proxy`. Controlled inputs only: no TLS listeners, no Secrets, no credentials in any policy (ext_authz points at a dummy Service by name only).
   - TrafficPolicies on HTTPRoute `orders`: a transformation (request header set), ext_authz via a GatewayExtension to a dummy Service, a local rate limit.
   - A second route whose TrafficPolicy disables ext_authz.
-  - Colliding names: HTTPRoute `orders` in `kgwctl-proxy` and `orders-kgwctl` in `proxy` (create namespace `proxy`), both attached to the Gateway; both encode `httproute-orders-kgwctl-proxy-`.
+  - Colliding names: HTTPRoute `orders` in `kgwctl-proxy` and `orders-kgwctl` in `proxy` (create namespace `proxy`). The second route sets `parentRefs[].namespace: kgwctl-proxy`, and the Gateway listener sets `allowedRoutes.namespaces.from: All`. Both encode `httproute-orders-kgwctl-proxy-`.
 - [ ] **Step 2:** `hack/live-check.sh` gains a `proxy` step: apply the fixtures, wait for the proxy Ready, run `kgwctl proxy dump` as the least-privilege user plus the port-forward Role, assert exit 0 and valid JSON with a `ListenersConfigDump`; run it as the reader only and assert exit 2 with `pods/portforward` on stderr.
-- [ ] **Step 3:** Capture `demo.json`, `policies.json`, `collide.json` with `kgwctl proxy dump`; record kgateway version, Envoy version (`/server_info` is not fetched by kgwctl; take it with `kubectl exec ... wget -qO- 127.0.0.1:19000/server_info`), and date in `testdata/dumps/README.md`. Check each file holds no private key material (`grep -c '"private_key"'` shows only `[redacted]`).
+- [ ] **Step 3:** Capture `demo.json`, `policies.json` and `collide.json` with `kgwctl proxy dump` on the default install. Then set the kgateway Helm value `enableRouteSourceMetadata: true` (default `false`), wait for the proxy to reload, and capture `collide-meta.json`. Record kgateway version, the Helm value, Envoy version (`kubectl exec ... wget -qO- 127.0.0.1:19000/server_info`; kgwctl doesn't fetch it) and date in `testdata/dumps/README.md`.
+- [ ] **Step 3b: Content check before committing.** For each file: `SecretsConfigDump` has no `dynamic_active_secrets`/`static_secrets` entries; every `private_key`, `password`, `token` or `client_secret` field value is absent or `[redacted]` (a jq query over all keys, recorded in `testdata/dumps/README.md`); the human reviewer reads the diff of each file. If any check fails, stop and report; do not commit.
 - [ ] **Step 4:** Run the live check on kind; paste the result into the sub-phase record.
 - [ ] **Step 5:** Commit `test: live proxy dump check and golden dumps`.
 
@@ -151,12 +154,18 @@ Task-level only. Exact xdsview signatures are filled in when the release is tagg
 ### Task 3.2.1: xdsview upgrade and pipeline
 
 - Add `github.com/DuncanDoyle/xdsview@<E11 tag>`. Extend `TestBinaryDeps` to ban `github.com/charmbracelet/` and `github.com/muesli/`; prove it fails on a temporary blank import of `github.com/charmbracelet/lipgloss`, then revert.
-- `internal/proxyview`: `Build(body []byte, gw *types.NamespacedName, known []model.Ref, sel Selection) (View, error)`: `parser.Parse` → `origin.Annotate(origin.Kgateway{Gateway, Known})` → narrow on resolved origin → effective chains per route within its HCM. Parser warnings kept in `View.Warnings`.
-- Tests on the 3.1 goldens: `collide.json` with `--route kgwctl-proxy/orders` returns only that route; with `--file` and no Known, the colliding route is listed as ambiguous, never as a match; a non-active listener survives narrowing; `policies.json` shows ext_authz `enabled by route` on `orders` and disabled on the second route.
+- `internal/proxyview`: `Build(body []byte, gw *types.NamespacedName, known []model.Ref, sel Selection) (View, error)`: `parser.Parse` → `origin.Annotate(origin.Kgateway{Gateway, Known})` → `chain.Annotate` (attaches `Route.Chain` per route within its HCM) → `filter.Filter` on resolved origin, plus `filter.Ambiguous` for the routes to list as ambiguous. Parser warnings kept in `View.Warnings`. (xdsview Phase 6 names, design r2 at xdsview `15b3fe1`; confirm against the tag.)
+- Selection rule: a route drives `--route` only when its origin is Exact, or Inferred from the route name alone. An Inferred origin that needed `Known` to break a tie is shown with "(inferred from cluster routes)" and is never the only basis for a match without that marker. If xdsview's released `filter.Filter` doesn't expose that distinction, stop and raise it with xdsview before implementing.
+- Tests on the 3.1 goldens, split by expected result:
+  - Exact selection: `collide-meta.json` with `--route kgwctl-proxy/orders` returns only that route.
+  - Ambiguity: `collide.json` with the same flag returns no match and lists both colliding routes as ambiguous, live Known or not.
+  - A non-active listener survives narrowing (a hand-edited copy of `demo.json` with one listener moved to `warming_state`).
+  - A malformed section (a hand-edited copy of `demo.json` with one route config broken) shows a parser warning in both the tree and JSON, next to the surviving routes.
+  - `policies.json`: ext_authz `enabled` at `Level` route on `orders`, `disabled` on the second route; response order omits request-only filters and marks unknown ones `?`.
 
 ### Task 3.2.2: `proxy routes` command and tree
 
-- `kgwctl proxy routes [<gateway>] [--file] [--pod] [--route ns/name] [--rule i] [--max-size 64Mi] [-o json|yaml]`. Live: `SelectPod` + `Fetch` + `ReadCapped`; file: open + `ReadCapped`. Known HTTPRoutes from kgwctl's one-shot load (`load.Load`), skipped with `--file` when no cluster is reachable, which is a warning, not an error.
+- `kgwctl proxy routes [<gateway>] [--file] [--pod] [--route ns/name] [--rule i] [--max-size 64Mi] [-o json|yaml]`. Live: `SelectPod` + `Fetch` + `ReadCapped`, Known HTTPRoutes from kgwctl's one-shot load (`load.Load`). File: open + `ReadCapped`, and never any Kubernetes call, even when a cluster is reachable (D-021); Known is empty. A test with an unreachable kubeconfig and one with a reachable envtest proves both give identical output and that the envtest proxy sees no request.
 - Tree from `render.Text` with kgwctl's header line (§3.1). Response order shown only where xdsview reports an encoder; otherwise the §3.1 wording.
 - Exit 2 for: cap exceeded (message names `--max-size` and `proxy dump`), parse error, and every 3.1 capture error.
 - Golden text tests per fixture dump.
@@ -171,7 +180,7 @@ Task-level only. Exact xdsview signatures are filled in when the release is tagg
 
 ### Task 3.3.1: `proxy routes` live check
 
-- `hack/live-check.sh`: `proxy routes proxy -n kgwctl-proxy --route kgwctl-proxy/orders` as reader + Role; assert the three filters in request order with their policies. Same against a file from `proxy dump`, identical output except the header.
+- `hack/live-check.sh`: `proxy routes proxy -n kgwctl-proxy --route kgwctl-proxy/orders` as reader + Role; assert the three filters in request order with their policies. Same against a file from `proxy dump` taken with `enableRouteSourceMetadata: true`, identical output except the header. Without metadata, the file view lists the colliding routes as ambiguous; the live view may resolve them, marked as inferred.
 - README walkthrough: "does my transformation run before ext_authz?" answered from the live tree.
 
 ## Phase close prerequisites (not done by the implementer)

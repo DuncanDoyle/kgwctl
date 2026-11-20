@@ -49,7 +49,7 @@ A support engineer's first command on a cluster they troubleshoot: what is wrong
 ### Phase 4 — Support bundle
 **Status:** Not started
 **Docs:** `docs/phases/phase-4/`
-**Waits on:** Phase 3 (proxy admin access through krp `source`)
+**Waits on:** Phase 3 (proxy access through kgwctl's `internal/proxydump` `Capture`: pod identity, per-capture errors; D-021)
 
 One command that collects what support asks for, so nobody hand-collects it (D-010).
 - Gateway API and kgateway resources, Helm values, controller and proxy logs (including previous containers), proxy config dumps and stats, controller snapshots and metrics from every replica, `version` and `check` output.
