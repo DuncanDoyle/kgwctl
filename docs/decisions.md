@@ -133,3 +133,15 @@ Append-only. Newest at the bottom. Supersede, don't edit.
 **Decision:** A Ctrl-C during `--live` after an install was found prints the report, then `Stopped by Ctrl-C.` on stderr. The findings decide the exit code, as with `--timeout`. Exit 2 keeps meaning "could not check": a plain `check` interrupted, or `--live` interrupted before an install was found. The text footer says "stopped by Ctrl-C" or "stopped at --timeout"; JSON keeps `stopReason: interrupted`.
 **Alternatives:** Keep exit 2 and only reword the message — rejected by the owner: the report is a valid check of the state the user watched.
 **Consequences:** Scripts tell a deliberate stop from a failure by exit code. Design §3.2, §3.4 and the README updated (sub-phase 2.5).
+
+## D-021 — `proxy routes` reads the config dump over port-forward (2026-11-20, phase 3)
+**Context:** kgateway binds Envoy admin to 127.0.0.1:19000. `pods/proxy` reaches only the Pod IP, and the 9091 stats listener doesn't serve `/config_dump` (measured on v2.5.1). D-017 keeps `check` on `pods/proxy`.
+**Decision:** Live `proxy routes` port-forwards to 19000 and sends only `GET /config_dump`, with a 30 s deadline and a 64 MiB cap. `create pods/portforward` is a separate, optional Role. `--file` needs no cluster access.
+**Alternatives:** `pods/exec` — more power than port-forward. The controller's `/snapshots/xds` — intended config, not what Envoy accepted. A config_dump route on the stats listener — needs a deployment change; possible upstream opt-in later. File only — loses the live view.
+**Consequences:** `docs/rbac.yaml` and the README say the grant also allows Envoy admin writes. The base reader role is unchanged. Reviewed with Codex (2026-11-20).
+
+## D-022 — xdsview owns the Envoy view (2026-11-20, phase 3)
+**Context:** xdsview's tree renderer is internal, its model lacks listener state, and it has no effective filter chain per route. Snellius Phase 12 (E4) will read the same model.
+**Decision:** The renderer, effective chain and listener state go into xdsview (E11, xdsview#27). kgwctl writes no Envoy parsing or tree of its own; it owns access, origins input and the JSON envelope.
+**Alternatives:** A tree in kgwctl over `model` — two views of filter order that drift, and Snellius gets neither.
+**Consequences:** Sub-phase 3.2 waits on an xdsview minor release. 3.1 ships on v0.3.0.
