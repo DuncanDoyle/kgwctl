@@ -2,7 +2,7 @@
 
 ## Phase
 Phase: 2 — `check`
-Base: 980d32d
+Base: 980d32d (rebased onto `967fb63` on 2026-11-20; review diffs from now on use `967fb63`)
 Docs: docs/phases/phase-2/
 Status: implementation
 
@@ -15,7 +15,10 @@ Status: implementation
 - [x] Q6 Sub-phase 2.3 `check --live` (phase-2.3-complete.md)
 - [x] Q7 Phase review (Codex), triage: reviews/phase-codex.md
 - [x] Q7b Stabilization 2.4 (phase-2.4-complete.md)
-- [ ] Q8 Owner tries `check`; phase close after that ← CURRENT
+- [x] Q7c Snellius `v0.8.2` (final release, D-018): `d095f1b`; tests pass; demo use cases match Snellius's expected findings
+- [ ] Q8 Owner tries `check`: `check` approved 2026-11-20; `--live` try-out pending
+- [ ] Q9 Stabilization 2.5: Ctrl-C in `--live` (phase-2.5-brief.md) ← CURRENT
+- [ ] Q10 Phase close
 
 ### Exit gates
 - [ ] tests/vet pass (observed)
@@ -26,14 +29,21 @@ Status: implementation
 - [ ] phase-2-complete.md written, roadmap updated, tracked items closed
 
 ## Sub-phase
-n/a (2.4 complete: docs/phases/phase-2/phase-2.4-complete.md)
+Sub-phase: 2.5 — Ctrl-C in `check --live` (stabilization)
+Base: d095f1b
+Brief: docs/phases/phase-2/phase-2.5-brief.md
+Queue:
+- [ ] S1 (P3) Ctrl-C with a report exits from the findings, stderr `Stopped by Ctrl-C.`, footer wording (D-020) ← CURRENT
+- [ ] S2 (P4) Roadmap notes from the `glooctl check` comparison
+- [ ] S3 Cross-model review + triage
 
 ## Program
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
 - Read 2026-11-10 at kgateway-tooling `10b77d2`. Open `cross-repo` issues: kgwctl #1–#7 (all "available" notices, none blocking). Snellius has two open from kgwctl, not needed for Phase 2: #18 list-only one-shot snapshot, #19 namespace-scoped listing for restricted users.
 - Available: E8 — Snellius `v0.6.0`: `engine.Compute` one-shot; controller metrics via `ctrlmetrics.CollectOnce` + `Publish` (kgwctl#5–#7). go.mod still on kgateway-ui `v0.3.0`; Phase 2 moves to `github.com/DuncanDoyle/snellius`.
 - Available: E3 — Snellius analyzer over a snapshot, all 26 checks (kgwctl#4); Phase 2 runs all of them (Phase 5 keeps `analyze -f`).
-- Available (pre-release): E9 — check holds, `CheckResult.Hold` in Snellius `v0.7.0-alpha.1` (snellius#33, closed). Used by `check --live`. A kgwctl release needs a final Snellius release.
+- Available: E9 — check holds, `CheckResult.Hold` (snellius#33, closed), now from Snellius `v0.8.2`. Used by `check --live`.
+- Notices since: kgwctl#8 (v0.7.0 list-only and namespace-scoped reads; not used yet, a later sub-phase) and kgwctl#9 (v0.8.0 route signals; no change to `check` output).
 - Available: E2 (Phase 1), E1, E5 (Phase 3/6).
 - Waiting on: E7 (Phase 6).
 - Consumers: none
