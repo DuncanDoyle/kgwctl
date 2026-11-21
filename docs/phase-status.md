@@ -8,11 +8,11 @@ Status: implementation
 
 ### Queue
 - [x] Q1 Phase 3 design (`design.md`) r1: ab40189
-- [ ] Q1b xdsview E11 (xdsview#27): agreed by the xdsview session; starts when the owner confirms there. Blocks 3.2 only
+- [ ] Q1b xdsview E11 (xdsview#27): Phase 6 approved 2026-11-21; code on main 538bee7; v0.4.0 pending. Blocks 3.2 only
 - [x] Q2 Phase 3 implementation plan (r4)
 - [x] Q3 Cross-model review of design + plan (5 rounds, reviews/design-codex*.md), owner go-ahead 2026-11-21
-- [ ] Q4 Sub-phase 3.1 capture and `proxy dump` ← CURRENT
-- [ ] Q5 Sub-phase 3.2 `proxy routes` (waits on xdsview v0.4.0; 6.1 in progress 2026-11-21)
+- [x] Q4 Sub-phase 3.1 capture and `proxy dump` (phase-3.1-complete.md)
+- [ ] Q5 Sub-phase 3.2 `proxy routes` (waits on xdsview v0.4.0; E11 code on xdsview main 538bee7, release pending) ← CURRENT
 - [ ] Q6 Sub-phase 3.3 live check and docs
 - [ ] Q7 Phase review (Codex), triage
 - [ ] Q8 Phase close
@@ -26,10 +26,7 @@ Status: implementation
 - [ ] phase-3-complete.md written, roadmap updated, tracked items closed
 
 ## Sub-phase
-Sub-phase: 3.1 — capture and `proxy dump` (planned)
-Base: c38fe47
-Brief: docs/phases/phase-3/phase-3.1-brief.md
-Status: implementation
+n/a (3.1 complete: docs/phases/phase-3/phase-3.1-complete.md)
 
 ## Program
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
