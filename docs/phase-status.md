@@ -39,10 +39,10 @@ Bug fixes, missing designed behaviour, tests, docs.
 New features, architecture changes, new dependencies.
 
 ### Queue
-- [ ] S1 (P1, P4) In-process stream, no local listener; capture boundary owns the deadline (findings 1, 7) ← CURRENT
-- [ ] S2 (P1, P2) HTTPRoute list behind the deadline; oversized-dump recovery names --max-size (findings 2, 5)
+- [x] S1 (P1, P4) findings 1, 7 — 0e5df04: GET over the port-forward data stream, no listener; proxydump.FetchGateway owns the deadline; live proxy + routes pass
+- [ ] S2 (P1, P2) HTTPRoute list behind the deadline; oversized-dump recovery names --max-size (findings 2, 5) ← CURRENT
 - [ ] S3 (P3) Live check uses the Role from docs/rbac.yaml (finding 6)
-- [ ] S4 xdsview bump for findings 3, 4, if released before close
+- [ ] S4 xdsview v0.4.3 bump for findings 3, 4 (xdsview#31; finding 8 → xdsview#32, xdsview Phase 8)
 - [ ] S5 Cross-model review + triage
 
 ## Program
