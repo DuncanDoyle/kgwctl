@@ -309,10 +309,34 @@ verify() {
 
 build() { mkdir -p "$OUT"; (cd "$ROOT" && go build -o "$OUT/kgwctl" ./cmd/kgwctl); }
 
+# portforward_rbac prints the optional port-forward Role and RoleBinding of docs/rbac.yaml (the commented
+# block from its first "# apiVersion" line) for the operator ServiceAccount in $PROXY_NS. Fails without a Role.
+portforward_rbac() {
+  local out
+  out="$(awk -v ns="$PROXY_NS" '
+    /^# apiVersion:/ { on = 1 }
+    !on { next }
+    { sub(/^# ?/, "") }
+    /^namespace:|^  namespace:/ { sub(/namespace: .*/, "namespace: " ns) }
+    /^  - apiGroup: rbac.authorization.k8s.io$/ && insubjects { print "  - kind: ServiceAccount"; next }
+    /^subjects:/ { insubjects = 1 }
+    /^    kind: User$/ { next }
+    /^    name: / && insubjects { print "    name: kgwctl-proxy-operator"; print "    namespace: " ns; next }
+    /^---$/ { insubjects = 0 }
+    { print }
+  ' "$ROOT/docs/rbac.yaml")"
+  if ! grep -q '^kind: Role$' <<<"$out" || ! grep -q '^kind: RoleBinding$' <<<"$out" || grep -q 'jane@example.com' <<<"$out"; then
+    log "could not derive the port-forward Role and RoleBinding from docs/rbac.yaml"
+    return 1
+  fi
+  printf '%s\n' "$out"
+}
+
 # Applies the proxy fixtures and waits for Gateway "proxy" and its policies.
 proxy_fixtures() {
   k apply -f "$ROOT/docs/rbac.yaml"
   k apply -f "$ROOT/hack/live/proxy-fixtures.yaml"
+  portforward_rbac | k apply -f -
   k -n "$PROXY_NS" wait --for=condition=Programmed gateway/proxy --timeout=300s
   k -n "$PROXY_NS" rollout status deployment/proxy --timeout=300s
   k -n "$PROXY_NS" wait --for=jsonpath='{.status.ancestors[0].controllerName}'=kgateway.dev/kgateway \

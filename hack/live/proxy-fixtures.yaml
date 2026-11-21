@@ -188,7 +188,7 @@ spec:
           port: 8080
 ---
 # A least-privilege operator for the proxy check: the kgwctl-reader ClusterRole (docs/rbac.yaml)
-# plus the optional kgwctl-proxy-portforward Role in the Gateway's namespace.
+# plus the port-forward Role that hack/live-check.sh derives from docs/rbac.yaml.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -203,30 +203,6 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: kgwctl-reader
-subjects:
-  - kind: ServiceAccount
-    name: kgwctl-proxy-operator
-    namespace: kgwctl-proxy
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: kgwctl-proxy-portforward
-  namespace: kgwctl-proxy
-rules:
-  - apiGroups: [""]
-    resources: ["pods/portforward"]
-    verbs: ["create"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: kgwctl-proxy-portforward
-  namespace: kgwctl-proxy
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: kgwctl-proxy-portforward
 subjects:
   - kind: ServiceAccount
     name: kgwctl-proxy-operator
