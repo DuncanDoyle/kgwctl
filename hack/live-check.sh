@@ -5,7 +5,7 @@
 #   hack/live-check.sh verify <kubeconfig> run kgwctl against it, outputs in hack/live/out/<name>/
 #   hack/live-check.sh proxy               apply the proxy fixtures, check proxy dump with and without port-forward RBAC
 #   hack/live-check.sh goldens             capture testdata/dumps/*.json; toggles the Helm value enableRouteSourceMetadata
-#   hack/live-check.sh goldens-check       rerun the goldens' content check (no credential material)
+#   hack/live-check.sh goldens-check       rerun the goldens' content (no credential material) and shape checks; offline
 #
 # verify also runs `check`, with two scenarios as admin: controller down, route to a missing Service.
 # Env: KUBECONFIG_FILE (admin kubeconfig, default hack/live/out/admin.kubeconfig),
@@ -386,14 +386,56 @@ content_check() {
   [ "$secrets" = 0 ] && [ "$sensitive" = 0 ]
 }
 
-# Runs content_check on every golden; exits 1 if one fails.
+# Golden shape checks, used to accept a capture and by goldens-check. JQ_DEFS: route lookup by
+# virtual-host domain and route-name fragment, and the listener filter types by name.
+# shellcheck disable=SC2016
+JQ_DEFS='def vhosts: [.configs[] | select((."@type" // "") | endswith(".RoutesConfigDump"))
+    | .dynamic_route_configs[]?.route_config.virtual_hosts[]?];
+  def route($host; $frag): [vhosts[] | select(.domains | index([$host])) | .routes[]? | select(.name | contains($frag))];
+  def filter_types: [.. | objects | select(has("http_filters")) | .http_filters[]
+    | {key: .name, value: (.typed_config."@type" // "")}] | from_entries;
+  def no_meta: tostring | contains("'"$ROUTE_META"'") | not;
+  def collide: route("orders.kgwctl.example"; "httproute-orders-kgwctl-proxy-") as $a
+    | route("orders-kgwctl.proxy.example"; "httproute-orders-kgwctl-proxy-") as $b
+    | ($a | length) == 1 and ($b | length) == 1;
+  def source($host): route($host; "httproute-orders-kgwctl-proxy-")[0].metadata.filter_metadata["'"$ROUTE_META"'"]
+    | "\(.namespace)/\(.name)";'
+# demo.json: team-a loaded all five demo hosts and their six routes.
+# shellcheck disable=SC2016
+SHAPE_DEMO='(vhosts | map(.domains[])) as $d
+  | (["admin", "broken", "orders", "partner", "shop"] | map(. + ".team-a.example") | all(IN($d[])))
+  and ([vhosts[].routes[]?] | length) >= 6 and no_meta'
+# policies.json: both colliding routes; orders carries ext_authz, local rate limit and the fixture transformation.
+# shellcheck disable=SC2016
+SHAPE_POLICIES='filter_types as $ft | route("orders.kgwctl.example"; "httproute-orders-kgwctl-proxy-")[0] as $o
+  | collide and no_meta
+  and ([$o.typed_per_filter_config // {} | keys[] | $ft[.] // ""] as $t
+    | ($t | any(endswith(".ext_authz.v3.ExtAuthz"))) and ($t | any(endswith(".local_ratelimit.v3.LocalRateLimit"))))
+  and ($o.typed_per_filter_config | tostring | contains("x-kgwctl-route"))'
+# collide-meta.json: each colliding route names its own HTTPRoute in route_source metadata.
+SHAPE_META='collide and source("orders.kgwctl.example") == "kgwctl-proxy/orders"
+  and source("orders-kgwctl.proxy.example") == "proxy/orders-kgwctl"'
+
+# shape_check <file> <predicate>: true when the predicate holds.
+shape_check() { jq -e "$JQ_DEFS $2" "$1" >/dev/null 2>&1; }
+
+# Runs content_check and the shape checks on every golden; exits 1 if one fails.
 goldens_check() {
-  local f failed=0
+  local f name var failed=0 dir="$ROOT/testdata/dumps"
   for f in "${GOLDENS[@]}"; do
-    content_check "$ROOT/testdata/dumps/$f.json" || failed=1
+    content_check "$dir/$f.json" || failed=1
   done
-  [ "$failed" -eq 0 ] || { log "content check failed: do not commit testdata/dumps"; exit 1; }
-  log "content check passed"
+  for f in demo:SHAPE_DEMO policies:SHAPE_POLICIES collide-meta:SHAPE_META; do
+    name="${f%%:*}" var="${f#*:}"
+    if shape_check "$dir/$name.json" "${!var}"; then
+      log "shape $name.json: ok"
+    else
+      log "FAIL shape $name.json: $var does not hold"
+      failed=1
+    fi
+  done
+  [ "$failed" -eq 0 ] || { log "goldens check failed: do not commit testdata/dumps"; exit 1; }
+  log "goldens check passed"
 }
 
 # dump_until <file> <namespace> <gateway> <jq filter>: dumps as admin until the filter holds, up to 3 minutes.
@@ -421,12 +463,6 @@ route_meta() {
 # Captures the goldens as admin: demo use cases (team-a), proxy fixtures without and with route metadata.
 goldens() {
   local dir="$ROOT/testdata/dumps" tmp="$OUT/goldens"
-  local collide="[.. | objects | select(has(\"match\") and has(\"name\")) | .name
-    | select(contains(\"httproute-orders-kgwctl-proxy-\"))] | length >= 2"
-  local meta="[.. | objects | select(has(\"match\") and has(\"name\"))
-    | select(.name | contains(\"httproute-orders-kgwctl-proxy-\")) | .metadata.filter_metadata[\"$ROUTE_META\"] // empty]
-    | length >= 2"
-  local no_meta="tostring | contains(\"$ROUTE_META\") | not"
   build
   mkdir -p "$dir" "$tmp"
   if [ "$(h get values kgateway -n "$KGW_NS" -a -o json | jq '.enableRouteSourceMetadata')" != false ]; then
@@ -435,16 +471,16 @@ goldens() {
   fi
   proxy_fixtures
 
-  dump_until "$dir/demo.json" team-a team-a "$no_meta"
-  dump_until "$dir/policies.json" "$PROXY_NS" proxy "($collide) and ($no_meta)"
+  dump_until "$dir/demo.json" team-a team-a "$JQ_DEFS $SHAPE_DEMO"
+  dump_until "$dir/policies.json" "$PROXY_NS" proxy "$JQ_DEFS $SHAPE_POLICIES"
 
   trap 'route_meta false' EXIT
   route_meta true
-  dump_until "$dir/collide-meta.json" "$PROXY_NS" proxy "$meta"
+  dump_until "$dir/collide-meta.json" "$PROXY_NS" proxy "$JQ_DEFS $SHAPE_META"
   route_meta false
   trap - EXIT
-  dump_until "$tmp/meta-off-proxy.json" "$PROXY_NS" proxy "($collide) and ($no_meta)"
-  dump_until "$tmp/meta-off-team-a.json" team-a team-a "$no_meta"
+  dump_until "$tmp/meta-off-proxy.json" "$PROXY_NS" proxy "$JQ_DEFS $SHAPE_POLICIES"
+  dump_until "$tmp/meta-off-team-a.json" team-a team-a "$JQ_DEFS $SHAPE_DEMO"
   log "enableRouteSourceMetadata back to false; no $ROUTE_META in the proxy or team-a dumps"
 
   log "kgateway $(h list -n "$KGW_NS" -o json | jq -r '.[] | select(.name == "kgateway") | .app_version')," \
