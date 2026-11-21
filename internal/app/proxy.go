@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -19,6 +20,8 @@ import (
 type proxyTestHooks struct {
 	// Dialer, if set, replaces the port-forward to the admin port.
 	Dialer proxydump.Dialer
+	// WrapTransport, if set, wraps the Kubernetes transport of proxy routes.
+	WrapTransport func(http.RoundTripper) http.RoundTripper
 }
 
 // redactionNote is phase 3 design §3.2's warning, shown in help and the README.

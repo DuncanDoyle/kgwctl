@@ -190,7 +190,7 @@ func routesFromFile(cmd *cobra.Command, f *Flags, req routesRequest, path string
 	_ = fh.Close()
 	switch {
 	case errors.Is(err, proxydump.ErrTooLarge):
-		return tooLarge(path, req.max)
+		return tooLarge(path, req.max, false)
 	case err != nil:
 		return &ExitError{Code: 2, Err: fmt.Errorf("read %s: %w", path, err)}
 	}
@@ -209,6 +209,9 @@ func routesLive(cmd *cobra.Command, f *Flags, now func() time.Time, hooks proxyT
 	rc, ns, err := f.RESTConfig()
 	if err != nil {
 		return &ExitError{Code: 2, Err: err}
+	}
+	if hooks.WrapTransport != nil {
+		rc.Wrap(hooks.WrapTransport)
 	}
 	if ns == "" {
 		return &ExitError{Code: 2, Err: errors.New("proxy routes needs a namespace: use -n, not -A")}
@@ -238,13 +241,13 @@ func routesLive(cmd *cobra.Command, f *Flags, now func() time.Time, hooks proxyT
 	r := dumpResult{capture: capture, body: body, stage: stageFetch, target: capture.Pod}
 	switch {
 	case err != nil && ctx.Err() == nil && errors.Is(err, proxydump.ErrTooLarge):
-		return tooLarge("the config dump of Pod "+r.target.String(), req.max)
+		return tooLarge("the config dump of Pod "+r.target.String(), req.max, true)
 	case err != nil:
 		r.err = fmt.Errorf("read config dump from %s: %w", r.target, err)
 		return dumpError(ctx, f, "proxy routes", gw, r)
 	}
 
-	known, err := knownHTTPRoutes(ctx, c)
+	known, err := knownHTTPRoutesByCtx(ctx, c)
 	switch {
 	case err != nil && errors.Is(context.Cause(ctx), context.DeadlineExceeded):
 		return &ExitError{Code: 2, Err: fmt.Errorf("could not finish loading the HTTPRoutes of the cluster within --%s %v (the config dump of Pod %s was read)", flagRequestTimeout, f.RequestTimeout, r.target)}
@@ -260,14 +263,39 @@ func routesLive(cmd *cobra.Command, f *Flags, now func() time.Time, hooks proxyT
 	return printRoutes(cmd, r.body, "Pod "+r.target.String(), &gw, known, req, header, src)
 }
 
-// tooLarge reports a dump over --max-size (design §4.1).
-func tooLarge(what string, max int64) error {
+// tooLarge reports a dump over --max-size (design §4.1). A live dump can also
+// be saved and read with --file, whose own cap is --max-size.
+func tooLarge(what string, max int64, live bool) error {
 	q := resource.NewQuantity(max, resource.BinarySI)
-	return &ExitError{Code: 2, Err: fmt.Errorf("%s is larger than --max-size %s: raise --max-size to read it, or save it with kgwctl proxy dump", what, q)}
+	advice := "raise --max-size to read it"
+	if live {
+		advice = "raise --max-size, or save the dump with kgwctl proxy dump and read it with --file <path> --max-size <n>"
+	}
+	return &ExitError{Code: 2, Err: fmt.Errorf("%s is larger than --max-size %s: %s", what, q, advice)}
 }
 
 // httpRoutesGVR is the HTTPRoute resource listed for live origins.
 var httpRoutesGVR = schema.GroupVersionResource{Group: "gateway.networking.k8s.io", Version: "v1", Resource: "httproutes"}
+
+// knownHTTPRoutesByCtx runs knownHTTPRoutes so that it returns ctx's error at
+// ctx's end even when the list ignores ctx, as an exec credential plugin does.
+func knownHTTPRoutesByCtx(ctx context.Context, c load.Clients) ([]model.Ref, error) {
+	type result struct {
+		known []model.Ref
+		err   error
+	}
+	done := make(chan result, 1)
+	go func() {
+		known, err := knownHTTPRoutes(ctx, c)
+		done <- result{known, err}
+	}()
+	select {
+	case r := <-done:
+		return r.known, r.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
 
 // knownHTTPRoutes lists the cluster's HTTPRoutes in all namespaces, page by
 // page (design §4.2). It lists no other kind, so nothing else can delay it.

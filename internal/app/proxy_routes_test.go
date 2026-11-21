@@ -198,7 +198,7 @@ func TestProxyRoutesFileErrors(t *testing.T) {
 	}{
 		{name: "missing", args: []string{"--file", filepath.Join(dir, "nope.json")}, want: []string{"nope.json"}},
 		{name: "parse", args: []string{"--file", bad}, want: []string{"parse config dump", "bad.json"}},
-		{name: "too-large", args: []string{"--file", dumpsDir + "demo.json", "--max-size", "1Ki"}, want: []string{"--max-size", "proxy dump"}},
+		{name: "too-large", args: []string{"--file", dumpsDir + "demo.json", "--max-size", "1Ki"}, want: []string{"raise --max-size"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := runRoutes(t, "unused-kubeconfig", app.ProxyTestHooks{}, append([]string{"proxy", "routes"}, tc.args...)...)
@@ -400,6 +400,42 @@ func TestProxyRoutesRouteLoadDeadline(t *testing.T) {
 	}
 	if !strings.Contains(r.stderr, "HTTPRoutes") || !strings.Contains(r.stderr, "--request-timeout") || strings.Contains(r.stderr, "could not read the config dump") {
 		t.Errorf("stderr = %q, want the HTTPRoutes load and --request-timeout named", r.stderr)
+	}
+}
+
+// stallingTransport blocks every HTTPRoute list for d without looking at the
+// request's context, as an exec credential plugin does.
+type stallingTransport struct {
+	next http.RoundTripper
+	d    time.Duration
+}
+
+func (s stallingTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if strings.Contains(r.URL.Path, "/httproutes") {
+		time.Sleep(s.d)
+	}
+	return s.next.RoundTrip(r)
+}
+
+// TestProxyRoutesRouteLoadIgnoresContext: a live capture succeeds and the
+// HTTPRoute list blocks ignoring ctx; the command still exits 2 by --request-timeout.
+func TestProxyRoutesRouteLoadIgnoresContext(t *testing.T) {
+	env := newEnv(t, testenv.Options{Fixtures: []string{routesFixture}})
+	d := servePolicies(t, make(chan string, 4))
+	h := app.ProxyTestHooks{Dialer: d, WrapTransport: func(rt http.RoundTripper) http.RoundTripper {
+		return stallingTransport{next: rt, d: 10 * time.Second}
+	}}
+	r := runRoutes(t, env.Kubeconfig, h, "proxy", "routes", "proxy", "-n", "kgwctl-proxy", "--request-timeout", "2s")
+	if r.code != 2 || r.stdout != "" {
+		t.Fatalf("exit %d, stdout %q; want 2 and empty; stderr %q", r.code, r.stdout, r.stderr)
+	}
+	if r.took > 6*time.Second {
+		t.Errorf("command took %v, want it back by --request-timeout (2s)", r.took)
+	}
+	for _, w := range []string{"could not finish loading the HTTPRoutes", "--request-timeout", "was read"} {
+		if !strings.Contains(r.stderr, w) {
+			t.Errorf("stderr = %q, want %q", r.stderr, w)
+		}
 	}
 }
 
