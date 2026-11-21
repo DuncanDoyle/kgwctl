@@ -81,13 +81,14 @@ Each sub-phase ends with `make test`, `go vet ./...`, gofmt clean.
 - Create: `internal/proxydump/fetch.go`, `internal/proxydump/fetch_test.go`
 
 **Interfaces:**
-- Produces: `type Dialer interface { Dial(ctx context.Context, pod types.NamespacedName, port int) (baseURL string, stop func(), err error) }`
+- Produces: `type Dialer interface { Dial(ctx context.Context, pod types.NamespacedName, port int) (conn io.ReadWriteCloser, stop func(), err error) }` — `conn` is the tunnel's stream itself; no URL, no local port, no listening socket.
 - Produces: `type Capture struct { Pod types.NamespacedName; CapturedAt time.Time; Body io.ReadCloser }` — closing `Body` also calls `stop`.
 - Produces: `const AdminPort = 19000`
-- Produces: `func Fetch(ctx context.Context, d Dialer, pod types.NamespacedName, now func() time.Time) (*Capture, error)`
+- Produces: `func Fetch(ctx context.Context, d Dialer, pod types.NamespacedName, now func() time.Time) (*Capture, error)` — owns the deadline: it returns ctx's error by then even when `Dial` ignores ctx, and releases a tunnel that opens later.
+- Produces: `func FetchGateway(ctx context.Context, c load.Clients, d Dialer, gw types.NamespacedName, pod string, now func() time.Time) (*Capture, error)` — `SelectPod` plus `Fetch`, with the selection bound by ctx's deadline the same way; a failed fetch is a `*FetchError` naming the Pod.
 - Produces: `func ReadCapped(r io.Reader, max int64) ([]byte, error)` and `var ErrTooLarge` (error text includes the limit; used by 3.2).
 
-- [ ] **Step 1: Write the failing tests** with a fake `Dialer` whose `Dial` starts a real loopback TCP listener in front of an `httptest.Server` handler (a stand-in tunnel) and whose `stop` closes that listener. Tests observe closure on the server side (`http.Server.ConnState` reaching `StateClosed`, the listener refusing new connections), not only callback counts:
+- [ ] **Step 1: Write the failing tests** with a fake `Dialer` whose `Dial` returns a connection to a real loopback TCP listener in front of an `httptest.Server` handler (a stand-in tunnel) and whose `stop` closes that listener. Tests observe closure on the server side (`http.Server.ConnState` reaching `StateClosed`, the listener refusing new connections), not only callback counts:
   - `TestFetchOneGet`: the server records exactly one request, `GET /config_dump`, empty query; `Capture.Pod` and `CapturedAt` set; body bytes equal.
   - `TestFetchRefusesRedirect`: server answers 302 to `/elsewhere`; error mentions `redirect`; `/elsewhere` never requested; the tunnel listener is closed.
   - `TestFetchNon200`: 503 → error includes the status; the tunnel listener is closed.
@@ -95,7 +96,7 @@ Each sub-phase ends with `make test`, `go vet ./...`, gofmt clean.
   - `TestFetchCloseStopsTunnel`: after `Body.Close()` partway through the body, the server sees the connection closed and the listener refuses connections; a second `Close` is a no-op.
   - `TestReadCappedOver`: 65 bytes with `max=64` → `errors.Is(err, ErrTooLarge)`; `TestReadCappedAt`: 64 bytes → ok.
 - [ ] **Step 2:** Tests fail.
-- [ ] **Step 3:** Implement. Own `http.Client` with `CheckRedirect` returning an error, request built with `http.NewRequestWithContext`. `ReadCapped` reads through `io.LimitReader(r, max+1)`.
+- [ ] **Step 3:** Implement. `Fetch` writes the GET on the stream `Dial` returns and reads the reply with `http.ReadResponse`; a 3xx is an error and is never followed. `ReadCapped` reads through `io.LimitReader(r, max+1)`.
 - [ ] **Step 4:** Tests pass, also under `-race`.
 - [ ] **Step 5:** Commit `feat(proxydump): fetch one config dump through a dialer`.
 
@@ -106,8 +107,8 @@ Each sub-phase ends with `make test`, `go vet ./...`, gofmt clean.
 - Modify: `internal/app/root.go` (add `newProxyCmd`), `internal/testenv/proxy.go` (only if Step 1 needs it), `docs/rbac.yaml`, `README.md`
 
 **Interfaces:**
-- Consumes: `SelectPod`, `Fetch`, `Capture`, `AdminPort`.
-- Produces: `func NewPortForwarder(cfg *rest.Config) Dialer` (client-go `tools/portforward`, local address `127.0.0.1`, port `0`, stops on ctx cancel and on `stop`). The SPDY upgrade must honour ctx: client-go's stock dialer sends the upgrade without a context and reads the response with no deadline. Use the technique of xdsview `pkg/envoy/source/kube/portforward.go:187-228` (`ctxDialer`): send the upgrade with ctx and close the connection once ctx is done. Read the upgrade response status before the upgrader consumes it, so a 403 stays a typed Forbidden. With a kubeconfig or environment proxy, xdsview's socket-close hook doesn't reach the connection. So the upgrade dials through a kgwctl-owned dial function: resolve the proxy as client-go would (`rest.Config.Proxy`, else `http.ProxyFromEnvironment`), speak HTTP CONNECT or SOCKS5 (`golang.org/x/net/proxy`, already a module dependency) to it, keep the `net.Conn`, and close it when ctx ends. No socket outlives the deadline.
+- Consumes: `FetchGateway`, `Capture`, `AdminPort`.
+- Produces: `func NewPortForwarder(cfg *rest.Config) Dialer` (client-go's port-forward protocol over SPDY; `Dial` returns the forward's data stream in process, with no local listener or port; a message on the error stream fails reads; stops on ctx cancel and on `stop`). The SPDY upgrade must honour ctx: client-go's stock dialer sends the upgrade without a context and reads the response with no deadline. Use the technique of xdsview `pkg/envoy/source/kube/portforward.go:187-228` (`ctxDialer`): send the upgrade with ctx and close the connection once ctx is done. Read the upgrade response status before the upgrader consumes it, so a 403 stays a typed Forbidden. With a kubeconfig or environment proxy, xdsview's socket-close hook doesn't reach the connection. So the upgrade dials through a kgwctl-owned dial function: resolve the proxy as client-go would (`rest.Config.Proxy`, else `http.ProxyFromEnvironment`), speak HTTP CONNECT or SOCKS5 (`golang.org/x/net/proxy`, already a module dependency) to it, keep the `net.Conn`, and close it when ctx ends. No socket outlives the deadline.
 - Produces: `kgwctl proxy` (no-op parent with help) and `kgwctl proxy dump <gateway> [--pod <pod>]`, honouring `-n`, `--context`, `--kubeconfig`, `--request-timeout`.
 - Produces: `internal/app` test hook to inject a `Dialer` (same pattern as Phase 2's `checkTestHooks`).
 
