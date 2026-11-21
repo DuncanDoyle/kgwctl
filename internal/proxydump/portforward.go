@@ -130,7 +130,7 @@ func newUpgradeDialer(ctx context.Context, cfg *rest.Config, u *url.URL, conns *
 		return nil, fmt.Errorf("resolve proxy for %s: %w", u.Host, err)
 	}
 	dial := func(ctx context.Context, network, addr string) (net.Conn, error) {
-		return dialVia(ctx, proxyURL, network, addr, conns)
+		return dialVia(ctx, proxyURL, tlsConfig, network, addr, conns)
 	}
 	upgrader, err := spdystream.NewRoundTripperWithConfig(spdystream.RoundTripperConfig{
 		PingPeriod:       5 * time.Second,
@@ -143,7 +143,12 @@ func newUpgradeDialer(ctx context.Context, cfg *rest.Config, u *url.URL, conns *
 	if err != nil {
 		return nil, err
 	}
-	return &upgradeDialer{ctx: ctx, upgrader: upgrader, client: &http.Client{Transport: wrapped}, url: u}, nil
+	// Auth wrappers re-add credentials on every hop, so a redirect is never followed.
+	client := &http.Client{
+		Transport:     wrapped,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	return &upgradeDialer{ctx: ctx, upgrader: upgrader, client: client, url: u}, nil
 }
 
 // Dial implements httpstream.Dialer.
@@ -164,6 +169,10 @@ func (d *upgradeDialer) Dial(protocols ...string) (httpstream.Connection, string
 		return nil, "", err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		d.err = fmt.Errorf("port-forward upgrade at %s was redirected (%s); redirects are not followed", d.url.Host, resp.Status)
+		return nil, "", d.err
+	}
 	if resp.StatusCode != http.StatusSwitchingProtocols {
 		d.err = statusError(resp)
 		return nil, "", d.err
@@ -190,42 +199,50 @@ func statusError(resp *http.Response) error {
 // connSet holds the raw sockets of one tunnel, so they can all be closed.
 type connSet struct {
 	mu     sync.Mutex
-	conns  []net.Conn
+	socks  []sock
 	closed bool
 }
 
-// add keeps c, or closes it at once when the set is already closed.
-func (s *connSet) add(c net.Conn) {
+// sock is one raw socket and the unregister func of its ctx callback.
+type sock struct {
+	conn      net.Conn
+	stopAfter func() bool
+}
+
+// add keeps c and closes it when ctx ends, or closes it at once when the set
+// is already closed.
+func (s *connSet) add(ctx context.Context, c net.Conn) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
 		_ = c.Close()
 		return
 	}
-	s.conns = append(s.conns, c)
+	s.socks = append(s.socks, sock{conn: c, stopAfter: context.AfterFunc(ctx, func() { _ = c.Close() })})
 }
 
 func (s *connSet) closeAll() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.closed = true
-	for _, c := range s.conns {
-		_ = c.Close()
+	for _, k := range s.socks {
+		k.stopAfter()
+		_ = k.conn.Close()
 	}
-	s.conns = nil
+	s.socks = nil
 }
 
 // dialVia opens a TCP socket to addr, through proxyURL when set (HTTP CONNECT
-// or SOCKS5), and closes it when ctx ends. Every socket goes into conns.
-func dialVia(ctx context.Context, proxyURL *url.URL, network, addr string, conns *connSet) (net.Conn, error) {
+// or SOCKS5), and closes it when ctx ends. An https proxy is verified with
+// proxyTLS. Every socket goes into conns.
+func dialVia(ctx context.Context, proxyURL *url.URL, proxyTLS *tls.Config, network, addr string, conns *connSet) (net.Conn, error) {
 	raw := func(ctx context.Context, network, addr string) (net.Conn, error) {
 		var d net.Dialer
 		c, err := d.DialContext(ctx, network, addr)
 		if err != nil {
 			return nil, err
 		}
-		conns.add(c)
-		context.AfterFunc(ctx, func() { _ = c.Close() })
+		conns.add(ctx, c)
 		return c, nil
 	}
 	if proxyURL == nil {
@@ -244,7 +261,7 @@ func dialVia(ctx context.Context, proxyURL *url.URL, network, addr string, conns
 		}
 		return pd.(proxy.ContextDialer).DialContext(ctx, network, addr)
 	case "http", "https", "":
-		return dialConnect(ctx, proxyURL, addr, raw)
+		return dialConnect(ctx, proxyURL, proxyTLS, addr, raw)
 	}
 	return nil, fmt.Errorf("proxy URL scheme %q not supported", proxyURL.Scheme)
 }
@@ -260,14 +277,23 @@ func (f contextDialer) DialContext(ctx context.Context, network, addr string) (n
 	return f(ctx, network, addr)
 }
 
-// dialConnect opens a tunnel to addr with HTTP CONNECT through proxyURL.
-func dialConnect(ctx context.Context, proxyURL *url.URL, addr string, raw contextDialer) (net.Conn, error) {
+// dialConnect opens a tunnel to addr with HTTP CONNECT through proxyURL. Like
+// net/http, it verifies an https proxy with the API server's TLS config.
+func dialConnect(ctx context.Context, proxyURL *url.URL, proxyTLS *tls.Config, addr string, raw contextDialer) (net.Conn, error) {
 	c, err := raw(ctx, "tcp", hostPort(proxyURL))
 	if err != nil {
 		return nil, err
 	}
 	if proxyURL.Scheme == "https" {
-		tc := tls.Client(c, &tls.Config{ServerName: proxyURL.Hostname()})
+		cfg := &tls.Config{}
+		if proxyTLS != nil {
+			cfg = proxyTLS.Clone()
+		}
+		if cfg.ServerName == "" {
+			cfg.ServerName = proxyURL.Hostname()
+		}
+		cfg.NextProtos = []string{"http/1.1"} // CONNECT is sent as HTTP/1.1
+		tc := tls.Client(c, cfg)
 		if err := tc.HandshakeContext(ctx); err != nil {
 			_ = c.Close()
 			return nil, err

@@ -4,14 +4,23 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	crand "crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/binary"
+	"encoding/pem"
 	"errors"
 	"io"
+	"math/big"
 	"math/rand/v2"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
+	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -21,6 +30,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
 	"github.com/DuncanDoyle/kgwctl/internal/app"
 	"github.com/DuncanDoyle/kgwctl/internal/testenv"
@@ -88,6 +98,17 @@ func TestProxyDumpStreams(t *testing.T) {
 	}
 }
 
+func TestProxyDumpWriteError(t *testing.T) {
+	env := newEnv(t, testenv.Options{Fixtures: []string{checkInstall}})
+	d := newFakeDialer(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("{}")) })
+	var errb bytes.Buffer
+	root := app.NewRootWithProxyHooks(app.Config{Build: testBuild, Out: failWriter{}, Err: &errb, Now: testNow}, app.ProxyTestHooks{Dialer: d})
+	code := run(root, append([]string{"--kubeconfig", env.Kubeconfig}, dumpArgs...)...)
+	if code != 2 || !strings.Contains(errb.String(), "write config dump") {
+		t.Fatalf("exit %d, stderr %q; want 2 and a write error", code, errb.String())
+	}
+}
+
 func TestProxyDumpNoGatewayArg(t *testing.T) {
 	env := newEnv(t, testenv.Options{})
 	r := runProxy(t, env.Kubeconfig, app.ProxyTestHooks{}, "proxy", "dump")
@@ -96,6 +117,33 @@ func TestProxyDumpNoGatewayArg(t *testing.T) {
 	}
 	if !strings.Contains(r.stderr, "Gateway") || !strings.Contains(r.stderr, "Usage:") {
 		t.Fatalf("stderr = %q, want a usage error naming the Gateway", r.stderr)
+	}
+}
+
+// TestProxyUsage: bare proxy prints help; a mistyped subcommand or a malformed
+// dump flag is a usage error (exit 2) with nothing on stdout.
+func TestProxyUsage(t *testing.T) {
+	// No cluster is reached: parsing fails before the kubeconfig is read.
+	const kc = "unused-kubeconfig"
+	bare := runProxy(t, kc, app.ProxyTestHooks{}, "proxy")
+	if bare.code != 0 || !strings.Contains(bare.stdout, "dump") || bare.stderr != "" {
+		t.Errorf("proxy: exit %d, stdout %q, stderr %q; want 0 and help naming dump", bare.code, bare.stdout, bare.stderr)
+	}
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "mistyped", args: []string{"proxy", "dupm"}, want: `unknown command "dupm"`},
+		{name: "pod-no-value", args: []string{"proxy", "dump", "http", "--pod"}, want: "--pod"},
+		{name: "unknown-flag", args: []string{"proxy", "dump", "http", "--bogus"}, want: "--bogus"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := runProxy(t, kc, app.ProxyTestHooks{}, tc.args...)
+			if r.code != 2 || r.stdout != "" || !strings.Contains(r.stderr, tc.want) {
+				t.Fatalf("exit %d, stdout %q, stderr %q; want 2, empty and %q", r.code, r.stdout, r.stderr, tc.want)
+			}
+		})
 	}
 }
 
@@ -207,6 +255,107 @@ func TestProxyDumpUpgradeHangsViaProxy(t *testing.T) {
 	}
 }
 
+// TestProxyDumpViaHTTPSProxy: with an https API server and an https proxy both
+// signed by the kubeconfig's CA, discovery and the upgrade go through the
+// proxy, and the stalled upgrade is torn down.
+func TestProxyDumpViaHTTPSProxy(t *testing.T) {
+	env := newEnv(t, testenv.Options{Fixtures: []string{checkInstall}})
+	hits := holdPortForward(t, env)
+	caPEM, serverTLS := testCA(t)
+	front, upgradeClosed := startTLSFront(t, env, serverTLS)
+	tp := startConnectProxyTLS(t, serverTLS)
+	kc := withCluster(t, env.Kubeconfig, func(c *clientcmdapi.Cluster) {
+		c.Server, c.ProxyURL, c.CertificateAuthorityData = front, tp.url, caPEM
+	})
+	const timeout = 2 * time.Second
+	r := runProxy(t, kc, app.ProxyTestHooks{}, append(dumpArgs, "--request-timeout", timeout.String())...)
+	if r.code != 2 || r.stdout != "" || !strings.Contains(r.stderr, "--request-timeout") {
+		t.Fatalf("exit %d, stdout %q, stderr %q; want 2, empty and the deadline named", r.code, r.stdout, r.stderr)
+	}
+	requireUpgradeAbandoned(t, hits)
+	select {
+	case <-upgradeClosed:
+	case <-time.After(waitBound):
+		t.Fatal("the API server never saw kgwctl close the port-forward connection")
+	}
+	if tp.tunnels() == 0 {
+		t.Fatal("no request went through the proxy")
+	}
+}
+
+// startTLSFront serves env's API over TLS. The channel closes once a
+// connection that carried a port-forward request is closed.
+func startTLSFront(t *testing.T, env *testenv.Env, serverTLS *tls.Config) (string, <-chan struct{}) {
+	t.Helper()
+	target, err := url.Parse(env.Proxies[0].URL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	type flagKey struct{}
+	closed := make(chan struct{})
+	var once sync.Once
+	var mu sync.Mutex
+	upgrades := map[net.Conn]bool{}
+	rp := &httputil.ReverseProxy{Rewrite: func(r *httputil.ProxyRequest) { r.SetURL(target) }, FlushInterval: -1}
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/portforward") {
+			mu.Lock()
+			upgrades[r.Context().Value(flagKey{}).(net.Conn)] = true
+			mu.Unlock()
+		}
+		rp.ServeHTTP(w, r)
+	}))
+	srv.Config.ConnContext = func(ctx context.Context, c net.Conn) context.Context {
+		return context.WithValue(ctx, flagKey{}, c)
+	}
+	srv.Config.ConnState = func(c net.Conn, s http.ConnState) {
+		if s != http.StateClosed {
+			return
+		}
+		mu.Lock()
+		up := upgrades[c]
+		mu.Unlock()
+		if up {
+			once.Do(func() { close(closed) })
+		}
+	}
+	srv.TLS = serverTLS
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+	return srv.URL, closed
+}
+
+// testCA returns a new CA's PEM and a server TLS config for 127.0.0.1 signed by it.
+func testCA(t *testing.T) ([]byte, *tls.Config) {
+	t.Helper()
+	key := func() *ecdsa.PrivateKey {
+		k, err := ecdsa.GenerateKey(elliptic.P256(), crand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return k
+	}
+	caKey, leafKey := key(), key()
+	now := time.Now()
+	ca := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "kgwctl test CA"},
+		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour), IsCA: true, BasicConstraintsValid: true,
+		KeyUsage: x509.KeyUsageCertSign}
+	caDER, err := x509.CreateCertificate(crand.Reader, ca, ca, &caKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaf := &x509.Certificate{SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "proxy"},
+		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour), IPAddresses: []net.IP{net.IPv4(127, 0, 0, 1)},
+		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+	leafDER, err := x509.CreateCertificate(crand.Reader, leaf, ca, &leafKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert := tls.Certificate{Certificate: [][]byte{leafDER}, PrivateKey: leafKey}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER}),
+		&tls.Config{Certificates: []tls.Certificate{cert}, NextProtos: []string{"http/1.1"}}
+}
+
 // TestCheckAsReader: the kgwctl-reader ClusterRole from docs/rbac.yaml alone serves check.
 func TestCheckAsReader(t *testing.T) {
 	env := checkEnv(t, checkInstall, checkController, checkRouteBroken, rbacYAML, readerBinding)
@@ -228,12 +377,18 @@ func TestCheckAsReader(t *testing.T) {
 // withProxyURL copies kubeconfig with every cluster's proxy-url set to proxyURL.
 func withProxyURL(t *testing.T, kubeconfig, proxyURL string) string {
 	t.Helper()
+	return withCluster(t, kubeconfig, func(c *clientcmdapi.Cluster) { c.ProxyURL = proxyURL })
+}
+
+// withCluster copies kubeconfig with edit applied to every cluster.
+func withCluster(t *testing.T, kubeconfig string, edit func(*clientcmdapi.Cluster)) string {
+	t.Helper()
 	kc, err := clientcmd.LoadFromFile(kubeconfig)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, c := range kc.Clusters {
-		c.ProxyURL = proxyURL
+		edit(c)
 	}
 	path := filepath.Join(t.TempDir(), "kubeconfig")
 	if err := clientcmd.WriteToFile(*kc, path); err != nil {
@@ -313,9 +468,16 @@ func (tp *tunnelProxy) pipe(client net.Conn, br *bufio.Reader, target string) {
 }
 
 // startConnectProxy serves HTTP CONNECT tunnels and plain forward-proxy requests.
-func startConnectProxy(t *testing.T) *tunnelProxy {
+func startConnectProxy(t *testing.T) *tunnelProxy { return startConnectProxyTLS(t, nil) }
+
+// startConnectProxyTLS is startConnectProxy, served over TLS when serverTLS is set.
+func startConnectProxyTLS(t *testing.T, serverTLS *tls.Config) *tunnelProxy {
 	tp, ln := newTunnelProxy(t)
 	tp.url = "http://" + ln.Addr().String()
+	if serverTLS != nil {
+		tp.url = "https://" + ln.Addr().String()
+		ln = tls.NewListener(ln, serverTLS)
+	}
 	forward := &httputil.ReverseProxy{Rewrite: func(*httputil.ProxyRequest) {}, FlushInterval: -1}
 	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodConnect {

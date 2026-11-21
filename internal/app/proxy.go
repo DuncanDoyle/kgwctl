@@ -33,8 +33,19 @@ func newProxyCmd(hooks proxyTestHooks) *cobra.Command {
 		Short: "Read what a Gateway's Envoy proxy holds",
 		Long: "Read what a Gateway's Envoy proxy holds, through a port-forward to its admin port.\n\n" +
 			"Needs create pods/portforward in the Gateway's namespace: see docs/rbac.yaml.",
-		Args: cobra.NoArgs,
+		// Runnable, so cobra reaches Args instead of printing help for any argument.
+		Args: cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return cmd.Help()
+			}
+			return &ExitError{Code: 2, Err: fmt.Errorf("unknown command %q for %q\nRun '%s --help' for usage", args[0], cmd.CommandPath(), cmd.CommandPath())}
+		},
 	}
+	// Proxy commands exit 0 or 2 (design §3.3); dump inherits this.
+	cmd.SetFlagErrorFunc(func(c *cobra.Command, err error) error {
+		return &ExitError{Code: 2, Err: fmt.Errorf("%w\nUsage: %s", err, c.UseLine())}
+	})
 	cmd.AddCommand(newProxyDumpCmd(hooks))
 	return cmd
 }
@@ -125,11 +136,30 @@ func proxyDump(cmd *cobra.Command, f *Flags, hooks proxyTestHooks, name, pod str
 		return dumpError(ctx, f, gw, r)
 	}
 	defer r.capture.Body.Close()
-	if _, err := io.Copy(cmd.OutOrStdout(), r.capture.Body); err != nil {
-		r.err = fmt.Errorf("read config dump from %s: %w", r.target, err)
+	out := &errWriter{w: cmd.OutOrStdout()}
+	if _, err := io.Copy(out, r.capture.Body); err != nil {
+		if out.err != nil {
+			r.err = fmt.Errorf("write config dump of %s: %w", r.target, err)
+		} else {
+			r.err = fmt.Errorf("read config dump from %s: %w", r.target, err)
+		}
 		return dumpError(ctx, f, gw, r)
 	}
 	return nil
+}
+
+// errWriter records w's write error, so a failed copy can say which side failed.
+type errWriter struct {
+	w   io.Writer
+	err error
+}
+
+func (e *errWriter) Write(p []byte) (int, error) {
+	n, err := e.w.Write(p)
+	if err != nil {
+		e.err = err
+	}
+	return n, err
 }
 
 // dumpError maps a failed dump to exit 2 with what to do next (design §3.3, §4.1).
