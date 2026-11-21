@@ -198,19 +198,22 @@ func TestFetchDeadline(t *testing.T) {
 	ft.waitListenerClosed(t)
 }
 
+// TestFetchDialError: a dial that fails after opening its listener is still released.
 func TestFetchDialError(t *testing.T) {
-	var stops atomic.Int32
+	ft := newFakeTunnel(t, func(http.ResponseWriter, *http.Request) {})
 	dialErr := errors.New("dial failed")
-	d := dialerFunc(func(context.Context, types.NamespacedName, int) (string, func(), error) {
-		return "", func() { stops.Add(1) }, dialErr
+	d := dialerFunc(func(ctx context.Context, pod types.NamespacedName, port int) (string, func(), error) {
+		_, stop, err := ft.Dial(ctx, pod, port)
+		if err != nil {
+			return "", nil, err
+		}
+		return "", stop, dialErr
 	})
 	_, err := Fetch(context.Background(), d, testPod, time.Now)
 	if !errors.Is(err, dialErr) {
 		t.Fatalf("err = %v, want %v", err, dialErr)
 	}
-	if n := stops.Load(); n != 1 {
-		t.Fatalf("stop called %d times, want 1", n)
-	}
+	ft.requireListenerClosed(t)
 }
 
 type dialerFunc func(context.Context, types.NamespacedName, int) (string, func(), error)

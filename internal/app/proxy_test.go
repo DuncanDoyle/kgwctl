@@ -28,7 +28,10 @@ import (
 	"testing"
 	"time"
 
+	authorizationv1 "k8s.io/api/authorization/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
@@ -371,6 +374,33 @@ func TestCheckAsReader(t *testing.T) {
 	}
 	if got, want := normalizeTimes(r.stdout), normalizeTimes(admin.stdout); got != want {
 		t.Fatalf("reader report differs from admin's\n--- reader ---\n%s\n--- admin ---\n%s", got, want)
+	}
+	// The scrapers above are faked, so ask the API server what the reader may do.
+	requireAccess(t, reader.Kubeconfig, "get", "proxy", true)
+	requireAccess(t, reader.Kubeconfig, "create", "portforward", false)
+}
+
+// requireAccess checks with a SelfSubjectAccessReview whether kubeconfig's user
+// may verb pods/sub in kgateway-system.
+func requireAccess(t *testing.T, kubeconfig, verb, sub string, want bool) {
+	t.Helper()
+	cfg, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kc, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	review := &authorizationv1.SelfSubjectAccessReview{Spec: authorizationv1.SelfSubjectAccessReviewSpec{
+		ResourceAttributes: &authorizationv1.ResourceAttributes{Namespace: "kgateway-system", Verb: verb, Resource: "pods", Subresource: sub},
+	}}
+	got, err := kc.AuthorizationV1().SelfSubjectAccessReviews().Create(t.Context(), review, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status.Allowed != want {
+		t.Fatalf("reader %s pods/%s: allowed = %t, want %t (%s)", verb, sub, got.Status.Allowed, want, got.Status.Reason)
 	}
 }
 

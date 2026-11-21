@@ -75,13 +75,17 @@ func SelectPod(ctx context.Context, c load.Clients, gw types.NamespacedName, pod
 		}
 		return types.NamespacedName{}, fmt.Errorf("%w for Gateway %s: %s", ErrNoReplica, gw, detail)
 	}
-	oldest := slices.MinFunc(ready, func(a, b corev1.Pod) int {
+	return types.NamespacedName{Namespace: gw.Namespace, Name: oldest(ready).Name}, nil
+}
+
+// oldest returns the Pod that started first, ties broken by name; ready is non-empty.
+func oldest(ready []corev1.Pod) corev1.Pod {
+	return slices.MinFunc(ready, func(a, b corev1.Pod) int {
 		if c := startTime(a).Compare(startTime(b)); c != 0 {
 			return c
 		}
 		return cmp.Compare(a.Name, b.Name)
 	})
-	return types.NamespacedName{Namespace: gw.Namespace, Name: oldest.Name}, nil
 }
 
 func isReady(p corev1.Pod) bool {

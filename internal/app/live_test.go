@@ -687,7 +687,9 @@ func TestLiveInterruptDuringOutput(t *testing.T) {
 // failWriter takes half of a write, then fails, as a disk that fills up does.
 type failWriter struct{}
 
-func (failWriter) Write(p []byte) (int, error) { return len(p) / 2, errors.New("no space left on device") }
+func (failWriter) Write(p []byte) (int, error) {
+	return len(p) / 2, errors.New("no space left on device")
+}
 
 // TestLiveWriteError: a report that could not be written is exit 2, never a findings exit.
 func TestLiveWriteError(t *testing.T) {
