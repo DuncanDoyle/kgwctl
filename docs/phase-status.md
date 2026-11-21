@@ -44,7 +44,8 @@ New features, architecture changes, new dependencies.
 - [x] S3 (P3) finding 6 — bc06a9e: live check applies the Role from docs/rbac.yaml
 - [x] S4 efa679f: xdsview v0.4.3 bump for findings 3, 4 (xdsview#31; finding 8 → xdsview#32, xdsview Phase 8)
 - [x] S5 Cross-model review + triage: reviews/3.4-codex.md
-- [ ] S6 Review fix wave (P1-1, P1-2, P2-1, P3-2, P3-3, P4-1) ← CURRENT
+- [x] S6 Review fix wave — 9414571, 4be9744 (reviews/3.4-codex.md triage)
+- [ ] S7 Re-review round 2 fixes (reviews/3.4-codex-r2.md triage) ← CURRENT
 
 ## Program
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
