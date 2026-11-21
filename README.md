@@ -117,6 +117,60 @@ The first Ctrl-C stops the run and prints the report, then `Stopped by Ctrl-C.` 
 
 Exit codes follow the same rules as `check`, applied to the final state. With `-o json|yaml` you get one document at the end, with an `observation` block ([`docs/output.md`](docs/output.md)).
 
+### `proxy dump <gateway>`
+
+Streams the Envoy config dump of one replica of the Gateway to stdout, unchanged. It picks the oldest Ready replica; `--pod <pod>` names another replica of the same Gateway, Ready or not.
+
+```bash
+kgwctl proxy dump http -n kgateway-system > dump.json
+```
+
+Envoy redacts only the fields it knows are sensitive, and only in strongly typed config. The dump can still contain credentials, tokens or keys in other config. Check it before you attach it to a ticket.
+
+It reads the dump over a port-forward to Envoy's admin port. `--request-timeout` bounds the whole command; there is no size limit. Exit codes: `0` when printed, `2` when the dump could not be read (no Ready replica, `--pod` not a replica of the Gateway, RBAC, timeout).
+
+Live `proxy routes` and `proxy dump` require `create pods/portforward`. kgwctl sends only `GET /config_dump`, but the grant allows any TCP forwarding to Pods in the namespace, including Envoy admin operations that change or stop the proxy. RBAC cannot narrow it to a port or path. Bind it only to trusted operators. The optional `kgwctl-proxy-portforward` Role in [`docs/rbac.yaml`](docs/rbac.yaml) grants it.
+
+### `proxy routes [<gateway>]`
+
+Shows one Gateway's Envoy listeners, virtual hosts and routes, and for each route the HTTP filters it runs in request order, with the Gateway API and kgateway objects they come from. Live, it reads the config dump of one replica (the oldest Ready one, or `--pod`) and lists the cluster's HTTPRoutes to attribute routes. With `--file` it reads a saved dump and calls no Kubernetes API. It needs the same `create pods/portforward` grant as `proxy dump` when live.
+
+`--route <ns>/<name>` shows only that HTTPRoute's routes, and `--rule <index>` one of its rules. `--response` also shows the response order. A route whose name reads as two HTTPRoutes is listed as ambiguous, and one whose origin is unresolved is listed as such; neither is ever matched. The dump is capped by `--max-size` (default `64Mi`). To read a larger one, raise `--max-size`, or save it with `proxy dump` and read it with `--file <path> --max-size <n>`.
+
+Does the transformation of HTTPRoute `orders` run before ext_authz? Ask its Gateway's proxy:
+
+```bash
+kgwctl proxy routes proxy -n kgwctl-proxy --route kgwctl-proxy/orders
+```
+
+```
+Gateway kgwctl-proxy/proxy · pod kgwctl-proxy/proxy-575f694596-lk8s6 · 2026-11-21T12:07:08Z
+listener~8080 [::]:8080 · active · Gateway kgwctl-proxy/proxy port 8080
+└─ vhost listener~8080~orders_kgwctl_example [orders.kgwctl.example] · port 8080
+   └─ route / (prefix) · HTTPRoute kgwctl-proxy/orders · rule 0 · match 0
+      filters (request order):
+        1 ext_auth/kgwctl-proxy/authz       enabled by route · GatewayExtension kgwctl-proxy/authz · TrafficPolicy kgwctl-proxy/orders-extauth (extAuth)
+        2 ratelimit/local                   enabled by route · TrafficPolicy kgwctl-proxy/orders-ratelimit (rateLimit.local)
+        3 dynamic_modules/simple_mutations  enabled by route · TrafficPolicy kgwctl-proxy/orders-transformation (transformation)
+        4 envoy.filters.http.router         on
+      not run: global_disable/ext_auth (off)
+      policies: TrafficPolicy kgwctl-proxy/orders-extauth (extAuth), TrafficPolicy kgwctl-proxy/orders-ratelimit (rateLimit.local), TrafficPolicy kgwctl-proxy/orders-transformation (transformation)
+      backend: kube_kgwctl-proxy_backend_8080
+```
+
+No. The route runs external auth first, then the local rate limit, then the transformation (`dynamic_modules/simple_mutations`), and last the router. Every filter but the router is off on the Gateway and switched on by this route. Each filter entry names the TrafficPolicy that configures it, and the `policies` line lists them all.
+
+A saved dump gives the same view; only the header names the file instead of the pod. `--gateway` labels the origins:
+
+```bash
+kgwctl proxy dump proxy -n kgwctl-proxy > dump.json
+kgwctl proxy routes --file dump.json --gateway kgwctl-proxy/proxy --route kgwctl-proxy/orders
+```
+
+This Gateway also serves HTTPRoute `proxy/orders-kgwctl`, and the Envoy route names of both HTTPRoutes read as either one. The output above was taken with kgateway's Helm value `enableRouteSourceMetadata: true`, which tells the two apart. Without it, live and file views both list the two routes as ambiguous and match neither.
+
+`-o json|yaml` prints one `ProxyRoutes` document ([`docs/output.md`](docs/output.md)) with the source, the snapshot, parser warnings and the ambiguous routes. Exit codes: `0` when printed, `2` on any error.
+
 ## Global flags
 
 | Flag | Meaning |
@@ -131,11 +185,11 @@ Exit codes follow the same rules as `check`, applied to the final state. With `-
 
 ## Output and exit codes
 
-`get`, `describe` and `version` exit `0` on success and `1` on any error. `check` exits `0` when clean, `1` for problems and `2` when it could not check something. Data goes to stdout; errors and warnings go to stderr. With `-o json|yaml`, `describe`, `version` and `check` print a versioned envelope, documented in [`docs/output.md`](docs/output.md); `get` prints a plain Kubernetes `List`. Tables and text layouts are not a stable interface.
+`get`, `describe` and `version` exit `0` on success and `1` on any error. `check` exits `0` when clean, `1` for problems and `2` when it could not check something. `proxy dump` and `proxy routes` exit `0` or `2`. Data goes to stdout; errors and warnings go to stderr. With `-o json|yaml`, `describe`, `version`, `check` and `proxy routes` print a versioned envelope, documented in [`docs/output.md`](docs/output.md); `get` prints a plain Kubernetes `List`. Tables and text layouts are not a stable interface.
 
 ## Permissions
 
-kgwctl only reads. It needs `get`, `list` and `watch` on the Gateway API and kgateway kinds, Namespaces, Pods, Events, Services, EndpointSlices, Deployments and CustomResourceDefinitions, and `get` on `pods/proxy` for `check`. It never reads Secrets or ConfigMaps. [`docs/rbac.yaml`](docs/rbac.yaml) holds that ClusterRole, plus a sample ServiceAccount and binding:
+kgwctl only reads. It needs `get`, `list` and `watch` on the Gateway API and kgateway kinds, Namespaces, Pods, Events, Services, EndpointSlices, Deployments and CustomResourceDefinitions, and `get` on `pods/proxy` for `check`. It never reads Secrets or ConfigMaps. [`docs/rbac.yaml`](docs/rbac.yaml) holds that ClusterRole, plus a sample ServiceAccount and binding. The reader role grants no `pods/portforward`; the optional Role at the end of the file adds it for the `proxy` commands (see [`proxy dump`](#proxy-dump-gateway)):
 
 ```bash
 kubectl apply -f docs/rbac.yaml
@@ -165,5 +219,6 @@ hack/live-check.sh setup                                   # cluster, Gateway AP
 hack/live-check.sh verify hack/live/out/admin.kubeconfig   # outputs in hack/live/out/admin/
 hack/live-check.sh verify hack/live/out/reader.kubeconfig  # the same commands with docs/rbac.yaml permissions
                                                            # (verify also runs check, scaling the controller to 0 and adding a broken route, then restores both)
+hack/live-check.sh routes                                  # proxy routes live and from a dump; sets enableRouteSourceMetadata, then back to false
 hack/scale/run.sh                                          # scale benchmark: 1,000 namespaces, 500 Gateways, 5,000 HTTPRoutes
 ```

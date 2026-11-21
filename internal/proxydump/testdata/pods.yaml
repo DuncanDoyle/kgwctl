@@ -1,0 +1,163 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: web
+  namespace: team-a
+spec:
+  gatewayClassName: kgateway
+  listeners:
+    - name: http
+      port: 80
+      protocol: HTTP
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: other
+  namespace: team-a
+spec:
+  gatewayClassName: kgateway
+  listeners:
+    - name: http
+      port: 80
+      protocol: HTTP
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: tie
+  namespace: team-a
+spec:
+  gatewayClassName: kgateway
+  listeners:
+    - name: http
+      port: 80
+      protocol: HTTP
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: web-a
+  namespace: team-a
+  labels:
+    gateway.networking.k8s.io/gateway-name: web
+spec:
+  containers:
+    - name: envoy
+      image: example/envoy:test
+status:
+  phase: Running
+  startTime: "2026-01-01T12:00:00Z"
+  conditions:
+    - type: Ready
+      status: "True"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: web-b
+  namespace: team-a
+  labels:
+    gateway.networking.k8s.io/gateway-name: web
+spec:
+  containers:
+    - name: envoy
+      image: example/envoy:test
+status:
+  phase: Running
+  startTime: "2026-01-01T11:59:00Z"
+  conditions:
+    - type: Ready
+      status: "True"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: web-c
+  namespace: team-a
+  labels:
+    gateway.networking.k8s.io/gateway-name: web
+  finalizers:
+    - test/hold
+spec:
+  containers:
+    - name: envoy
+      image: example/envoy:test
+status:
+  phase: Running
+  startTime: "2026-01-01T12:00:00Z"
+  conditions:
+    - type: Ready
+      status: "True"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: web-d
+  namespace: team-a
+  labels:
+    gateway.networking.k8s.io/gateway-name: web
+spec:
+  containers:
+    - name: envoy
+      image: example/envoy:test
+status:
+  phase: Running
+  startTime: "2026-01-01T12:00:00Z"
+  conditions:
+    - type: Ready
+      status: "False"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: other-x
+  namespace: team-a
+  labels:
+    gateway.networking.k8s.io/gateway-name: other
+spec:
+  containers:
+    - name: envoy
+      image: example/envoy:test
+status:
+  phase: Running
+  startTime: "2026-01-01T12:00:00Z"
+  conditions:
+    - type: Ready
+      status: "True"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: tie-b
+  namespace: team-a
+  labels:
+    gateway.networking.k8s.io/gateway-name: tie
+spec:
+  containers:
+    - name: envoy
+      image: example/envoy:test
+status:
+  phase: Running
+  startTime: "2026-01-01T12:00:00Z"
+  conditions:
+    - type: Ready
+      status: "True"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: tie-a
+  namespace: team-a
+  labels:
+    gateway.networking.k8s.io/gateway-name: tie
+spec:
+  containers:
+    - name: envoy
+      image: example/envoy:test
+status:
+  phase: Running
+  startTime: "2026-01-01T12:00:00Z"
+  conditions:
+    - type: Ready
+      status: "True"

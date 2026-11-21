@@ -1,6 +1,6 @@
 # Output schema
 
-`describe`, `version` and `check` print a versioned envelope with `-o json` or `-o yaml`. Tables and the default text layout are not a stable interface; the envelope is. `get -o yaml|json` is not wrapped: it prints a plain Kubernetes `v1` List of the matching objects.
+`describe`, `version`, `check` and `proxy routes` print a versioned envelope with `-o json` or `-o yaml`. Tables and the default text layout are not a stable interface; the envelope is. `get -o yaml|json` is not wrapped: it prints a plain Kubernetes `v1` List of the matching objects.
 
 ## Envelope
 
@@ -11,17 +11,17 @@
 | Field | Type | Meaning |
 |---|---|---|
 | `schemaVersion` | string | Schema version, currently `kgwctl.kgateway.dev/v1alpha1`. |
-| `kind` | string | `Describe`, `Version` or `Check`. |
-| `item` | object | A `DescribeView`, a `VersionView` or a `Check`. |
+| `kind` | string | `Describe`, `Version`, `Check` or `ProxyRoutes`. |
+| `item` | object | A `DescribeView`, a `VersionView`, a `Check` or a `ProxyRoutes`. |
 
 ## Conventions
 
 - Field names are camelCase. Times are RFC3339 and nothing is relative to now, so there is no age field.
-- A reference is always an object, never a string. `group` is `""` for the core group. `namespace` is absent only for cluster-scoped objects.
+- A reference is always an object, never a string. `group` is `""` for the core group, except in `proxy routes`, where an empty `group` is omitted. `namespace` is absent only for cluster-scoped objects.
 - `install` is `namespace/name` of the owning install, as in `get`.
 - Optional fields are omitted when empty, not printed as null. Fields documented as always present are printed even when empty.
-- Data goes to stdout and errors to stderr. Warnings never appear in JSON or YAML output.
-- Exit codes: `get`, `describe` and `version` use `0` for success and `1` for any error. `check` uses `0` when no shown finding is an error or warning, `1` when one is (or on a usage error), and `2` when it could not check, as with no install found, or the report write returned an error. Exit codes are the same in every output format.
+- Data goes to stdout and errors to stderr. Warnings never appear in JSON or YAML output, except the parser `warnings` of `proxy routes`.
+- Exit codes: `get`, `describe` and `version` use `0` for success and `1` for any error. `check` uses `0` when no shown finding is an error or warning, `1` when one is (or on a usage error), and `2` when it could not check, as with no install found, or the report write returned an error. `proxy routes` uses `0` for success and `2` for any error, including a usage error. Exit codes are the same in every output format.
 
 ## Stability
 
@@ -494,3 +494,53 @@ A check is still deciding when `pending` is true or it has a `hold`. Otherwise i
 |---|---|---|
 | `severity` | string | Severity from `at` on. |
 | `at` | string | RFC3339 time. |
+
+## ProxyRoutes
+
+`proxy routes -o json|yaml` prints one document with `kind: ProxyRoutes`. Unlike the other commands, it carries the parser warnings in the document (`warnings`), so a partial result never looks complete. Errors exit `2` and print nothing to stdout. Valid JSON that is not an object with a `configs` array exits `2` with "not an Envoy config dump (no configs array)"; `{"configs":[]}` is an empty proxy.
+
+### ProxyRoutes
+
+| Field | Type | Meaning |
+|---|---|---|
+| `source` | ProxySource | Where the config dump came from. |
+| `snapshot` | EnvoySnapshot | The listeners, virtual hosts and routes in the dump, narrowed by `--route` and `--rule`. Always present; `listeners` is `[]` when nothing is left. |
+| `warnings` | string[] | Sections of the dump the parser skipped. Absent when none. |
+| `ambiguous` | AmbiguousRoute[] | With `--route`: Envoy routes whose name reads as the selected HTTPRoute and at least one other, or whose name names it but has no reading (`unresolved`). They are not in `snapshot` as matches. Absent without `--route` or when none. |
+
+### ProxySource
+
+Live, `gateway`, `pod` and `capturedAt` are set. With `--file`, `file` is set, and `gateway` only when `--gateway` named it.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `gateway` | Ref | The Gateway, with `group: gateway.networking.k8s.io`. |
+| `pod` | Ref | The proxy Pod the dump was read from, `kind: Pod`. Its `group` is absent, since the core group's empty value is omitted in these refs. Live only. |
+| `capturedAt` | string | RFC3339 UTC time of the capture. Live only. |
+| `file` | string | The path as given to `--file`. |
+
+### AmbiguousRoute
+
+A route name can repeat across route configs, so `routeConfig` and `name` together identify an entry.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `routeConfig` | string | Name of the Envoy route config that holds the route. |
+| `name` | string | Name of the Envoy route. |
+| `candidates` | RouteOrigin[] | Every HTTPRoute, rule and match the name alone could read as, whether or not that HTTPRoute exists in the cluster, each with `route` (Ref), `ruleIndex` and `matchIndex` (`-1` when unknown) and `ruleName` when the rule has one. |
+| `narrowedByKnown` | boolean | True when only the HTTPRoutes in the cluster narrowed the candidates to one. Absent otherwise. |
+| `unresolved` | boolean | True when the route's name has no reading, so it has no origin; `candidates` is `[]`. Absent otherwise. |
+
+### EnvoySnapshot
+
+`snapshot` is the model of [xdsview](https://github.com/DuncanDoyle/xdsview) (`pkg/envoy/model`, `EnvoySnapshot`) as xdsview writes it, with camelCase names. This page does not repeat its fields. The ones to know:
+
+- `listeners[].state` and `status` carry the listener's active, warming, draining or rejected state and the last error.
+- `listeners[].filterChains[].hcm.httpFilters` lists the HTTP filters in order, and `hcm.routeConfig.virtualHosts[].routes[]` the routes.
+- Each route has `origin` (the HTTPRoute, rule and match it came from, with a `certainty` of `exact`, `inferred` or `ambiguous`), `policies` and `effectiveChain`.
+- `effectiveChain` is attached to each route inside its own filter chain, never keyed by route name, so a route shared by two filter chains has two chains. Each `filters[]` entry has `runs`, `state` (`on`, `off`, `enabled`, `disabled` or `unknown`), `level`, `request` and `response` (`yes`, `no` or `unknown`) and `contributions` (the extension or policy, with `ref` and `field`).
+- `typedConfig`, `typedPerFilterConfig` and `metadata` are the dump's own config. Envoy redacts only fields it knows are sensitive, so check the output before you share it (see `proxy dump` in the README).
+
+kgwctl changes two things in the model. First, a route whose origin xdsview resolved only by using the cluster's HTTPRoutes to break a tie appears in `snapshot` with `origin.certainty: "ambiguous"` and `origin.narrowedByKnown: true`. With `--route`, it is not a match: it is left out of `snapshot` and listed in `ambiguous` with `narrowedByKnown: true`. Without `--route`, `ambiguous` is absent and the route appears only in `snapshot`. kgwctl never treats a tie broken that way as a match, because Envoy can still serve a deleted HTTPRoute's route. When the cluster's HTTPRoutes leave two or more readings, the `snapshot` origin lists those, while `ambiguous` lists every reading of the name. Second, an empty `listeners` prints as `[]` instead of null. Everything else in `snapshot` is xdsview's model unchanged.
+
+A breaking change to xdsview's `model` (a renamed or removed field, or a changed meaning) bumps `schemaVersion`, as it does for kgwctl's own fields.

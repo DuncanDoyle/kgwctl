@@ -1,6 +1,6 @@
 # kgwctl — Roadmap
 
-**Last updated:** 2026-11-20
+**Last updated:** 2026-11-21
 **Program:** [kgateway-tooling `program.md`](https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md) (local checkout: `../kgateway-tooling-claude`)
 
 ## Goal
@@ -38,18 +38,19 @@ A support engineer's first command on a cluster they troubleshoot: what is wrong
 - Next step after the Phase 2 MVP (user, 2026-11-09): `-o agent`, an output for AI agents (Codex, Claude, Snellius AI-assisted diagnosis). Per finding: what the code means, the evidence objects, the suggested fix; plus what was not checked or is pending. Cluster text is marked as untrusted data; never Secret material. Phase 2 fixes the finding schema so this format adds no new data. Aim for one finding schema with the Snellius MCP server (a new program edge, Snellius as provider).
 
 ### Phase 3 — Data plane
-**Status:** Not started
+**Status:** Complete 2026-11-21 — `docs/phases/phase-3/phase-3-complete.md`
 **Docs:** `docs/phases/phase-3/`
-**Waits on:** none — E1 delivered (xdsview `v0.3.0`, formerly krp)
+**Waits on:** none — E1 and E11 delivered (xdsview `v0.4.3`)
 
 - `proxy routes`: the Envoy listeners, filter chains, routes and HTTP filters for a Gateway, optionally narrowed to one HTTPRoute and rule.
 - Sources: port-forward to the proxy admin port, or a config dump file.
-- Output: tree view (from krp's renderer or an equivalent), `-o json`.
+- Output: tree view (xdsview `render.Text`), `-o json|yaml` (`ProxyRoutes` envelope).
+- `proxy dump`: one replica's raw config dump, for tickets and `--file`.
 
 ### Phase 4 — Support bundle
 **Status:** Not started
 **Docs:** `docs/phases/phase-4/`
-**Waits on:** Phase 3 (proxy admin access through krp `source`)
+**Waits on:** none — Phase 3 delivered proxy access (`internal/proxydump` `Fetch`/`FetchGateway`: pod identity, per-capture errors, deadline; D-021)
 
 One command that collects what support asks for, so nobody hand-collects it (D-010).
 - Gateway API and kgateway resources, Helm values, controller and proxy logs (including previous containers), proxy config dumps and stats, controller snapshots and metrics from every replica, `version` and `check` output.
@@ -83,6 +84,7 @@ One command that collects what support asks for, so nobody hand-collects it (D-0
 - Libraries it depends on are license-clean and vendor-neutral (program edge E6).
 
 ## Deferred / out of roadmap
+- `kgwctl mcp` and traffic debugging: downstream builds on `pkg/cli` (D-023), not this repo.
 - `proxy diff` (intended vs accepted config) — waits for krp Phase 6; add as a phase when it lands.
 - Thin-client mode against the kgateway-ui API — only useful once the UI has per-user auth (its Phase 10).
 - Interactive TUI — krp's TUI covers this for now.

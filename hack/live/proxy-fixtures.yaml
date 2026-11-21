@@ -1,0 +1,209 @@
+# Proxy live-check fixtures (`hack/live-check.sh proxy`), in namespaces "kgwctl-proxy" and "proxy":
+#   gateway "proxy", HTTPRoute "orders" with three TrafficPolicies (transformation, ext_authz, local rate limit),
+#   HTTPRoute "public" whose TrafficPolicy disables ext_authz, and HTTPRoute proxy/orders-kgwctl, whose
+#   route names collide with kgwctl-proxy/orders (both encode "httproute-orders-kgwctl-proxy-").
+# Controlled inputs only: no TLS, no Secrets, and ext_authz names a dummy Service with no Pods.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kgwctl-proxy
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: proxy
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: proxy
+  namespace: kgwctl-proxy
+spec:
+  gatewayClassName: kgateway
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 8080
+      allowedRoutes:
+        namespaces:
+          from: All
+---
+# Backends: Services without Pods are enough for the config to be translated.
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: kgwctl-proxy
+spec:
+  selector:
+    app: backend
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: authz
+  namespace: kgwctl-proxy
+spec:
+  selector:
+    app: authz
+  ports:
+    - name: grpc
+      port: 9000
+      targetPort: 9000
+      appProtocol: kubernetes.io/h2c
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: proxy
+spec:
+  selector:
+    app: backend
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: GatewayExtension
+metadata:
+  name: authz
+  namespace: kgwctl-proxy
+spec:
+  extAuth:
+    grpcService:
+      backendRef:
+        name: authz
+        port: 9000
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: orders
+  namespace: kgwctl-proxy
+spec:
+  parentRefs:
+    - name: proxy
+  hostnames:
+    - orders.kgwctl.example
+  rules:
+    - backendRefs:
+        - name: backend
+          port: 8080
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: orders-transformation
+  namespace: kgwctl-proxy
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: orders
+  transformation:
+    request:
+      set:
+        - name: x-kgwctl-route
+          value: orders
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: orders-extauth
+  namespace: kgwctl-proxy
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: orders
+  extAuth:
+    extensionRef:
+      name: authz
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: orders-ratelimit
+  namespace: kgwctl-proxy
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: orders
+  rateLimit:
+    local:
+      tokenBucket:
+        maxTokens: 10
+        tokensPerFill: 10
+        fillInterval: 1s
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: public
+  namespace: kgwctl-proxy
+spec:
+  parentRefs:
+    - name: proxy
+  hostnames:
+    - public.kgwctl.example
+  rules:
+    - backendRefs:
+        - name: backend
+          port: 8080
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: public-no-extauth
+  namespace: kgwctl-proxy
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: public
+  extAuth:
+    disable: {}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: orders-kgwctl
+  namespace: proxy
+spec:
+  parentRefs:
+    - name: proxy
+      namespace: kgwctl-proxy
+  hostnames:
+    - orders-kgwctl.proxy.example
+  rules:
+    - backendRefs:
+        - name: backend
+          port: 8080
+---
+# A least-privilege operator for the proxy check: the kgwctl-reader ClusterRole (docs/rbac.yaml)
+# plus the port-forward Role that hack/live-check.sh derives from docs/rbac.yaml.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kgwctl-proxy-operator
+  namespace: kgwctl-proxy
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kgwctl-proxy-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kgwctl-reader
+subjects:
+  - kind: ServiceAccount
+    name: kgwctl-proxy-operator
+    namespace: kgwctl-proxy

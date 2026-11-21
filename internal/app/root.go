@@ -114,25 +114,39 @@ func FlagsFrom(cmd *cobra.Command) (*Flags, error) {
 // returns the config and the namespace to use: -n, else the context's, and ""
 // for -A.
 func (f *Flags) RESTConfig() (*rest.Config, string, error) {
+	cfg, err := f.clientConfig().ClientConfig()
+	if err != nil {
+		return nil, "", fmt.Errorf("load kubeconfig: %w", err)
+	}
+	ns, err := f.ContextNamespace()
+	if err != nil {
+		return nil, "", err
+	}
+	return cfg, ns, nil
+}
+
+// ContextNamespace returns the namespace RESTConfig would, without building
+// a client config, so it needs no reachable cluster.
+func (f *Flags) ContextNamespace() (string, error) {
+	ns, _, err := f.clientConfig().Namespace()
+	if err != nil {
+		return "", fmt.Errorf("resolve namespace: %w", err)
+	}
+	if f.AllNamespaces {
+		ns = ""
+	}
+	return ns, nil
+}
+
+// clientConfig applies the standard clientcmd rules with the global flags.
+func (f *Flags) clientConfig() clientcmd.ClientConfig {
 	rules := clientcmd.NewDefaultClientConfigLoadingRules()
 	rules.ExplicitPath = f.Kubeconfig
 	overrides := &clientcmd.ConfigOverrides{CurrentContext: f.ContextName}
 	if f.Namespace != "" {
 		overrides.Context.Namespace = f.Namespace
 	}
-	cc := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, overrides)
-	cfg, err := cc.ClientConfig()
-	if err != nil {
-		return nil, "", fmt.Errorf("load kubeconfig: %w", err)
-	}
-	ns, _, err := cc.Namespace()
-	if err != nil {
-		return nil, "", fmt.Errorf("resolve namespace: %w", err)
-	}
-	if f.AllNamespaces {
-		ns = ""
-	}
-	return cfg, ns, nil
+	return clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, overrides)
 }
 
 // Context returns parent bounded by --request-timeout (design §4.4); 0 means
@@ -145,10 +159,10 @@ func (f *Flags) Context(parent context.Context) (context.Context, context.Cancel
 }
 
 // NewRoot builds the root command with the global flags, get, describe, check,
-// version, completion and cfg.Commands.
-func NewRoot(cfg Config) *cobra.Command { return newRoot(cfg, checkTestHooks{}) }
+// proxy, version, completion and cfg.Commands.
+func NewRoot(cfg Config) *cobra.Command { return newRoot(cfg, checkTestHooks{}, proxyTestHooks{}) }
 
-func newRoot(cfg Config, hooks checkTestHooks) *cobra.Command {
+func newRoot(cfg Config, hooks checkTestHooks, proxyHooks proxyTestHooks) *cobra.Command {
 	if cfg.Name == "" {
 		cfg.Name = "kgwctl"
 	}
@@ -177,7 +191,7 @@ func newRoot(cfg Config, hooks checkTestHooks) *cobra.Command {
 	root.SetErr(cfg.Err)
 	(&Flags{}).Bind(root.PersistentFlags())
 	root.AddCommand(newGetCmd(cfg.Registry, cfg.Now), newDescribeCmd(cfg.Registry, cfg.Now), newVersionCmd(cfg.Registry, cfg.Build),
-		newCheckCmd(cfg.Registry, cfg.Build, cfg.Now, hooks))
+		newCheckCmd(cfg.Registry, cfg.Build, cfg.Now, hooks), newProxyCmd(cfg.Now, proxyHooks))
 	root.AddCommand(cfg.Commands...)
 	return root
 }
