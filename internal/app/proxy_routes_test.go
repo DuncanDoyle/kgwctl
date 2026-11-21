@@ -3,6 +3,8 @@ package app_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -171,7 +173,7 @@ func TestProxyRoutesUsage(t *testing.T) {
 		{name: "bad-route", args: []string{"--file", file, "--route", "a/b/c"}, want: "--route"},
 		{name: "bad-max-size", args: []string{"--file", file, "--max-size", "lots"}, want: "--max-size"},
 		{name: "zero-max-size", args: []string{"--file", file, "--max-size", "0"}, want: "--max-size"},
-		{name: "output", args: []string{"--file", file, "-o", "json"}, want: "-o"},
+		{name: "output", args: []string{"--file", file, "-o", "xml"}, want: "--output"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := runRoutes(t, kc, app.ProxyTestHooks{}, append([]string{"proxy", "routes"}, tc.args...)...)
@@ -277,5 +279,115 @@ func TestProxyRoutesNoReplica(t *testing.T) {
 	r := runRoutes(t, env.Kubeconfig, app.ProxyTestHooks{}, "proxy", "routes", "idle", "-n", "kgateway-system")
 	if r.code != 2 || r.stdout != "" || !strings.Contains(r.stderr, "--pod") {
 		t.Fatalf("exit %d, stdout %q, stderr %q; want 2, empty and --pod", r.code, r.stdout, r.stderr)
+	}
+}
+
+// jsonCases are the -o json goldens: the tree's dumps, narrowed and not.
+var jsonCases = []struct {
+	name string
+	args []string
+}{
+	{name: "demo", args: []string{"--file", dumpsDir + "demo.json", "--gateway", "team-a/team-a"}},
+	{name: "policies", args: []string{"--file", dumpsDir + "policies.json", "--gateway", "kgwctl-proxy/proxy"}},
+	{name: "policies-orders", args: []string{"--file", dumpsDir + "policies.json", "--route", "kgwctl-proxy/orders"}},
+	{name: "collide-meta-orders", args: []string{"--file", dumpsDir + "collide-meta.json", "--gateway", "kgwctl-proxy/proxy", "--route", "kgwctl-proxy/orders"}},
+}
+
+// TestProxyRoutesJSONGolden: the envelope per golden dump, from a file with no cluster reachable.
+func TestProxyRoutesJSONGolden(t *testing.T) {
+	kc := unreachableKubeconfig(t, "default")
+	for _, tc := range jsonCases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := runRoutes(t, kc, app.ProxyTestHooks{}, append([]string{"proxy", "routes", "-o", "json"}, tc.args...)...)
+			if r.code != 0 || r.stderr != "" {
+				t.Fatalf("exit %d, stderr %q; want 0 and empty", r.code, r.stderr)
+			}
+			golden(t, "proxy-routes", "json-"+tc.name, r.stdout)
+		})
+	}
+}
+
+// TestProxyRoutesJSONOneDocument: stdout holds exactly one JSON document.
+func TestProxyRoutesJSONOneDocument(t *testing.T) {
+	kc := unreachableKubeconfig(t, "default")
+	for _, tc := range jsonCases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := runRoutes(t, kc, app.ProxyTestHooks{}, append([]string{"proxy", "routes", "-o", "json"}, tc.args...)...)
+			dec := json.NewDecoder(strings.NewReader(r.stdout))
+			var doc struct {
+				SchemaVersion string
+				Kind          string
+				Item          struct{ Source, Snapshot map[string]any }
+			}
+			if err := dec.Decode(&doc); err != nil {
+				t.Fatalf("decode: %v\n%s", err, r.stdout)
+			}
+			if _, err := dec.Token(); err != io.EOF {
+				t.Fatalf("stdout holds more than one document (next token err %v)", err)
+			}
+			if doc.SchemaVersion != "kgwctl.kgateway.dev/v1alpha1" || doc.Kind != "ProxyRoutes" {
+				t.Errorf("envelope = %q %q", doc.SchemaVersion, doc.Kind)
+			}
+			if r.stderr != "" || strings.HasSuffix(r.stdout, "\n\n") {
+				t.Errorf("stderr %q, stdout %q: want no stderr and one trailing newline", r.stderr, r.stdout)
+			}
+		})
+	}
+}
+
+// TestProxyRoutesYAMLGolden: the same envelope as YAML.
+func TestProxyRoutesYAMLGolden(t *testing.T) {
+	r := runRoutes(t, unreachableKubeconfig(t, "default"), app.ProxyTestHooks{}, "proxy", "routes", "-o", "yaml",
+		"--file", dumpsDir+"policies.json", "--route", "kgwctl-proxy/orders")
+	if r.code != 0 || r.stderr != "" {
+		t.Fatalf("exit %d, stderr %q; want 0 and empty", r.code, r.stderr)
+	}
+	golden(t, "proxy-routes", "yaml-policies-orders", r.stdout)
+}
+
+// TestProxyRoutesLiveJSON: a live source names the Gateway, Pod and capture
+// time, and a route only the cluster's HTTPRoutes narrowed keeps an ambiguous
+// origin marked narrowedByKnown, in the snapshot and under --route in ambiguous.
+func TestProxyRoutesLiveJSON(t *testing.T) {
+	env := newEnv(t, testenv.Options{Fixtures: []string{routesFixture}})
+	for _, tc := range []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{name: "live-policies", want: []string{`"certainty": "ambiguous"`, `"narrowedByKnown": true`}},
+		{name: "live-policies-orders", args: []string{"--route", "orders"}, want: []string{`"ambiguous": [`}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := servePolicies(t, make(chan string, 4))
+			args := append([]string{"proxy", "routes", "proxy", "-n", "kgwctl-proxy", "-o", "json"}, tc.args...)
+			r := runRoutes(t, env.Kubeconfig, app.ProxyTestHooks{Dialer: d}, args...)
+			if r.code != 0 || r.stderr != "" {
+				t.Fatalf("exit %d, stderr %q; want 0 and empty", r.code, r.stderr)
+			}
+			for _, w := range tc.want {
+				if !strings.Contains(r.stdout, w) {
+					t.Errorf("stdout lacks %s", w)
+				}
+			}
+			golden(t, "proxy-routes", "json-"+tc.name, r.stdout)
+		})
+	}
+}
+
+// TestProxyRoutesRouteLoadDeadline: a deadline hit while loading the
+// HTTPRoutes, after the dump was read, says so.
+func TestProxyRoutesRouteLoadDeadline(t *testing.T) {
+	env := newEnv(t, testenv.Options{Fixtures: []string{routesFixture}})
+	held := make(chan struct{})
+	t.Cleanup(func() { close(held) })
+	env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindAcquire, Resource: "httproutes.gateway.networking.k8s.io"}, testenv.Action{Until: held})
+	d := servePolicies(t, make(chan string, 4))
+	r := runRoutes(t, env.Kubeconfig, app.ProxyTestHooks{Dialer: d}, "proxy", "routes", "proxy", "-n", "kgwctl-proxy", "--request-timeout", "3s")
+	if r.code != 2 || r.stdout != "" {
+		t.Fatalf("exit %d, stdout %q; want 2 and empty; stderr %q", r.code, r.stdout, r.stderr)
+	}
+	if !strings.Contains(r.stderr, "HTTPRoutes") || !strings.Contains(r.stderr, "--request-timeout") || strings.Contains(r.stderr, "could not read the config dump") {
+		t.Errorf("stderr = %q, want the HTTPRoutes load and --request-timeout named", r.stderr)
 	}
 }

@@ -1,0 +1,79 @@
+{
+  "schemaVersion": "kgwctl.kgateway.dev/v1alpha1",
+  "kind": "ProxyRoutes",
+  "item": {
+    "source": {
+      "gateway": {
+        "group": "gateway.networking.k8s.io",
+        "kind": "Gateway",
+        "namespace": "kgwctl-proxy",
+        "name": "proxy"
+      },
+      "pod": {
+        "kind": "Pod",
+        "namespace": "kgwctl-proxy",
+        "name": "proxy-7d9f8c6b5-k2x"
+      },
+      "capturedAt": "2026-11-21T10:00:00Z"
+    },
+    "snapshot": {
+      "listeners": null
+    },
+    "ambiguous": [
+      {
+        "routeConfig": "listener~8080",
+        "name": "listener~8080~orders-kgwctl_proxy_example-route-0-httproute-orders-kgwctl-proxy-0-0-matcher-0",
+        "candidates": [
+          {
+            "route": {
+              "group": "gateway.networking.k8s.io",
+              "kind": "HTTPRoute",
+              "namespace": "kgwctl-proxy",
+              "name": "orders"
+            },
+            "ruleIndex": 0,
+            "matchIndex": 0
+          },
+          {
+            "route": {
+              "group": "gateway.networking.k8s.io",
+              "kind": "HTTPRoute",
+              "namespace": "proxy",
+              "name": "orders-kgwctl"
+            },
+            "ruleIndex": 0,
+            "matchIndex": 0
+          }
+        ],
+        "narrowedByKnown": true
+      },
+      {
+        "routeConfig": "listener~8080",
+        "name": "listener~8080~orders_kgwctl_example-route-0-httproute-orders-kgwctl-proxy-0-0-matcher-0",
+        "candidates": [
+          {
+            "route": {
+              "group": "gateway.networking.k8s.io",
+              "kind": "HTTPRoute",
+              "namespace": "kgwctl-proxy",
+              "name": "orders"
+            },
+            "ruleIndex": 0,
+            "matchIndex": 0
+          },
+          {
+            "route": {
+              "group": "gateway.networking.k8s.io",
+              "kind": "HTTPRoute",
+              "namespace": "proxy",
+              "name": "orders-kgwctl"
+            },
+            "ruleIndex": 0,
+            "matchIndex": 0
+          }
+        ],
+        "narrowedByKnown": true
+      }
+    ]
+  }
+}

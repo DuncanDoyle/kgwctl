@@ -10,6 +10,7 @@ import (
 	"io"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/DuncanDoyle/xdsview/pkg/envoy/chain"
 	"github.com/DuncanDoyle/xdsview/pkg/envoy/filter"
@@ -49,6 +50,21 @@ type View struct {
 	Warnings  []string             `json:"warnings,omitempty"`  // sections the parser skipped
 	Ambiguous []AmbiguousRoute     `json:"ambiguous,omitempty"` // set only with a Selection
 	Selection Selection            `json:"-"`
+}
+
+// Source says where a config dump came from: a live replica (Gateway, Pod and
+// CapturedAt) or a file (File, and Gateway when --gateway named it).
+type Source struct {
+	Gateway    *model.Ref `json:"gateway,omitempty"`
+	Pod        *model.Ref `json:"pod,omitempty"`
+	CapturedAt *time.Time `json:"capturedAt,omitempty"`
+	File       string     `json:"file,omitempty"`
+}
+
+// Item is the `item` of the ProxyRoutes envelope: the source and the view.
+type Item struct {
+	Source Source `json:"source"`
+	View
 }
 
 // HTTPRouteRef returns the ref xdsview uses for an HTTPRoute, for Build's known list.

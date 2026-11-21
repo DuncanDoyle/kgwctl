@@ -1,0 +1,42 @@
+item:
+  ambiguous:
+  - candidates:
+    - matchIndex: 0
+      route:
+        group: gateway.networking.k8s.io
+        kind: HTTPRoute
+        name: orders
+        namespace: kgwctl-proxy
+      ruleIndex: 0
+    - matchIndex: 0
+      route:
+        group: gateway.networking.k8s.io
+        kind: HTTPRoute
+        name: orders-kgwctl
+        namespace: proxy
+      ruleIndex: 0
+    name: listener~8080~orders-kgwctl_proxy_example-route-0-httproute-orders-kgwctl-proxy-0-0-matcher-0
+    routeConfig: listener~8080
+  - candidates:
+    - matchIndex: 0
+      route:
+        group: gateway.networking.k8s.io
+        kind: HTTPRoute
+        name: orders
+        namespace: kgwctl-proxy
+      ruleIndex: 0
+    - matchIndex: 0
+      route:
+        group: gateway.networking.k8s.io
+        kind: HTTPRoute
+        name: orders-kgwctl
+        namespace: proxy
+      ruleIndex: 0
+    name: listener~8080~orders_kgwctl_example-route-0-httproute-orders-kgwctl-proxy-0-0-matcher-0
+    routeConfig: listener~8080
+  snapshot:
+    listeners: null
+  source:
+    file: ../../testdata/dumps/policies.json
+kind: ProxyRoutes
+schemaVersion: kgwctl.kgateway.dev/v1alpha1

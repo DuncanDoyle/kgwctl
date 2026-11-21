@@ -19,6 +19,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/DuncanDoyle/kgwctl/internal/load"
+	"github.com/DuncanDoyle/kgwctl/internal/print"
 	"github.com/DuncanDoyle/kgwctl/internal/proxydump"
 	"github.com/DuncanDoyle/kgwctl/internal/proxyview"
 )
@@ -31,6 +32,7 @@ type routesOptions struct {
 	file, gateway, pod, route, maxSize string
 	rule                               int
 	response                           bool
+	output                             string
 }
 
 // newProxyRoutesCmd builds proxy routes (phase 3 design §3.1).
@@ -68,6 +70,7 @@ func newProxyRoutesCmd(reg *extension.Registry, now func() time.Time, hooks prox
 	fs.StringVar(&o.route, "route", "", "Show only the routes of HTTPRoute `<ns>/<name>`; <name> alone uses -n or the context's namespace")
 	fs.IntVar(&o.rule, "rule", 0, "With --route, show only this rule `index`")
 	fs.BoolVar(&o.response, "response", false, "Also show each route's response order")
+	fs.StringVarP(&o.output, "output", "o", print.FormatText, "Output format: text, json or yaml")
 	fs.StringVar(&o.maxSize, "max-size", defaultMaxSize, "Largest config dump to parse, as a `quantity` such as 64Mi")
 	return cmd
 }
@@ -85,12 +88,15 @@ type routesRequest struct {
 	sel      proxyview.Selection
 	routeNS  bool // --route named its namespace
 	response bool
+	output   string
 }
 
 // parseRoutes checks the flag combinations before any I/O.
 func parseRoutes(cmd *cobra.Command, args []string, o routesOptions) (routesRequest, error) {
-	req := routesRequest{live: o.file == "", response: o.response}
+	req := routesRequest{live: o.file == "", response: o.response, output: o.output}
 	switch {
+	case o.output != print.FormatText && o.output != print.FormatJSON && o.output != print.FormatYAML:
+		return req, usageError(cmd, "invalid --output %q: want text, json or yaml", o.output)
 	case req.live && len(args) == 0:
 		return req, usageError(cmd, "proxy routes needs a Gateway name, or --file <path>")
 	case !req.live && len(args) == 1:
@@ -194,7 +200,11 @@ func routesFromFile(cmd *cobra.Command, f *Flags, req routesRequest, path string
 	if req.gateway != nil {
 		header += " · Gateway " + req.gateway.String()
 	}
-	return printRoutes(cmd, body, path, req.gateway, nil, req, header)
+	src := proxyview.Source{File: path}
+	if req.gateway != nil {
+		src.Gateway = gatewayRef(*req.gateway)
+	}
+	return printRoutes(cmd, body, path, req.gateway, nil, req, header, src)
 }
 
 func routesLive(cmd *cobra.Command, f *Flags, reg *extension.Registry, now func() time.Time, hooks proxyTestHooks, req routesRequest, name, pod string) error {
@@ -255,6 +265,8 @@ func routesLive(cmd *cobra.Command, f *Flags, reg *extension.Registry, now func(
 
 	known, err := knownHTTPRoutes(ctx, c, reg, cmd.ErrOrStderr())
 	switch {
+	case err != nil && errors.Is(context.Cause(ctx), context.DeadlineExceeded):
+		return &ExitError{Code: 2, Err: fmt.Errorf("could not finish loading the HTTPRoutes of the cluster within --%s %v (the config dump of Pod %s was read)", flagRequestTimeout, f.RequestTimeout, r.target)}
 	case err != nil && ctx.Err() != nil:
 		return dumpError(ctx, f, "proxy routes", gw, dumpResult{stage: stageFetch, target: r.target, err: err})
 	case err != nil:
@@ -262,7 +274,9 @@ func routesLive(cmd *cobra.Command, f *Flags, reg *extension.Registry, now func(
 		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not list HTTPRoutes: %v\n", err)
 	}
 	header := fmt.Sprintf("Gateway %s · pod %s · %s", gw, r.target, r.capture.CapturedAt.UTC().Format(time.RFC3339))
-	return printRoutes(cmd, r.body, "Pod "+r.target.String(), &gw, known, req, header)
+	at := r.capture.CapturedAt.UTC()
+	src := proxyview.Source{Gateway: gatewayRef(gw), Pod: &model.Ref{Kind: "Pod", Namespace: r.target.Namespace, Name: r.target.Name}, CapturedAt: &at}
+	return printRoutes(cmd, r.body, "Pod "+r.target.String(), &gw, known, req, header, src)
 }
 
 // tooLarge reports a dump over --max-size (design §4.1).
@@ -300,11 +314,23 @@ func knownHTTPRoutes(ctx context.Context, c load.Clients, reg *extension.Registr
 	return known, nil
 }
 
-// printRoutes builds the view from body and prints the tree.
-func printRoutes(cmd *cobra.Command, body []byte, source string, gw *types.NamespacedName, known []model.Ref, req routesRequest, header string) error {
+// gatewayRef is the envelope's reference to a Gateway.
+func gatewayRef(n types.NamespacedName) *model.Ref {
+	return &model.Ref{Group: "gateway.networking.k8s.io", Kind: "Gateway", Namespace: n.Namespace, Name: n.Name}
+}
+
+// printRoutes builds the view from body and prints the tree, or the envelope
+// for -o json|yaml, with src as its source.
+func printRoutes(cmd *cobra.Command, body []byte, source string, gw *types.NamespacedName, known []model.Ref, req routesRequest, header string, src proxyview.Source) error {
 	v, err := proxyview.Build(body, gw, known, req.sel)
 	if err != nil {
 		return &ExitError{Code: 2, Err: fmt.Errorf("parse config dump of %s: %w", source, err)}
+	}
+	if req.output != print.FormatText {
+		if err := print.Envelope(cmd.OutOrStdout(), req.output, "ProxyRoutes", proxyview.Item{Source: src, View: v}); err != nil {
+			return &ExitError{Code: 2, Err: fmt.Errorf("write routes: %w", err)}
+		}
+		return nil
 	}
 	if err := proxyview.Text(cmd.OutOrStdout(), v, render.Options{Header: header, ResponseOrder: req.response}); err != nil {
 		return &ExitError{Code: 2, Err: fmt.Errorf("write routes: %w", err)}

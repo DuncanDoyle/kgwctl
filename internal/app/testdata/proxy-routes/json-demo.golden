@@ -1,0 +1,457 @@
+{
+  "schemaVersion": "kgwctl.kgateway.dev/v1alpha1",
+  "kind": "ProxyRoutes",
+  "item": {
+    "source": {
+      "gateway": {
+        "group": "gateway.networking.k8s.io",
+        "kind": "Gateway",
+        "namespace": "team-a",
+        "name": "team-a"
+      },
+      "file": "../../testdata/dumps/demo.json"
+    },
+    "snapshot": {
+      "listeners": [
+        {
+          "name": "listener~80",
+          "address": ":::80",
+          "filterChains": [
+            {
+              "name": "listener~80",
+              "hcm": {
+                "routeConfigName": "listener~80",
+                "httpFilters": [
+                  {
+                    "name": "envoy.filters.http.router",
+                    "type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router",
+                    "typedConfig": {
+                      "@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router"
+                    },
+                    "origin": {
+                      "certainty": "inferred",
+                      "kind": "router"
+                    }
+                  }
+                ],
+                "routeConfig": {
+                  "name": "listener~80",
+                  "virtualHosts": [
+                    {
+                      "name": "listener~80~admin_team-a_example",
+                      "domains": [
+                        "admin.team-a.example"
+                      ],
+                      "routes": [
+                        {
+                          "name": "listener~80~admin_team-a_example-route-0-httproute-internal-admin-team-c-0-0-matcher-0",
+                          "match": {
+                            "prefix": "/"
+                          },
+                          "cluster": "blackhole-cluster",
+                          "origin": {
+                            "certainty": "ambiguous",
+                            "candidates": [
+                              {
+                                "route": {
+                                  "group": "gateway.networking.k8s.io",
+                                  "kind": "HTTPRoute",
+                                  "namespace": "admin-team-c",
+                                  "name": "internal"
+                                },
+                                "ruleIndex": 0,
+                                "matchIndex": 0
+                              },
+                              {
+                                "route": {
+                                  "group": "gateway.networking.k8s.io",
+                                  "kind": "HTTPRoute",
+                                  "namespace": "team-c",
+                                  "name": "internal-admin"
+                                },
+                                "ruleIndex": 0,
+                                "matchIndex": 0
+                              },
+                              {
+                                "route": {
+                                  "group": "gateway.networking.k8s.io",
+                                  "kind": "HTTPRoute",
+                                  "namespace": "c",
+                                  "name": "internal-admin-team"
+                                },
+                                "ruleIndex": 0,
+                                "matchIndex": 0
+                              }
+                            ]
+                          },
+                          "effectiveChain": {
+                            "filters": [
+                              {
+                                "name": "envoy.filters.http.router",
+                                "type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router",
+                                "runs": true,
+                                "state": "on",
+                                "request": "yes",
+                                "response": "no"
+                              }
+                            ]
+                          }
+                        }
+                      ],
+                      "origin": {
+                        "certainty": "inferred",
+                        "listener": {
+                          "certainty": "inferred",
+                          "gateway": {
+                            "group": "gateway.networking.k8s.io",
+                            "kind": "Gateway",
+                            "namespace": "team-a",
+                            "name": "team-a"
+                          },
+                          "port": 80
+                        },
+                        "hostname": "admin.team-a.example"
+                      }
+                    },
+                    {
+                      "name": "listener~80~broken_team-a_example",
+                      "domains": [
+                        "broken.team-a.example"
+                      ],
+                      "routes": [
+                        {
+                          "name": "listener~80~broken_team-a_example-route-0-httproute-broken-team-a-0-0-matcher-0",
+                          "match": {
+                            "prefix": "/"
+                          },
+                          "cluster": "blackhole-cluster",
+                          "origin": {
+                            "certainty": "ambiguous",
+                            "candidates": [
+                              {
+                                "route": {
+                                  "group": "gateway.networking.k8s.io",
+                                  "kind": "HTTPRoute",
+                                  "namespace": "team-a",
+                                  "name": "broken"
+                                },
+                                "ruleIndex": 0,
+                                "matchIndex": 0
+                              },
+                              {
+                                "route": {
+                                  "group": "gateway.networking.k8s.io",
+                                  "kind": "HTTPRoute",
+                                  "namespace": "a",
+                                  "name": "broken-team"
+                                },
+                                "ruleIndex": 0,
+                                "matchIndex": 0
+                              }
+                            ]
+                          },
+                          "effectiveChain": {
+                            "filters": [
+                              {
+                                "name": "envoy.filters.http.router",
+                                "type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router",
+                                "runs": true,
+                                "state": "on",
+                                "request": "yes",
+                                "response": "no"
+                              }
+                            ]
+                          }
+                        }
+                      ],
+                      "origin": {
+                        "certainty": "inferred",
+                        "listener": {
+                          "certainty": "inferred",
+                          "gateway": {
+                            "group": "gateway.networking.k8s.io",
+                            "kind": "Gateway",
+                            "namespace": "team-a",
+                            "name": "team-a"
+                          },
+                          "port": 80
+                        },
+                        "hostname": "broken.team-a.example"
+                      }
+                    },
+                    {
+                      "name": "listener~80~orders_team-a_example",
+                      "domains": [
+                        "orders.team-a.example"
+                      ],
+                      "routes": [
+                        {
+                          "name": "listener~80~orders_team-a_example-route-0-httproute-orders-team-a-0-0-matcher-0",
+                          "match": {
+                            "pathSeparatedPrefix": "/pay"
+                          },
+                          "cluster": "kube_team-c_payments_80",
+                          "origin": {
+                            "certainty": "ambiguous",
+                            "candidates": [
+                              {
+                                "route": {
+                                  "group": "gateway.networking.k8s.io",
+                                  "kind": "HTTPRoute",
+                                  "namespace": "team-a",
+                                  "name": "orders"
+                                },
+                                "ruleIndex": 0,
+                                "matchIndex": 0
+                              },
+                              {
+                                "route": {
+                                  "group": "gateway.networking.k8s.io",
+                                  "kind": "HTTPRoute",
+                                  "namespace": "a",
+                                  "name": "orders-team"
+                                },
+                                "ruleIndex": 0,
+                                "matchIndex": 0
+                              }
+                            ]
+                          },
+                          "effectiveChain": {
+                            "filters": [
+                              {
+                                "name": "envoy.filters.http.router",
+                                "type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router",
+                                "runs": true,
+                                "state": "on",
+                                "request": "yes",
+                                "response": "no"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "name": "listener~80~orders_team-a_example-route-1-httproute-orders-team-a-1-0-matcher-0",
+                          "match": {
+                            "prefix": "/"
+                          },
+                          "cluster": "kube_team-a_web_80",
+                          "origin": {
+                            "certainty": "ambiguous",
+                            "candidates": [
+                              {
+                                "route": {
+                                  "group": "gateway.networking.k8s.io",
+                                  "kind": "HTTPRoute",
+                                  "namespace": "team-a",
+                                  "name": "orders"
+                                },
+                                "ruleIndex": 1,
+                                "matchIndex": 0
+                              },
+                              {
+                                "route": {
+                                  "group": "gateway.networking.k8s.io",
+                                  "kind": "HTTPRoute",
+                                  "namespace": "a",
+                                  "name": "orders-team"
+                                },
+                                "ruleIndex": 1,
+                                "matchIndex": 0
+                              }
+                            ]
+                          },
+                          "effectiveChain": {
+                            "filters": [
+                              {
+                                "name": "envoy.filters.http.router",
+                                "type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router",
+                                "runs": true,
+                                "state": "on",
+                                "request": "yes",
+                                "response": "no"
+                              }
+                            ]
+                          }
+                        }
+                      ],
+                      "origin": {
+                        "certainty": "inferred",
+                        "listener": {
+                          "certainty": "inferred",
+                          "gateway": {
+                            "group": "gateway.networking.k8s.io",
+                            "kind": "Gateway",
+                            "namespace": "team-a",
+                            "name": "team-a"
+                          },
+                          "port": 80
+                        },
+                        "hostname": "orders.team-a.example"
+                      }
+                    },
+                    {
+                      "name": "listener~80~partner_team-a_example",
+                      "domains": [
+                        "partner.team-a.example"
+                      ],
+                      "routes": [
+                        {
+                          "name": "listener~80~partner_team-a_example-route-0-httproute-partner-team-b-0-0-matcher-0",
+                          "match": {
+                            "prefix": "/"
+                          },
+                          "cluster": "backend_team-b_partner-api_0",
+                          "origin": {
+                            "certainty": "ambiguous",
+                            "candidates": [
+                              {
+                                "route": {
+                                  "group": "gateway.networking.k8s.io",
+                                  "kind": "HTTPRoute",
+                                  "namespace": "team-b",
+                                  "name": "partner"
+                                },
+                                "ruleIndex": 0,
+                                "matchIndex": 0
+                              },
+                              {
+                                "route": {
+                                  "group": "gateway.networking.k8s.io",
+                                  "kind": "HTTPRoute",
+                                  "namespace": "b",
+                                  "name": "partner-team"
+                                },
+                                "ruleIndex": 0,
+                                "matchIndex": 0
+                              }
+                            ]
+                          },
+                          "effectiveChain": {
+                            "filters": [
+                              {
+                                "name": "envoy.filters.http.router",
+                                "type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router",
+                                "runs": true,
+                                "state": "on",
+                                "request": "yes",
+                                "response": "no"
+                              }
+                            ]
+                          }
+                        }
+                      ],
+                      "origin": {
+                        "certainty": "inferred",
+                        "listener": {
+                          "certainty": "inferred",
+                          "gateway": {
+                            "group": "gateway.networking.k8s.io",
+                            "kind": "Gateway",
+                            "namespace": "team-a",
+                            "name": "team-a"
+                          },
+                          "port": 80
+                        },
+                        "hostname": "partner.team-a.example"
+                      }
+                    },
+                    {
+                      "name": "listener~80~shop_team-a_example",
+                      "domains": [
+                        "shop.team-a.example"
+                      ],
+                      "routes": [
+                        {
+                          "name": "listener~80~shop_team-a_example-route-0-httproute-shop-items-team-b-0-0-matcher-0",
+                          "match": {
+                            "pathSeparatedPrefix": "/shop/items"
+                          },
+                          "cluster": "kube_team-b_catalog_80",
+                          "origin": {
+                            "certainty": "ambiguous",
+                            "candidates": [
+                              {
+                                "route": {
+                                  "group": "gateway.networking.k8s.io",
+                                  "kind": "HTTPRoute",
+                                  "namespace": "items-team-b",
+                                  "name": "shop"
+                                },
+                                "ruleIndex": 0,
+                                "matchIndex": 0
+                              },
+                              {
+                                "route": {
+                                  "group": "gateway.networking.k8s.io",
+                                  "kind": "HTTPRoute",
+                                  "namespace": "team-b",
+                                  "name": "shop-items"
+                                },
+                                "ruleIndex": 0,
+                                "matchIndex": 0
+                              },
+                              {
+                                "route": {
+                                  "group": "gateway.networking.k8s.io",
+                                  "kind": "HTTPRoute",
+                                  "namespace": "b",
+                                  "name": "shop-items-team"
+                                },
+                                "ruleIndex": 0,
+                                "matchIndex": 0
+                              }
+                            ]
+                          },
+                          "effectiveChain": {
+                            "filters": [
+                              {
+                                "name": "envoy.filters.http.router",
+                                "type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router",
+                                "runs": true,
+                                "state": "on",
+                                "request": "yes",
+                                "response": "no"
+                              }
+                            ]
+                          }
+                        }
+                      ],
+                      "origin": {
+                        "certainty": "inferred",
+                        "listener": {
+                          "certainty": "inferred",
+                          "gateway": {
+                            "group": "gateway.networking.k8s.io",
+                            "kind": "Gateway",
+                            "namespace": "team-a",
+                            "name": "team-a"
+                          },
+                          "port": 80
+                        },
+                        "hostname": "shop.team-a.example"
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          ],
+          "state": {
+            "status": "active",
+            "lastUpdated": "2026-11-21T09:01:52.386Z"
+          },
+          "origin": {
+            "certainty": "inferred",
+            "gateway": {
+              "group": "gateway.networking.k8s.io",
+              "kind": "Gateway",
+              "namespace": "team-a",
+              "name": "team-a"
+            },
+            "port": 80
+          }
+        }
+      ]
+    }
+  }
+}
