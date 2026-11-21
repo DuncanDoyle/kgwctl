@@ -3,6 +3,8 @@
 #
 #   hack/live-check.sh setup               create the cluster, install kgateway and the fixtures
 #   hack/live-check.sh verify <kubeconfig> run kgwctl against it, outputs in hack/live/out/<name>/
+#   hack/live-check.sh proxy               apply the proxy fixtures, check proxy dump with and without port-forward RBAC
+#   hack/live-check.sh goldens             capture testdata/dumps/*.json; toggles the Helm value enableRouteSourceMetadata
 #
 # verify also runs `check`, with two scenarios as admin: controller down, route to a missing Service.
 # Env: KUBECONFIG_FILE (admin kubeconfig, default hack/live/out/admin.kubeconfig),
@@ -16,6 +18,7 @@ CONTEXT="kind-$CLUSTER"
 KUBECONFIG_FILE="${KUBECONFIG_FILE:-$OUT/admin.kubeconfig}"
 KGW_NS=kgateway-system
 FIX_NS=live
+PROXY_NS=kgwctl-proxy
 
 # Every cluster call names the kubeconfig file and context explicitly.
 k() { kubectl --kubeconfig "$KUBECONFIG_FILE" --context "$CONTEXT" "$@"; }
@@ -61,11 +64,14 @@ setup() {
 }
 
 # Writes a kubeconfig for the kgwctl-reader ServiceAccount; the token never reaches stdout.
-write_reader_kubeconfig() {
-  local server ca token file="$OUT/reader.kubeconfig"
+write_reader_kubeconfig() { write_sa_kubeconfig default kgwctl-reader "$OUT/reader.kubeconfig"; }
+
+# write_sa_kubeconfig <namespace> <serviceaccount> <file>: the token never reaches stdout.
+write_sa_kubeconfig() {
+  local ns="$1" sa="$2" file="$3" server ca token
   server="$(k config view --raw --minify -o jsonpath='{.clusters[0].cluster.server}')"
   ca="$(k config view --raw --minify -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')"
-  token="$(k -n default create token kgwctl-reader --duration=24h)"
+  token="$(k -n "$ns" create token "$sa" --duration=24h)"
   (
     umask 077
     cat >"$file" <<EOF
@@ -77,14 +83,14 @@ clusters:
       server: $server
       certificate-authority-data: $ca
 users:
-  - name: kgwctl-reader
+  - name: $sa
     user:
       token: $token
 contexts:
   - name: $CONTEXT
     context:
       cluster: $CONTEXT
-      user: kgwctl-reader
+      user: $sa
 current-context: $CONTEXT
 EOF
   )
@@ -298,8 +304,144 @@ verify() {
   log "verify passed; outputs in $dir"
 }
 
+build() { mkdir -p "$OUT"; (cd "$ROOT" && go build -o "$OUT/kgwctl" ./cmd/kgwctl); }
+
+# Applies the proxy fixtures and waits for Gateway "proxy" and its policies.
+proxy_fixtures() {
+  k apply -f "$ROOT/docs/rbac.yaml"
+  k apply -f "$ROOT/hack/live/proxy-fixtures.yaml"
+  k -n "$PROXY_NS" wait --for=condition=Programmed gateway/proxy --timeout=300s
+  k -n "$PROXY_NS" rollout status deployment/proxy --timeout=300s
+  k -n "$PROXY_NS" wait --for=jsonpath='{.status.ancestors[0].controllerName}'=kgateway.dev/kgateway \
+    trafficpolicy/orders-transformation trafficpolicy/orders-extauth trafficpolicy/orders-ratelimit \
+    trafficpolicy/public-no-extauth --timeout=120s
+}
+
+# proxy_dump <kubeconfig> <file> <namespace> <gateway>: stderr goes to <file>.stderr; returns kgwctl's exit code.
+proxy_dump() {
+  local code=0
+  "$OUT/kgwctl" --kubeconfig "$1" --context "$CONTEXT" proxy dump "$4" -n "$3" >"$2" 2>"$2.stderr" || code=$?
+  return "$code"
+}
+
+# proxy dump as reader plus the port-forward Role (exit 0, a ListenersConfigDump), then as reader only (exit 2).
+proxy() {
+  local dir="$OUT/proxy" op="$OUT/proxy-operator.kubeconfig" code failed=0
+  build
+  mkdir -p "$dir"
+  proxy_fixtures
+  write_reader_kubeconfig
+  write_sa_kubeconfig "$PROXY_NS" kgwctl-proxy-operator "$op"
+
+  code=0
+  proxy_dump "$op" "$dir/dump-operator.json" "$PROXY_NS" proxy || code=$?
+  log "proxy dump as kgwctl-proxy-operator: exit $code"
+  if [ "$code" -ne 0 ]; then
+    log "FAIL dump-operator.json: exit $code, want 0"
+    failed=1
+  elif ! jq -e '[.configs[]."@type" | select(endswith(".ListenersConfigDump"))] | length == 1' \
+    "$dir/dump-operator.json" >/dev/null; then
+    log "FAIL dump-operator.json is not JSON with a ListenersConfigDump"
+    failed=1
+  fi
+
+  code=0
+  proxy_dump "$OUT/reader.kubeconfig" "$dir/dump-reader.json" "$PROXY_NS" proxy || code=$?
+  log "proxy dump as kgwctl-reader: exit $code"
+  if [ "$code" -ne 2 ]; then
+    log "FAIL dump-reader.json: exit $code, want 2"
+    failed=1
+  elif ! grep -q 'pods/portforward' "$dir/dump-reader.json.stderr"; then
+    log "FAIL dump-reader.json.stderr does not name pods/portforward"
+    failed=1
+  fi
+  [ "$failed" -eq 0 ] || { log "proxy failed; outputs in $dir"; exit 1; }
+  log "proxy passed; outputs in $dir"
+}
+
+ROUTE_META=dev.kgateway.route_source
+# Golden content checks, also recorded in testdata/dumps/README.md.
+SECRETS_QUERY='[.configs[] | select(."@type" | endswith(".SecretsConfigDump"))
+  | ((.dynamic_active_secrets // []) + (.dynamic_warming_secrets // []) + (.static_secrets // []))[]] | length'
+SENSITIVE_QUERY='[.. | objects | to_entries[]
+  | select(.key | test("^(private_key|password|token|client_secret)$")) | select(.value != "[redacted]")] | length'
+
+# content_check <file>: prints counts only, never a matched value.
+content_check() {
+  local f="$1" secrets sensitive pem=0
+  secrets="$(jq "$SECRETS_QUERY" "$f")"
+  sensitive="$(jq "$SENSITIVE_QUERY" "$f")"
+  grep -q 'PRIVATE KEY' "$f" && pem=1
+  log "content $(basename "$f"): secrets=$secrets unredacted-sensitive=$sensitive private-key-pem=$pem"
+  [ "$secrets" = 0 ] && [ "$sensitive" = 0 ] && [ "$pem" = 0 ]
+}
+
+# dump_until <file> <namespace> <gateway> <jq filter>: dumps as admin until the filter holds, up to 3 minutes.
+dump_until() {
+  local _
+  for _ in $(seq 90); do
+    if proxy_dump "$KUBECONFIG_FILE" "$1" "$2" "$3" && jq -e "$4" "$1" >/dev/null 2>&1; then
+      rm -f "$1.stderr"
+      return 0
+    fi
+    sleep 2
+  done
+  log "FAIL $(basename "$1"): $4 did not hold within 3 minutes"
+  return 1
+}
+
+# route_meta <true|false>: sets the kgateway Helm value enableRouteSourceMetadata, keeping the other values.
+route_meta() {
+  local chart
+  chart="$(h list -n "$KGW_NS" -o json | jq -r '.[] | select(.name == "kgateway") | .chart')"
+  h upgrade kgateway oci://cr.kgateway.dev/kgateway-dev/charts/kgateway --version "${chart#kgateway-}" \
+    -n "$KGW_NS" --reuse-values --set enableRouteSourceMetadata="$1" --wait --timeout 5m
+}
+
+# Captures the goldens as admin: demo use cases (team-a), proxy fixtures without and with route metadata.
+goldens() {
+  local dir="$ROOT/testdata/dumps" tmp="$OUT/goldens" failed=0 f
+  local collide="[.. | objects | select(has(\"match\") and has(\"name\")) | .name
+    | select(contains(\"httproute-orders-kgwctl-proxy-\"))] | length >= 2"
+  local meta="[.. | objects | select(has(\"match\") and has(\"name\"))
+    | select(.name | contains(\"httproute-orders-kgwctl-proxy-\")) | .metadata.filter_metadata[\"$ROUTE_META\"] // empty]
+    | length >= 2"
+  local no_meta="tostring | contains(\"$ROUTE_META\") | not"
+  build
+  mkdir -p "$dir" "$tmp"
+  if [ "$(h get values kgateway -n "$KGW_NS" -a -o json | jq '.enableRouteSourceMetadata')" != false ]; then
+    log "enableRouteSourceMetadata is not false; set it back before capturing"
+    exit 1
+  fi
+  proxy_fixtures
+
+  dump_until "$dir/demo.json" team-a team-a "$no_meta"
+  dump_until "$dir/policies.json" "$PROXY_NS" proxy "($collide) and ($no_meta)"
+  dump_until "$dir/collide.json" "$PROXY_NS" proxy "($collide) and ($no_meta)"
+
+  trap 'route_meta false' EXIT
+  route_meta true
+  dump_until "$dir/collide-meta.json" "$PROXY_NS" proxy "$meta"
+  route_meta false
+  trap - EXIT
+  dump_until "$tmp/meta-off-proxy.json" "$PROXY_NS" proxy "($collide) and ($no_meta)"
+  dump_until "$tmp/meta-off-team-a.json" team-a team-a "$no_meta"
+  log "enableRouteSourceMetadata back to false; no $ROUTE_META in the proxy or team-a dumps"
+
+  log "kgateway $(h list -n "$KGW_NS" -o json | jq -r '.[] | select(.name == "kgateway") | .app_version')," \
+    "Envoy $(k -n "$PROXY_NS" exec deploy/proxy -- wget -qO- 127.0.0.1:19000/server_info | jq -r .version)," \
+    "captured $(date -u +%Y-%m-%d)"
+  for f in demo policies collide collide-meta; do
+    content_check "$dir/$f.json" || failed=1
+  done
+  [ "$failed" -eq 0 ] || { log "content check failed: do not commit $dir"; exit 1; }
+  log "goldens written to $dir"
+}
+
 case "${1:-}" in
   setup) setup ;;
   verify) shift; verify "$@" ;;
-  *) echo "usage: $0 setup | verify <kubeconfig>" >&2; exit 2 ;;
+  proxy) proxy ;;
+  goldens) goldens ;;
+  *) echo "usage: $0 setup | verify <kubeconfig> | proxy | goldens" >&2; exit 2 ;;
 esac
