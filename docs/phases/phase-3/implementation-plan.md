@@ -150,13 +150,13 @@ Each sub-phase ends with `make test`, `go vet ./...`, gofmt clean.
 
 ## Sub-phase 3.2 — `proxy routes` (waits on xdsview E11)
 
-Task-level only. Exact xdsview signatures are filled in when the release is tagged; the design §7 shapes are the working assumption. If the released API differs, update this section before starting 3.2.
+Confirmed against xdsview v0.4.0 (kgwctl#10): `parser.Parse(io.Reader) (Result, error)`; `origin.Kgateway(origin.KgatewayOptions{Gateway *model.Ref, Known []model.Ref}) Mapper`; `origin.Annotate(snap, m)`; `chain.Annotate(snap, m)` sets `Route.Chain` (`RequestOrder()`, `ResponseOrder()`); `filter.Filter(snap, filter.Options{HTTPRouteName, HTTPRouteNamespace, RuleIndex, RuleName})` and `filter.Ambiguous(snap, opts) []string`, with `filter.AllRules`; `render.Text(w, snap, render.Options{Header, ResponseOrder, AllFilters, Style, Extra})`. Breaking: `model.WeightedCluster` is not comparable.
 
 ### Task 3.2.1: xdsview upgrade and pipeline
 
-- Add `github.com/DuncanDoyle/xdsview@<E11 tag>`. Extend `TestBinaryDeps` to ban `github.com/charmbracelet/` and `github.com/muesli/`; prove it fails on a temporary blank import of `github.com/charmbracelet/lipgloss`, then revert.
-- `internal/proxyview`: `Build(body []byte, gw *types.NamespacedName, known []model.Ref, sel Selection) (View, error)`: `parser.Parse` → `origin.Annotate(origin.Kgateway{Gateway, Known})` → `chain.Annotate` (attaches `Route.Chain` per route within its HCM) → `filter.Filter` on resolved origin, plus `filter.Ambiguous` for the routes to list as ambiguous. Parser warnings kept in `View.Warnings`. (xdsview Phase 6 names, design r2 at xdsview `15b3fe1`; confirm against the tag.)
-- Selection rule (design §4.2): a route drives `--route` only when its origin is Exact, or Inferred with `RouteAnnotation.NarrowedByKnown == false` (xdsview `5d82113`). xdsview's `filter.Filter` still matches a `NarrowedByKnown` route; kgwctl removes such routes from the selection after `filter.Filter` and lists them as ambiguous with "one candidate exists in the cluster".
+- Add `github.com/DuncanDoyle/xdsview@v0.4.0`. Extend `TestBinaryDeps` to ban `github.com/charmbracelet/` and `github.com/muesli/`; prove it fails on a temporary blank import of `github.com/charmbracelet/lipgloss`, then revert.
+- `internal/proxyview`: `Build(body []byte, gw *types.NamespacedName, known []model.Ref, sel Selection) (View, error)`: `parser.Parse` → `origin.Annotate(origin.Kgateway{Gateway, Known})` → `chain.Annotate` (attaches `Route.Chain` per route within its HCM) → `filter.Filter` on resolved origin, plus `filter.Ambiguous` for the routes to list as ambiguous. Parser warnings kept in `View.Warnings`.
+- Selection rule (design §4.2): a route drives `--route` only when its origin is Exact, or Inferred with `RouteAnnotation.NarrowedByKnown == false` (xdsview `5d82113`). xdsview's `filter.Filter` still matches a `NarrowedByKnown` route; kgwctl removes such routes from the selection after `filter.Filter` and lists them as ambiguous with "one candidate exists in the cluster" (render.Text prints such an origin as "(chosen from known HTTPRoutes)"; kgwctl shows it only in the ambiguous list).
 - Tests on the 3.1 goldens, split by expected result:
   - Exact selection: `collide-meta.json` with `--route kgwctl-proxy/orders` returns only that route.
   - Ambiguity: `policies.json` (no route metadata) with the same flag returns no match and lists both colliding routes as ambiguous, live Known or not.

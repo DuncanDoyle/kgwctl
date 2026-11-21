@@ -97,7 +97,7 @@ Follows `docs/output.md`: `{schemaVersion: "kgwctl.kgateway.dev/v1alpha1", kind:
 
 ## 7. Dependencies
 - xdsview `v0.3.0` (E1, E5): parser, origin, model. Same Go, client-go and cobra as kgwctl; no conflict with Snellius v0.8.2.
-- xdsview `v0.4.0` (E11, xdsview#27), its Phase 6 design r2 (xdsview `15b3fe1`, awaiting the owner):
+- xdsview `v0.4.0` (E11, xdsview#27, released 2026-11-21, kgwctl#10):
   - `pkg/envoy/render`: stdlib-only deterministic text, generic `Style` and `Extra` hooks.
   - `pkg/envoy/chain`: `Effective(hcm, vh, r)` and `Annotate(snap, mapper)`, attaching `Route.Chain` per route inside its HCM. Entries carry a state (on, off, enabled, disabled, unknown), a `Level` (route, virtualHost, routeConfig), `Request` and `Response` sides (yes, no, unknown) and `Contributions []{Kind: extension|policy, Ref, Field}`. `RequestOrder()` and `ResponseOrder()` drop "no" sides; unknown stays, marked "?". `Conditional` marks a baseline that a weighted backend can override.
   - `filter.Filter` narrows on Exact or single-candidate Inferred origins, never Ambiguous; `filter.Ambiguous(snap, opts)` names the ambiguous routes. kgwctl adds the tie-break marker of §4.2.
