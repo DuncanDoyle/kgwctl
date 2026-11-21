@@ -260,7 +260,7 @@ func TestProxyRoutesCapClosesTunnel(t *testing.T) {
 	if r.code != 2 || r.stdout != "" {
 		t.Fatalf("exit %d, stdout %q; want 2 and empty; stderr %q", r.code, r.stdout, r.stderr)
 	}
-	for _, want := range []string{"--max-size", "proxy dump"} {
+	for _, want := range []string{"raise --max-size", "kgwctl proxy dump", "--file <path> --max-size <n>"} {
 		if !strings.Contains(r.stderr, want) {
 			t.Errorf("stderr = %q, want %q", r.stderr, want)
 		}

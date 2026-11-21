@@ -279,22 +279,9 @@ var httpRoutesGVR = schema.GroupVersionResource{Group: "gateway.networking.k8s.i
 
 // knownHTTPRoutesByCtx runs knownHTTPRoutes so that it returns ctx's error at
 // ctx's end even when the list ignores ctx, as an exec credential plugin does.
+// A list that completes after ctx's end is dropped.
 func knownHTTPRoutesByCtx(ctx context.Context, c load.Clients) ([]model.Ref, error) {
-	type result struct {
-		known []model.Ref
-		err   error
-	}
-	done := make(chan result, 1)
-	go func() {
-		known, err := knownHTTPRoutes(ctx, c)
-		done <- result{known, err}
-	}()
-	select {
-	case r := <-done:
-		return r.known, r.err
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
+	return proxydump.Await(ctx, func() ([]model.Ref, error) { return knownHTTPRoutes(ctx, c) }, nil)
 }
 
 // knownHTTPRoutes lists the cluster's HTTPRoutes in all namespaces, page by

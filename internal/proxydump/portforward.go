@@ -30,10 +30,6 @@ import (
 	"k8s.io/client-go/transport/spdy"
 )
 
-// errorGrace bounds how long a read waits for the error stream after the data
-// stream ends.
-const errorGrace = time.Second
-
 // maxStatusBody caps how much of a rejected upgrade's body is read.
 const maxStatusBody = 64 << 10
 
@@ -141,15 +137,14 @@ func (s *portStream) Read(p []byte) (int, error) {
 	if s.closed.Load() {
 		return n, net.ErrClosed
 	}
-	// The error stream can trail the data stream's end; wait for it, bounded.
-	t := time.NewTimer(errorGrace)
-	defer t.Stop()
-	select {
-	case <-s.done:
-		if s.remote != nil {
-			return n, s.remote
-		}
-	case <-t.C:
+	// The error stream can trail the data stream's end. Close, and the tunnel's
+	// stop on ctx end, also end the error stream, so this wait always ends.
+	<-s.done
+	switch {
+	case s.closed.Load():
+		return n, net.ErrClosed
+	case s.remote != nil:
+		return n, s.remote
 	}
 	return n, err
 }

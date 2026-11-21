@@ -22,19 +22,28 @@ import (
 // spdyPod is an API server that accepts a port-forward upgrade and answers the
 // data stream as Envoy's admin port would, or fails the forward with fail.
 type spdyPod struct {
-	srv     *httptest.Server
-	body    []byte
-	fail    string
-	gone    chan struct{} // closed when the upgraded connection closes
-	done    chan struct{} // closed at test end, so the handler returns
-	mu      sync.Mutex
-	streams []http.Header
-	reqs    []*http.Request
+	srv  *httptest.Server
+	body []byte
+	fail string
+	// lateFail, when set, answers 200 with a close-delimited body, ends the
+	// data stream, and fails the forward with it after lateFailAfter.
+	lateFail string
+	gone     chan struct{} // closed when the upgraded connection closes
+	done     chan struct{} // closed at test end, so the handler returns
+	mu       sync.Mutex
+	streams  []http.Header
+	reqs     []*http.Request
 }
 
 func newSPDYPod(t *testing.T, body []byte, fail string) *spdyPod {
 	t.Helper()
-	p := &spdyPod{body: body, fail: fail, gone: make(chan struct{}), done: make(chan struct{})}
+	return startSPDYPod(t, &spdyPod{body: body, fail: fail})
+}
+
+// startSPDYPod serves p; its fields are set before the server starts.
+func startSPDYPod(t *testing.T, p *spdyPod) *spdyPod {
+	t.Helper()
+	p.gone, p.done = make(chan struct{}), make(chan struct{})
 	p.srv = httptest.NewServer(http.HandlerFunc(p.serve))
 	t.Cleanup(p.srv.Close)
 	t.Cleanup(func() { close(p.done) }) // runs first: cleanups are LIFO
@@ -95,6 +104,19 @@ func (p *spdyPod) serve(w http.ResponseWriter, r *http.Request) {
 	p.mu.Lock()
 	p.reqs = append(p.reqs, req)
 	p.mu.Unlock()
+	if p.lateFail != "" {
+		_, _ = io.WriteString(data, "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n")
+		_, _ = data.Write(p.body)
+		_ = data.Close()
+		select {
+		case <-time.After(lateFailAfter):
+		case <-p.done:
+			return
+		}
+		_, _ = errStream.Write([]byte(p.lateFail))
+		_ = errStream.Close()
+		return
+	}
 	resp := &http.Response{StatusCode: http.StatusOK, ProtoMajor: 1, ProtoMinor: 1, Header: http.Header{},
 		ContentLength: int64(len(p.body)), Body: io.NopCloser(bytes.NewReader(p.body))}
 	_ = resp.Write(data)
@@ -158,7 +180,27 @@ func TestPortForwardErrorStream(t *testing.T) {
 	p.waitGone(t)
 }
 
-// TestPortForwardOpensNoListener: Dial yields the forwarded stream itself, not
+// lateFailAfter is how long the error stream trails the data stream's end:
+// longer than any fixed grace a read could wait for it.
+const lateFailAfter = 1500 * time.Millisecond
+
+// TestPortForwardLateErrorStream: a forward that fails after the data stream
+// ended mid-body is a read error, not a truncated dump read as complete.
+func TestPortForwardLateErrorStream(t *testing.T) {
+	const msg = "error forwarding port 19000: connection reset by peer"
+	p := startSPDYPod(t, &spdyPod{body: []byte(`{"configs":[`), lateFail: msg})
+	c, err := Fetch(t.Context(), NewPortForwarder(p.config()), testPod, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Body.Close()
+	got, err := io.ReadAll(c.Body)
+	if err == nil || !strings.Contains(err.Error(), "connection reset by peer") {
+		t.Fatalf("read = %q, %v; want the error stream's message", got, err)
+	}
+}
+
+// TestPortForwardOpensNoListener:Dial yields the forwarded stream itself, not
 // an address, so only kgwctl's own request reaches the tunnel.
 func TestPortForwardOpensNoListener(t *testing.T) {
 	want := []byte(`{"configs":[]}`)

@@ -221,6 +221,75 @@ func TestFetchDialError(t *testing.T) {
 	ft.requireListenerClosed(t)
 }
 
+// holdBound releases a held fake on its own, so code that waits for it fails
+// the elapsed-time check instead of hanging the suite.
+const holdBound = 3 * time.Second
+
+// hold blocks until held closes or holdBound passes, ignoring any ctx.
+func hold(held <-chan struct{}) {
+	select {
+	case <-held:
+	case <-time.After(holdBound):
+	}
+}
+
+// heldDialer dials ft once held closes, ignoring ctx as an exec credential
+// plugin does.
+func heldDialer(ft *fakeTunnel, held <-chan struct{}) Dialer {
+	return dialerFunc(func(ctx context.Context, pod types.NamespacedName, port int) (io.ReadWriteCloser, func(), error) {
+		hold(held)
+		return ft.Dial(ctx, pod, port)
+	})
+}
+
+// TestFetchDialIgnoresCtx: Fetch returns ctx's error by the deadline when the
+// dial ignores ctx; the tunnel the dial opens late is released unused.
+func TestFetchDialIgnoresCtx(t *testing.T) {
+	ft := newFakeTunnel(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("{}")) })
+	held := make(chan struct{})
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	c, err := Fetch(ctx, heldDialer(ft, held), testPod, time.Now)
+	if !errors.Is(err, context.DeadlineExceeded) || c != nil {
+		t.Fatalf("Fetch = %v, %v; want nil and DeadlineExceeded", c, err)
+	}
+	if took := time.Since(start); took > 2*time.Second {
+		t.Fatalf("returned after %v, want by the 200ms deadline", took)
+	}
+	close(held)
+	ft.requireConnClosed(t)
+	ft.waitListenerClosed(t)
+	if n := len(ft.requests()); n != 0 {
+		t.Fatalf("late tunnel served %d requests, want 0", n)
+	}
+}
+
+// TestAwaitDoneWins: a result that is ready together with ctx's end never
+// wins, and a successful one is released. select picks a ready case at
+// random, so the runs cover both cases.
+func TestAwaitDoneWins(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for i := 1; i <= 100; i++ {
+		done := make(chan outcome[int], 1)
+		done <- outcome[int]{v: i}
+		released := make(chan int, 1)
+		v, err := settle(ctx, done, func(v int) { released <- v })
+		if !errors.Is(err, context.Canceled) || v != 0 {
+			t.Fatalf("run %d: settle = %d, %v; want 0 and Canceled", i, v, err)
+		}
+		select {
+		case r := <-released:
+			if r != i {
+				t.Fatalf("run %d: released %d", i, r)
+			}
+		case <-time.After(waitBound):
+			t.Fatalf("run %d: the late result was never released", i)
+		}
+	}
+}
+
 type dialerFunc func(context.Context, types.NamespacedName, int) (io.ReadWriteCloser, func(), error)
 
 func (f dialerFunc) Dial(ctx context.Context, pod types.NamespacedName, port int) (io.ReadWriteCloser, func(), error) {

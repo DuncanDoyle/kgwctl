@@ -60,31 +60,35 @@ func requireDeadline(t *testing.T, c load.Clients, d Dialer) {
 }
 
 // TestFetchGatewaySelectBlocks: a Gateway lookup that ignores ctx does not
-// hold FetchGateway past its deadline.
+// hold FetchGateway past its deadline, and its late success dials nothing.
 func TestFetchGatewaySelectBlocks(t *testing.T) {
 	held := make(chan struct{})
-	t.Cleanup(func() { close(held) })
+	selected := make(chan struct{})
 	c := fakeClients(func(a k8stesting.Action) (bool, runtime.Object, error) {
-		<-held
+		hold(held)
+		defer close(selected)
 		return gatewayFound(a)
 	})
 	requireDeadline(t, c, dialerFunc(func(context.Context, types.NamespacedName, int) (io.ReadWriteCloser, func(), error) {
 		t.Error("dialed after the deadline")
 		return nil, nil, errors.New("unexpected dial")
 	}))
+	close(held)
+	select {
+	case <-selected:
+	case <-time.After(waitBound):
+		t.Fatal("the held Gateway lookup never returned")
+	}
 }
 
 // TestFetchGatewayDialBlocks: a dial that ignores ctx does not hold
-// FetchGateway past its deadline, and the tunnel it opens late is released.
+// FetchGateway past its deadline; the tunnel it opens late is released unused.
 func TestFetchGatewayDialBlocks(t *testing.T) {
 	ft := newFakeTunnel(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("{}")) })
 	held := make(chan struct{})
-	d := dialerFunc(func(ctx context.Context, pod types.NamespacedName, port int) (io.ReadWriteCloser, func(), error) {
-		<-held
-		return ft.Dial(ctx, pod, port)
-	})
-	requireDeadline(t, fakeClients(gatewayFound), d)
+	requireDeadline(t, fakeClients(gatewayFound), heldDialer(ft, held))
 	close(held)
+	ft.requireConnClosed(t)
 	ft.waitListenerClosed(t)
 	if n := len(ft.requests()); n != 0 {
 		t.Fatalf("late tunnel served %d requests, want 0", n)
