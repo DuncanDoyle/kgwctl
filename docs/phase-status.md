@@ -1,40 +1,32 @@
 # Phase status
 
 ## Phase
-Phase: 3 — Data plane (`proxy routes`)
-Base: 44be3b6
-Docs: docs/phases/phase-3/
-Status: implementation
+Phase: 4 — Support bundle
+Base: tbd (main HEAD after the Phase 3 merge)
+Docs: docs/phases/phase-4/
+Status: not started
 
 ### Queue
-- [x] Q1 Phase 3 design (`design.md`) r1: ab40189
-- [x] Q1b xdsview E11: v0.4.0 released 2026-11-21 (kgwctl#10)
-- [x] Q2 Phase 3 implementation plan (r4)
-- [x] Q3 Cross-model review of design + plan (5 rounds, reviews/design-codex*.md), owner go-ahead 2026-11-21
-- [x] Q4 Sub-phase 3.1 capture and `proxy dump` (phase-3.1-complete.md)
-- [x] Q5 Sub-phase 3.2 `proxy routes` (phase-3.2-complete.md)
-- [x] Q6 Sub-phase 3.3 live check and docs (phase-3.3-complete.md)
-- [x] Q7 Phase review (Codex), triage: reviews/phase-codex.md
-- [x] Q7b Stabilization 3.4 (phase-3.4-complete.md)
-- [ ] Q8 Phase close ← CURRENT
+- [ ] Q1 Phase 4 design (`design.md`)
+- [ ] Q2 Phase 4 implementation plan
+- [ ] Q3 Cross-model review of design + plan, triage; owner go-ahead
 
 ### Exit gates
-- [x] tests/vet pass (observed 2026-11-21 at 59dec54, live checks on kind)
+- [ ] tests/vet pass
 - [ ] all queue items done or deferred
-- [x] design+plan cross-model review + triage: reviews/design-codex.md (+ -r2 to -r5)
-- [x] phase cross-model review + triage: reviews/phase-codex.md
+- [ ] design+plan cross-model review + triage
+- [ ] phase cross-model review + triage
 - [ ] decisions.md / design / plan in sync with code
-- [ ] phase-3-complete.md written, roadmap updated, tracked items closed
+- [ ] phase-4-complete.md written, roadmap updated, tracked items closed
 
 ## Sub-phase
-n/a (3.4 complete: docs/phases/phase-3/phase-3.4-complete.md)
+n/a
 
 ## Program
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
-- Read 2026-11-20 at kgateway-tooling `dcab679`.
-- Available: E1 — xdsview `v0.3.0` (`github.com/DuncanDoyle/xdsview/pkg/envoy/...`, formerly krp; kgwctl#1).
-- Available: E11 — xdsview `v0.4.0` (2026-11-21, kgwctl#10).
-- Waiting on: E7 (Phase 6).
+- Read 2026-11-21 at kgateway-tooling `7288049`.
+- Consumed: E1 and E11 — xdsview `v0.4.3` (kgwctl#1, kgwctl#10).
+- Waiting on: E7 (Phase 6). E6 (xdsview#32) before Phase 7.
 - Consumers: none
 
 ## Carry-over (deferred to later phases)
@@ -42,8 +34,10 @@ n/a (3.4 complete: docs/phases/phase-3/phase-3.4-complete.md)
 - `get`/`describe` for list-only kinds (Phase 2.1 ruling).
 - `--only`, `--exclude`, `--fail-on`, repeatable `-n`, controller logs (D-015).
 - A narrow `pkg/cli` facade for vendor cluster commands (D-015).
+- Phase 3 (reviews/3.4-codex.md P3-4): a test that cancels an established capture through a CONNECT or SOCKS5 proxy, when Phase 4 reuses the capture.
 
 ## Notes
 - GitHub repo: https://github.com/DuncanDoyle/kgwctl (`kgwctl` remains a working name, D-006).
 - 2026-11-06 Phase 1 closed: docs/phases/phase-1/phase-1-complete.md.
 - 2026-11-20 Phase 2 closed: docs/phases/phase-2/phase-2-complete.md.
+- 2026-11-21 Phase 3 closed: docs/phases/phase-3/phase-3-complete.md.
