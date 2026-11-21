@@ -60,36 +60,30 @@ func (b *tunnelBody) Close() error {
 	return b.release()
 }
 
-// tunnel is one opened stream and the func that releases it.
-type tunnel struct {
-	conn io.ReadWriteCloser
-	stop func()
-}
-
 // Fetch sends one GET /config_dump to the admin port of pod over the stream d
 // opens. Redirects are refused. It returns ctx's error by ctx's deadline even
-// when the dial ignores ctx, as client-go's exec credential plugins do; a
-// tunnel opened later is released. On success the caller must close
-// Capture.Body; the tunnel is also released when ctx ends. On error it is
-// already released.
+// when the dial or the stream ignores ctx, as client-go's exec credential
+// plugins do; a Capture that completes later is released. On success the
+// caller must close Capture.Body; the tunnel is also released when ctx ends.
+// On error it is already released.
 func Fetch(ctx context.Context, d Dialer, pod types.NamespacedName, now func() time.Time) (*Capture, error) {
-	tun, err := Await(ctx, func() (tunnel, error) {
-		conn, stop, err := d.Dial(ctx, pod, AdminPort)
-		if err != nil {
-			if stop != nil {
-				stop()
-			}
-			return tunnel{}, err
-		}
-		return tunnel{conn, stop}, nil
-	}, func(t tunnel) {
-		_ = t.conn.Close()
-		t.stop()
-	})
+	c, err := Await(ctx, func() (*Capture, error) { return fetch(ctx, d, pod, now) },
+		func(c *Capture) { _ = c.Body.Close() })
+	if err != nil && err == ctx.Err() { // ctx ended before fetch returned
+		err = fmt.Errorf("fetch config dump from %s: %w", pod, err)
+	}
+	return c, err
+}
+
+// fetch is Fetch without the bound on calls that ignore ctx.
+func fetch(ctx context.Context, d Dialer, pod types.NamespacedName, now func() time.Time) (*Capture, error) {
+	conn, stop, err := d.Dial(ctx, pod, AdminPort)
 	if err != nil {
+		if stop != nil {
+			stop()
+		}
 		return nil, fmt.Errorf("open tunnel to %s: %w", pod, err)
 	}
-	conn, stop := tun.conn, tun.stop
 	release := sync.OnceValue(func() error {
 		err := conn.Close()
 		stop()
@@ -162,6 +156,7 @@ type outcome[T any] struct {
 // Await runs work and returns its result, or ctx's error once ctx is done,
 // even when work ignores ctx. A result that work returns after ctx is done is
 // never returned; when it succeeded, it goes to release if release is set.
+// release runs on its own goroutine, so it never delays the return.
 func Await[T any](ctx context.Context, work func() (T, error), release func(T)) (T, error) {
 	if err := ctx.Err(); err != nil {
 		var zero T
@@ -184,7 +179,7 @@ func settle[T any](ctx context.Context, done <-chan outcome[T], release func(T))
 			return r.v, r.err
 		}
 		if r.err == nil && release != nil {
-			release(r.v)
+			go release(r.v) // off the caller's goroutine: release may block
 		}
 	case <-ctx.Done():
 		if release != nil {

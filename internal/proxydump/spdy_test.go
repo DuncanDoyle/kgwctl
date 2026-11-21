@@ -3,6 +3,8 @@ package proxydump
 import (
 	"bufio"
 	"bytes"
+	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -28,6 +30,9 @@ type spdyPod struct {
 	// lateFail, when set, answers 200 with a close-delimited body, ends the
 	// data stream, and fails the forward with it after lateFailAfter.
 	lateFail string
+	// openErrs, when set, answers 200 with a close-delimited body, ends the
+	// data stream, and keeps the error stream open.
+	openErrs bool
 	gone     chan struct{} // closed when the upgraded connection closes
 	done     chan struct{} // closed at test end, so the handler returns
 	mu       sync.Mutex
@@ -104,10 +109,13 @@ func (p *spdyPod) serve(w http.ResponseWriter, r *http.Request) {
 	p.mu.Lock()
 	p.reqs = append(p.reqs, req)
 	p.mu.Unlock()
-	if p.lateFail != "" {
+	if p.lateFail != "" || p.openErrs {
 		_, _ = io.WriteString(data, "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n")
 		_, _ = data.Write(p.body)
 		_ = data.Close()
+		if p.openErrs {
+			return // the deferred wait holds the connection, error stream open
+		}
 		select {
 		case <-time.After(lateFailAfter):
 		case <-p.done:
@@ -189,15 +197,101 @@ const lateFailAfter = 1500 * time.Millisecond
 func TestPortForwardLateErrorStream(t *testing.T) {
 	const msg = "error forwarding port 19000: connection reset by peer"
 	p := startSPDYPod(t, &spdyPod{body: []byte(`{"configs":[`), lateFail: msg})
-	c, err := Fetch(t.Context(), NewPortForwarder(p.config()), testPod, time.Now)
+	ctx, cancel := context.WithTimeout(t.Context(), waitBound)
+	defer cancel()
+	c, err := Fetch(ctx, NewPortForwarder(p.config()), testPod, time.Now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer c.Body.Close()
-	got, err := io.ReadAll(c.Body)
+	got, err := readAllBounded(t, c.Body, lateFailAfter+2*time.Second)
 	if err == nil || !strings.Contains(err.Error(), "connection reset by peer") {
 		t.Fatalf("read = %q, %v; want the error stream's message", got, err)
 	}
+}
+
+// readAllBounded reads all of r in a goroutine and fails the test when the
+// read has not ended within bound.
+func readAllBounded(t *testing.T, r io.Reader, bound time.Duration) ([]byte, error) {
+	t.Helper()
+	type result struct {
+		b   []byte
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		b, err := io.ReadAll(r)
+		done <- result{b, err}
+	}()
+	select {
+	case res := <-done:
+		return res.b, res.err
+	case <-time.After(bound):
+		t.Fatalf("read still blocked after %v", bound)
+		return nil, nil
+	}
+}
+
+// TestPortForwardCloseEndsErrorWait: Close during a read that waits on an
+// open error stream ends the read with an error, not a clean EOF.
+func TestPortForwardCloseEndsErrorWait(t *testing.T) {
+	p := startSPDYPod(t, &spdyPod{body: []byte(`{"configs":[`), openErrs: true})
+	conn, stop, err := NewPortForwarder(p.config()).Dial(t.Context(), testPod, AdminPort)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop()
+	waiting := make(chan struct{})
+	conn.(*portStream).waiting = func() { close(waiting) }
+	req, err := http.NewRequest(http.MethodGet, "http://localhost/config_dump", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := req.Write(conn); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(conn), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := io.ReadAll(resp.Body)
+		done <- err
+	}()
+	select {
+	case <-waiting:
+	case <-time.After(waitBound):
+		t.Fatal("the read never waited for the error stream")
+	}
+	_ = conn.Close()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("read after Close ended cleanly, want an error")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("read still blocked 2s after Close")
+	}
+	stop()
+	p.waitGone(t)
+}
+
+// TestPortForwardCtxEndsErrorWait: ctx's end during a read that waits on an
+// open error stream ends the read with ctx's error.
+func TestPortForwardCtxEndsErrorWait(t *testing.T) {
+	p := startSPDYPod(t, &spdyPod{body: []byte(`{"configs":[`), openErrs: true})
+	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
+	defer cancel()
+	c, err := Fetch(ctx, NewPortForwarder(p.config()), testPod, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Body.Close()
+	if _, err := readAllBounded(t, c.Body, 2*time.Second); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("read err = %v, want DeadlineExceeded", err)
+	}
+	p.waitGone(t)
 }
 
 // TestPortForwardOpensNoListener:Dial yields the forwarded stream itself, not

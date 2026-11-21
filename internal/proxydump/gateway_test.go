@@ -45,12 +45,12 @@ func gatewayFound(k8stesting.Action) (bool, runtime.Object, error) {
 
 // requireDeadline runs FetchGateway with a short deadline and checks it
 // returns ctx's error by then.
-func requireDeadline(t *testing.T, c load.Clients, d Dialer) {
+func requireDeadline(t *testing.T, c load.Clients, d Dialer, now func() time.Time) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 	start := time.Now()
-	capture, err := FetchGateway(ctx, c, d, testGateway, "", time.Now)
+	capture, err := FetchGateway(ctx, c, d, testGateway, "", now)
 	if !errors.Is(err, context.DeadlineExceeded) || capture != nil {
 		t.Fatalf("FetchGateway = %v, %v; want nil and DeadlineExceeded", capture, err)
 	}
@@ -72,7 +72,7 @@ func TestFetchGatewaySelectBlocks(t *testing.T) {
 	requireDeadline(t, c, dialerFunc(func(context.Context, types.NamespacedName, int) (io.ReadWriteCloser, func(), error) {
 		t.Error("dialed after the deadline")
 		return nil, nil, errors.New("unexpected dial")
-	}))
+	}), time.Now)
 	close(held)
 	select {
 	case <-selected:
@@ -86,13 +86,23 @@ func TestFetchGatewaySelectBlocks(t *testing.T) {
 func TestFetchGatewayDialBlocks(t *testing.T) {
 	ft := newFakeTunnel(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("{}")) })
 	held := make(chan struct{})
-	requireDeadline(t, fakeClients(gatewayFound), heldDialer(ft, held))
+	requireDeadline(t, fakeClients(gatewayFound), heldDialer(ft, held), time.Now)
 	close(held)
 	ft.requireConnClosed(t)
 	ft.waitListenerClosed(t)
 	if n := len(ft.requests()); n != 0 {
 		t.Fatalf("late tunnel served %d requests, want 0", n)
 	}
+}
+
+// TestFetchGatewayLateCapture: a 200 whose headers arrive after the deadline
+// is never returned, and its stream is released.
+func TestFetchGatewayLateCapture(t *testing.T) {
+	held := make(chan struct{})
+	s := newLateStream(held)
+	requireDeadline(t, fakeClients(gatewayFound), s.dialer(), s.now)
+	close(held)
+	s.requireReleased(t)
 }
 
 // TestFetchGatewayFetchError: a failed fetch names the Pod it selected; a

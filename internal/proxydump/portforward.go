@@ -84,12 +84,13 @@ func (p *portForwarder) Dial(ctx context.Context, pod types.NamespacedName, port
 // portStream is one forwarded connection: the data stream, plus the error
 // stream on which the remote side reports a forward that failed.
 type portStream struct {
-	data   httpstream.Stream
-	errs   httpstream.Stream
-	port   int
-	closed atomic.Bool
-	done   chan struct{} // closed once the error stream is read to its end
-	remote error         // the remote side's error; set before done closes
+	data    httpstream.Stream
+	errs    httpstream.Stream
+	port    int
+	closed  atomic.Bool
+	done    chan struct{} // closed once the error stream is read to its end
+	remote  error         // the remote side's error; set before done closes
+	waiting func()        // tests: runs as a read starts waiting for the error stream
 }
 
 // openPortStream creates the error and data streams for port on conn, with
@@ -139,6 +140,9 @@ func (s *portStream) Read(p []byte) (int, error) {
 	}
 	// The error stream can trail the data stream's end. Close, and the tunnel's
 	// stop on ctx end, also end the error stream, so this wait always ends.
+	if s.waiting != nil {
+		s.waiting()
+	}
 	<-s.done
 	switch {
 	case s.closed.Load():

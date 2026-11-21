@@ -8,6 +8,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -286,6 +287,93 @@ func TestAwaitDoneWins(t *testing.T) {
 			}
 		case <-time.After(waitBound):
 			t.Fatalf("run %d: the late result was never released", i)
+		}
+	}
+}
+
+// lateStream answers the GET with a full 200 once held closes. Its Close does
+// not interrupt that read, like a stream that ignores ctx.
+type lateStream struct {
+	held   <-chan struct{}
+	r      io.Reader
+	closes atomic.Int32
+	stops  atomic.Int32
+	built  chan struct{} // closed when Fetch stamps the late Capture
+}
+
+func newLateStream(held <-chan struct{}) *lateStream {
+	return &lateStream{held: held, built: make(chan struct{}),
+		r: strings.NewReader("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}")}
+}
+
+func (s *lateStream) Read(p []byte) (int, error) {
+	hold(s.held)
+	return s.r.Read(p)
+}
+
+func (s *lateStream) Write(p []byte) (int, error) { return len(p), nil }
+func (s *lateStream) Close() error                { s.closes.Add(1); return nil }
+
+func (s *lateStream) dialer() Dialer {
+	return dialerFunc(func(context.Context, types.NamespacedName, int) (io.ReadWriteCloser, func(), error) {
+		return s, func() { s.stops.Add(1) }, nil
+	})
+}
+
+func (s *lateStream) now() time.Time {
+	close(s.built)
+	return time.Now()
+}
+
+// requireReleased waits for the late Capture and checks its stream is closed
+// and its tunnel stopped once.
+func (s *lateStream) requireReleased(t *testing.T) {
+	t.Helper()
+	select {
+	case <-s.built:
+	case <-time.After(waitBound):
+		t.Fatal("the late Capture was never built")
+	}
+	if c, st := s.closes.Load(), s.stops.Load(); c < 1 || st != 1 {
+		t.Fatalf("stream closed %d times, tunnel stopped %d times; want closed, stopped once", c, st)
+	}
+}
+
+// TestFetchLateCapture: a 200 whose headers arrive after ctx ended is never
+// returned; Fetch returns ctx's error by the deadline and releases the stream.
+func TestFetchLateCapture(t *testing.T) {
+	held := make(chan struct{})
+	s := newLateStream(held)
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	c, err := Fetch(ctx, s.dialer(), testPod, s.now)
+	if !errors.Is(err, context.DeadlineExceeded) || c != nil {
+		t.Fatalf("Fetch = %v, %v; want nil and DeadlineExceeded", c, err)
+	}
+	if took := time.Since(start); took > 2*time.Second {
+		t.Fatalf("returned after %v, want by the 200ms deadline", took)
+	}
+	close(held)
+	s.requireReleased(t)
+}
+
+// TestAwaitReleaseOffCaller: a blocking release never delays the return,
+// whichever ready case select picks.
+func TestAwaitReleaseOffCaller(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	block := make(chan struct{})
+	defer close(block)
+	for i := 1; i <= 20; i++ {
+		done := make(chan outcome[int], 1)
+		done <- outcome[int]{v: i}
+		start := time.Now()
+		if _, err := settle(ctx, done, func(int) { hold(block) }); !errors.Is(err, context.Canceled) {
+			t.Fatalf("run %d: err = %v, want Canceled", i, err)
+		}
+		if took := time.Since(start); took > 2*time.Second {
+			t.Fatalf("run %d: returned after %v; release ran on the caller's goroutine", i, took)
 		}
 	}
 }
