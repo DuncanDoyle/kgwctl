@@ -14,14 +14,15 @@ Status: implementation
 - [x] Q4 Sub-phase 3.1 capture and `proxy dump` (phase-3.1-complete.md)
 - [x] Q5 Sub-phase 3.2 `proxy routes` (phase-3.2-complete.md)
 - [x] Q6 Sub-phase 3.3 live check and docs (phase-3.3-complete.md)
-- [ ] Q7 Phase review (Codex), triage ← CURRENT
+- [x] Q7 Phase review (Codex), triage: reviews/phase-codex.md
+- [ ] Q7b Stabilization 3.4 (phase review findings 1, 2, 5, 6, 7; xdsview bump for 3, 4) ← proposed
 - [ ] Q8 Phase close
 
 ### Exit gates
 - [x] tests/vet pass (observed 2026-11-21 at 87bb3c8)
 - [ ] all queue items done or deferred
 - [x] design+plan cross-model review + triage: reviews/design-codex.md (+ -r2 to -r5)
-- [ ] phase cross-model review + triage
+- [x] phase cross-model review + triage: reviews/phase-codex.md
 - [ ] decisions.md / design / plan in sync with code
 - [ ] phase-3-complete.md written, roadmap updated, tracked items closed
 
