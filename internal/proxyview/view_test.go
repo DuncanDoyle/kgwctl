@@ -225,8 +225,8 @@ func TestBuildParserWarning(t *testing.T) {
 		})
 	})
 	v := build(t, body, demoGW, nil, proxyview.Selection{})
-	if len(v.Warnings) != 1 || !strings.Contains(v.Warnings[0], "RoutesConfigDump") {
-		t.Fatalf("warnings %q, want one for the routes section", v.Warnings)
+	if len(v.Warnings) != 1 || !strings.Contains(v.Warnings[0], "skipped route config") {
+		t.Fatalf("warnings %q, want one for the malformed route config", v.Warnings)
 	}
 	if got := len(routes(v.Snapshot)); got != 5 {
 		t.Errorf("%d virtual hosts with routes, want the 5 that survive", got)
@@ -349,7 +349,8 @@ func TestBuildParseError(t *testing.T) {
 func TestTextMarksNarrowedInFullTree(t *testing.T) {
 	body := golden(t, "policies.json")
 	single := []model.Ref{proxyview.HTTPRouteRef(orders), proxyview.HTTPRouteRef(types.NamespacedName{Namespace: "kgwctl-proxy", Name: "public"})}
-	marked := "ambiguous: HTTPRoute kgwctl-proxy/orders, HTTPRoute proxy/orders-kgwctl · " + proxyview.OneCandidateNote
+	// The note prints on its own line, under the route line.
+	marked := "ambiguous: HTTPRoute kgwctl-proxy/orders, HTTPRoute proxy/orders-kgwctl\n│     " + proxyview.OneCandidateNote
 
 	v := build(t, body, proxyGW, single, proxyview.Selection{})
 	if n := strings.Count(text(t, v, render.Options{}), marked); n != 2 {
@@ -362,7 +363,7 @@ func TestTextMarksNarrowedInFullTree(t *testing.T) {
 		}
 		return s
 	}})
-	if !strings.Contains(styled, "<ambiguous: HTTPRoute kgwctl-proxy/orders, HTTPRoute proxy/orders-kgwctl> · "+proxyview.OneCandidateNote) {
+	if !strings.Contains(styled, "<ambiguous: HTTPRoute kgwctl-proxy/orders, HTTPRoute proxy/orders-kgwctl>\n│     "+proxyview.OneCandidateNote) {
 		t.Errorf("styled tree lacks the styled origin and note:\n%s", styled)
 	}
 	for _, known := range [][]model.Ref{nil, append(single, proxyview.HTTPRouteRef(types.NamespacedName{Namespace: "proxy", Name: "orders-kgwctl"}))} {
@@ -509,6 +510,17 @@ func TestBuildUnresolvedIgnoresVhostPrefix(t *testing.T) {
 	v := build(t, body, proxyGW, nil, proxyview.Selection{Route: payments})
 	if len(v.Ambiguous) != 1 || v.Ambiguous[0].Name != name || !v.Ambiguous[0].Unresolved {
 		t.Errorf("team-b/payments: ambiguous %+v, want %s unresolved", v.Ambiguous, name)
+	}
+
+	// With --rule, the rule index after the route's marker decides.
+	for rule, want := range map[int]int{0: 1, 1: 0} {
+		v := build(t, body, proxyGW, nil, proxyview.Selection{Route: payments, Rule: &rule})
+		if len(v.Ambiguous) != want || v.Matched() != 0 {
+			t.Errorf("team-b/payments rule %d: ambiguous %+v, matched %d; want %d and none", rule, v.Ambiguous, v.Matched(), want)
+		}
+		if v := build(t, body, proxyGW, nil, proxyview.Selection{Route: teamA, Rule: &rule}); len(v.Ambiguous) != 0 {
+			t.Errorf("team-a/orders rule %d: ambiguous %+v, want none", rule, v.Ambiguous)
+		}
 	}
 }
 

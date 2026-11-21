@@ -501,7 +501,7 @@ func TestProxyRoutesParserWarning(t *testing.T) {
 	if err := json.Unmarshal(raw, &dump); err != nil {
 		t.Fatal(err)
 	}
-	// A second routes section whose only route config is malformed.
+	// A second routes section whose only route config is malformed; the parser skips that config.
 	dump["configs"] = append(dump["configs"].([]any), map[string]any{
 		"@type":                 "type.googleapis.com/envoy.admin.v3.RoutesConfigDump",
 		"dynamic_route_configs": []any{map[string]any{"route_config": map[string]any{"name": 81}}},
@@ -520,7 +520,7 @@ func TestProxyRoutesParserWarning(t *testing.T) {
 	if r.code != 0 || r.stderr != "" {
 		t.Fatalf("text: exit %d, stderr %q; want 0 and empty", r.code, r.stderr)
 	}
-	if !strings.Contains(r.stdout, "warning: skipped RoutesConfigDump") || !strings.Contains(r.stdout, "shop.team-a.example") {
+	if !strings.Contains(r.stdout, "warning: skipped route config") || !strings.Contains(r.stdout, "shop.team-a.example") {
 		t.Errorf("text lacks the warning or the surviving routes:\n%s", r.stdout)
 	}
 
@@ -537,7 +537,7 @@ func TestProxyRoutesParserWarning(t *testing.T) {
 	if err := json.Unmarshal([]byte(r.stdout), &doc); err != nil {
 		t.Fatal(err)
 	}
-	if len(doc.Item.Warnings) != 1 || !strings.Contains(doc.Item.Warnings[0], "RoutesConfigDump") || len(doc.Item.Snapshot.Listeners) != 1 {
+	if len(doc.Item.Warnings) != 1 || !strings.Contains(doc.Item.Warnings[0], "skipped route config") || len(doc.Item.Snapshot.Listeners) != 1 {
 		t.Errorf("JSON warnings %q, listeners %d; want one warning next to the listener", doc.Item.Warnings, len(doc.Item.Snapshot.Listeners))
 	}
 	if !strings.Contains(r.stdout, "shop.team-a.example") {

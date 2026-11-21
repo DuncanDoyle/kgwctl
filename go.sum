@@ -1,7 +1,7 @@
 github.com/DuncanDoyle/snellius v0.8.2 h1:fHHuukF03cgTX1WhYHLW1GBGy0tKev1LmgD9iZJ2bhI=
 github.com/DuncanDoyle/snellius v0.8.2/go.mod h1:6qEzc4tf6SU27vjjeqKNZu9xCBgREQL8rqKkEnzd0bY=
-github.com/DuncanDoyle/xdsview v0.4.0 h1:N/pgXehQ1Ux7GGGtP6CDZUZqM/NhWZao9qYAB9bTBW0=
-github.com/DuncanDoyle/xdsview v0.4.0/go.mod h1:OSRMmwc4ed1TbUERztkBPtsYR60+W99JcWq96nP1x4o=
+github.com/DuncanDoyle/xdsview v0.4.2 h1:cn5e4yChfuLm2C4yntnk16kuOJNsgGa+nxDniy4ccws=
+github.com/DuncanDoyle/xdsview v0.4.2/go.mod h1:OSRMmwc4ed1TbUERztkBPtsYR60+W99JcWq96nP1x4o=
 github.com/Masterminds/semver/v3 v3.4.0 h1:Zog+i5UMtVoCU8oKka5P7i9q9HgrJeGzI9SA1Xbatp0=
 github.com/Masterminds/semver/v3 v3.4.0/go.mod h1:4V+yj/TJE1HU9XfppCwVMZq3I84lprf4nC11bSS5beM=
 github.com/armon/go-socks5 v0.0.0-20160902184237-e75332964ef5 h1:0CwZNZbxp69SHPdPJAN/hZIm0C4OItdklCFmMRWYpio=
