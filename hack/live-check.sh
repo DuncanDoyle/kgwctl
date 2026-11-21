@@ -4,6 +4,8 @@
 #   hack/live-check.sh setup               create the cluster, install kgateway and the fixtures
 #   hack/live-check.sh verify <kubeconfig> run kgwctl against it, outputs in hack/live/out/<name>/
 #   hack/live-check.sh proxy               apply the proxy fixtures, check proxy dump with and without port-forward RBAC
+#   hack/live-check.sh routes              check proxy routes live, from a dump file, and without the Role;
+#                                          toggles the Helm value enableRouteSourceMetadata
 #   hack/live-check.sh goldens             capture testdata/dumps/*.json; toggles the Helm value enableRouteSourceMetadata
 #   hack/live-check.sh goldens-check       rerun the goldens' content (no credential material) and shape checks; offline
 #
@@ -490,11 +492,129 @@ goldens() {
   log "goldens written to $dir"
 }
 
+ORDERS="$PROXY_NS/orders"
+# The orders route's filters in request order, and its policy list, on the proxy fixtures.
+ORDERS_FILTERS="ext_auth/kgwctl-proxy/authz ratelimit/local dynamic_modules/simple_mutations envoy.filters.http.router"
+ORDERS_EXTAUTH="TrafficPolicy $PROXY_NS/orders-extauth (extAuth)"
+ORDERS_POLICIES="policies: $ORDERS_EXTAUTH, TrafficPolicy $PROXY_NS/orders-ratelimit (rateLimit.local), TrafficPolicy $PROXY_NS/orders-transformation (transformation)"
+# The vhosts of the two route names that both read as kgwctl-proxy/orders and proxy/orders-kgwctl.
+COLLIDING=(orders-kgwctl_proxy_example orders_kgwctl_example)
+
+# routes_run <file> <kubeconfig|-> <args...>: proxy routes, stdout to <file>, stderr to <file>.stderr,
+# exit code to <file>.exit; "-" runs without a kubeconfig. Returns kgwctl's exit code.
+routes_run() {
+  local f="$1" kc="$2" code=0; shift 2
+  if [ "$kc" = - ]; then
+    "$OUT/kgwctl" proxy routes "$@" >"$f" 2>"$f.stderr" || code=$?
+  else
+    "$OUT/kgwctl" --kubeconfig "$kc" --context "$CONTEXT" proxy routes "$@" >"$f" 2>"$f.stderr" || code=$?
+  fi
+  echo "$code" >"$f.exit"
+  log "proxy routes $(basename "$f"): exit $code"
+  return "$code"
+}
+
+# expect_matched <file>: exit 0, orders matched, its filters in order, the ext_authz policy and the policy list.
+expect_matched() {
+  local f="$1" n order ok=0
+  n="$(basename "$f")"
+  order="$(awk '$1 ~ /^[0-9]+$/ { print $2 }' "$f" | paste -sd' ' -)"
+  [ "$(cat "$f.exit")" = 0 ] || { log "FAIL $n: exit $(cat "$f.exit"), want 0"; ok=1; }
+  grep -qF "· HTTPRoute $ORDERS · rule 0 · match 0" "$f" || { log "FAIL $n: $ORDERS not matched"; ok=1; }
+  [ "$order" = "$ORDERS_FILTERS" ] || { log "FAIL $n: filters '$order', want '$ORDERS_FILTERS'"; ok=1; }
+  grep -E '^ +1 ext_auth/kgwctl-proxy/authz +enabled by route ' "$f" | grep -qF "· $ORDERS_EXTAUTH" ||
+    { log "FAIL $n: ext_auth entry does not name $ORDERS_EXTAUTH"; ok=1; }
+  grep -qxF "      $ORDERS_POLICIES" "$f" || { log "FAIL $n: policy list differs"; ok=1; }
+  if grep -q ambiguous "$f"; then log "FAIL $n: lists an ambiguous route"; ok=1; fi
+  return "$ok"
+}
+
+# expect_ambiguous <file>: exit 0, no match, both colliding routes listed as ambiguous.
+expect_ambiguous() {
+  local f="$1" n v ok=0
+  n="$(basename "$f")"
+  [ "$(cat "$f.exit")" = 0 ] || { log "FAIL $n: exit $(cat "$f.exit"), want 0"; ok=1; }
+  grep -qxF "no route matches HTTPRoute $ORDERS" "$f" || { log "FAIL $n: no 'no route matches' line"; ok=1; }
+  for v in "${COLLIDING[@]}"; do
+    grep -qxF "  listener~8080~$v-route-0-httproute-orders-kgwctl-proxy-0-0-matcher-0 · ambiguous: HTTPRoute $ORDERS, HTTPRoute proxy/orders-kgwctl" "$f" ||
+      { log "FAIL $n: the $v route is not listed as ambiguous"; ok=1; }
+  done
+  if grep -q "filters (request order)" "$f"; then log "FAIL $n: shows a matched route"; ok=1; fi
+  return "$ok"
+}
+
+# same_view <a> <b>: the two outputs are equal below the header line; a difference goes to <b>.diff.
+same_view() {
+  if diff <(tail -n +2 "$1") <(tail -n +2 "$2") >"$2.diff"; then
+    rm -f "$2.diff"
+  else
+    log "FAIL $(basename "$2") differs from $(basename "$1") below the header; see $2.diff"
+    return 1
+  fi
+}
+
+# proxy routes on the orders HTTPRoute, as reader plus the port-forward Role, live and from a dump file,
+# with route metadata on and off; then as reader only (exit 2). Toggles enableRouteSourceMetadata.
+routes() {
+  local dir="$OUT/routes" op="$OUT/proxy-operator.kubeconfig" failed=0 code value
+  local sel=(--route "$ORDERS") file=(--gateway "$PROXY_NS/proxy" --route "$ORDERS")
+  build
+  mkdir -p "$dir"
+  if [ "$(h get values kgateway -n "$KGW_NS" -a -o json | jq '.enableRouteSourceMetadata')" != false ]; then
+    log "enableRouteSourceMetadata is not false; set it back before the routes check"
+    exit 1
+  fi
+  proxy_fixtures
+  write_reader_kubeconfig
+  write_sa_kubeconfig "$PROXY_NS" kgwctl-proxy-operator "$op"
+
+  trap 'route_meta false' EXIT
+  route_meta true
+  dump_until "$dir/meta-wait.json" "$PROXY_NS" proxy "$JQ_DEFS $SHAPE_META"
+  routes_run "$dir/meta-live.txt" "$op" proxy -n "$PROXY_NS" "${sel[@]}" || true
+  proxy_dump "$op" "$dir/meta-dump.json" "$PROXY_NS" proxy || { log "FAIL proxy dump with metadata"; failed=1; }
+  routes_run "$dir/meta-file.txt" - --file "$dir/meta-dump.json" "${file[@]}" || true
+  expect_matched "$dir/meta-live.txt" || failed=1
+  expect_matched "$dir/meta-file.txt" || failed=1
+  same_view "$dir/meta-live.txt" "$dir/meta-file.txt" || failed=1
+
+  route_meta false
+  trap - EXIT
+  dump_until "$dir/off-wait.json" "$PROXY_NS" proxy "$JQ_DEFS $SHAPE_POLICIES"
+  dump_until "$dir/off-team-a.json" team-a team-a "$JQ_DEFS $SHAPE_DEMO"
+  log "enableRouteSourceMetadata back to false; no $ROUTE_META in the proxy or team-a dumps"
+  routes_run "$dir/off-live.txt" "$op" proxy -n "$PROXY_NS" "${sel[@]}" || true
+  proxy_dump "$op" "$dir/off-dump.json" "$PROXY_NS" proxy || { log "FAIL proxy dump without metadata"; failed=1; }
+  routes_run "$dir/off-file.txt" - --file "$dir/off-dump.json" "${file[@]}" || true
+  expect_ambiguous "$dir/off-live.txt" || failed=1
+  expect_ambiguous "$dir/off-file.txt" || failed=1
+  same_view "$dir/off-live.txt" "$dir/off-file.txt" || failed=1
+
+  code=0
+  routes_run "$dir/reader.txt" "$OUT/reader.kubeconfig" proxy -n "$PROXY_NS" "${sel[@]}" || code=$?
+  if [ "$code" -ne 2 ]; then
+    log "FAIL reader.txt: exit $code, want 2"
+    failed=1
+  elif ! grep -q 'create pods/portforward' "$dir/reader.txt.stderr"; then
+    log "FAIL reader.txt.stderr does not name create pods/portforward"
+    failed=1
+  fi
+
+  value="$(h get values kgateway -n "$KGW_NS" -a -o json | jq '.enableRouteSourceMetadata')"
+  log "kgateway $(h list -n "$KGW_NS" -o json | jq -r '.[] | select(.name == "kgateway") | .app_version')," \
+    "Envoy $(k -n "$PROXY_NS" exec deploy/proxy -- wget -qO- 127.0.0.1:19000/server_info | jq -r .version)," \
+    "enableRouteSourceMetadata=$value"
+  [ "$value" = false ] || { log "FAIL enableRouteSourceMetadata is $value"; failed=1; }
+  [ "$failed" -eq 0 ] || { log "routes failed; outputs in $dir"; exit 1; }
+  log "routes passed; outputs in $dir"
+}
+
 case "${1:-}" in
   setup) setup ;;
   verify) shift; verify "$@" ;;
   proxy) proxy ;;
+  routes) routes ;;
   goldens) goldens ;;
   goldens-check) goldens_check ;;
-  *) echo "usage: $0 setup | verify <kubeconfig> | proxy | goldens | goldens-check" >&2; exit 2 ;;
+  *) echo "usage: $0 setup | verify <kubeconfig> | proxy | routes | goldens | goldens-check" >&2; exit 2 ;;
 esac

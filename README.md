@@ -137,15 +137,14 @@ Shows one Gateway's Envoy listeners, virtual hosts and routes, and for each rout
 
 `--route <ns>/<name>` shows only that HTTPRoute's routes, and `--rule <index>` one of its rules. `--response` also shows the response order. A route whose name reads as two HTTPRoutes is listed as ambiguous, and one whose origin is unresolved is listed as such; neither is ever matched. The dump is capped by `--max-size` (default `64Mi`); save a larger one with `proxy dump` and read it with `--file`.
 
-This is the filter order of an HTTPRoute `orders`, taken from a saved dump:
+Does the transformation of HTTPRoute `orders` run before ext_authz? Ask its Gateway's proxy:
 
 ```bash
-kgwctl proxy routes --file testdata/dumps/collide-meta.json \
-  --gateway kgwctl-proxy/proxy --route kgwctl-proxy/orders
+kgwctl proxy routes proxy -n kgwctl-proxy --route kgwctl-proxy/orders
 ```
 
 ```
-File testdata/dumps/collide-meta.json · Gateway kgwctl-proxy/proxy
+Gateway kgwctl-proxy/proxy · pod kgwctl-proxy/proxy-575f694596-lk8s6 · 2026-11-21T11:53:12Z
 listener~8080 [::]:8080 · active · Gateway kgwctl-proxy/proxy port 8080
 └─ vhost listener~8080~orders_kgwctl_example [orders.kgwctl.example] · port 8080
    └─ route / (prefix) · HTTPRoute kgwctl-proxy/orders · rule 0 · match 0
@@ -159,7 +158,16 @@ listener~8080 [::]:8080 · active · Gateway kgwctl-proxy/proxy port 8080
       backend: kube_kgwctl-proxy_backend_8080
 ```
 
-The route runs external auth first, then the local rate limit, then the transformation, and last the router. Every filter but the router is off on the Gateway and switched on by this route. The `policies` line lists the TrafficPolicies that configure the route. In this version, only the external auth entry names its policy; the rate limit and transformation entries do not yet.
+No. The route runs external auth first, then the local rate limit, then the transformation (`dynamic_modules/simple_mutations`), and last the router. Every filter but the router is off on the Gateway and switched on by this route. The `policies` line lists the TrafficPolicies that configure the route. In this version, only the external auth entry names its policy; the rate limit and transformation entries do not yet.
+
+A saved dump gives the same view; only the header names the file instead of the pod. `--gateway` labels the origins:
+
+```bash
+kgwctl proxy dump proxy -n kgwctl-proxy > dump.json
+kgwctl proxy routes --file dump.json --gateway kgwctl-proxy/proxy --route kgwctl-proxy/orders
+```
+
+This Gateway also serves HTTPRoute `proxy/orders-kgwctl`, and the Envoy route names of both HTTPRoutes read as either one. The output above was taken with kgateway's Helm value `enableRouteSourceMetadata: true`, which tells the two apart. Without it, live and file views both list the two routes as ambiguous and match neither.
 
 `-o json|yaml` prints one `ProxyRoutes` document ([`docs/output.md`](docs/output.md)) with the source, the snapshot, parser warnings and the ambiguous routes. Exit codes: `0` when printed, `2` on any error.
 
@@ -211,5 +219,6 @@ hack/live-check.sh setup                                   # cluster, Gateway AP
 hack/live-check.sh verify hack/live/out/admin.kubeconfig   # outputs in hack/live/out/admin/
 hack/live-check.sh verify hack/live/out/reader.kubeconfig  # the same commands with docs/rbac.yaml permissions
                                                            # (verify also runs check, scaling the controller to 0 and adding a broken route, then restores both)
+hack/live-check.sh routes                                  # proxy routes live and from a dump; sets enableRouteSourceMetadata, then back to false
 hack/scale/run.sh                                          # scale benchmark: 1,000 namespaces, 500 Gateways, 5,000 HTTPRoutes
 ```
