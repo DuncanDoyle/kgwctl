@@ -601,3 +601,42 @@ func TestProxyRoutesPortForwardForbidden(t *testing.T) {
 		}
 	}
 }
+
+// TestProxyRoutesUndecodableHCM: an HTTP connection manager whose typed_config
+// does not decode is a warning next to its listener, in the tree and in JSON.
+func TestProxyRoutesUndecodableHCM(t *testing.T) {
+	args := []string{"proxy", "routes", "--file", "testdata/proxy/hcm-undecodable.json"}
+	const warning = `listener "listener~80" filter chain "listener~80": skipped HTTP connection manager`
+
+	r := runRoutes(t, "unused-kubeconfig", app.ProxyTestHooks{}, args...)
+	if r.code != 0 || r.stderr != "" {
+		t.Fatalf("text: exit %d, stderr %q; want 0 and empty", r.code, r.stderr)
+	}
+	if !strings.Contains(r.stdout, "warning: "+warning) || !strings.Contains(r.stdout, "listener~80") {
+		t.Errorf("text lacks the warning or the listener:\n%s", r.stdout)
+	}
+
+	r = runRoutes(t, "unused-kubeconfig", app.ProxyTestHooks{}, append(args, "-o", "json")...)
+	if r.code != 0 || r.stderr != "" {
+		t.Fatalf("json: exit %d, stderr %q; want 0 and empty", r.code, r.stderr)
+	}
+	var doc struct{ Item struct{ Warnings []string } }
+	if err := json.Unmarshal([]byte(r.stdout), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Item.Warnings) != 1 || !strings.Contains(doc.Item.Warnings[0], warning) {
+		t.Errorf("JSON warnings %q, want one naming the listener and filter chain", doc.Item.Warnings)
+	}
+}
+
+// TestProxyRoutesUpdatingListenerKept: an active listener with a newer version
+// warming stays in the output with its state when --route matches nothing there.
+func TestProxyRoutesUpdatingListenerKept(t *testing.T) {
+	r := runRoutes(t, "unused-kubeconfig", app.ProxyTestHooks{}, "proxy", "routes", "--file", "testdata/proxy/listener-updating.json", "--route", "team-a/nomatch")
+	if r.code != 0 || r.stderr != "" {
+		t.Fatalf("exit %d, stderr %q; want 0 and empty", r.code, r.stderr)
+	}
+	if !strings.Contains(r.stdout, "listener~80") || !strings.Contains(r.stdout, "active · updating") {
+		t.Errorf("stdout lacks the updating listener:\n%s", r.stdout)
+	}
+}

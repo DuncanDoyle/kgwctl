@@ -1,0 +1,39 @@
+{
+  "configs": [
+    {
+      "@type": "type.googleapis.com/envoy.admin.v3.ListenersConfigDump",
+      "dynamic_listeners": [
+        {
+          "name": "listener~80",
+          "active_state": {
+            "version_info": "1",
+            "listener": {
+              "name": "listener~80",
+              "address": {
+                "socket_address": {
+                  "address": "::",
+                  "port_value": 80
+                }
+              },
+              "filter_chains": [
+                {
+                  "name": "listener~80",
+                  "filters": [
+                    {
+                      "name": "envoy.filters.network.http_connection_manager",
+                      "typed_config": {
+                        "@type": "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
+                        "http_filters": "not-a-list"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "last_updated": "2026-11-21T09:00:00Z"
+          }
+        }
+      ]
+    }
+  ]
+}
