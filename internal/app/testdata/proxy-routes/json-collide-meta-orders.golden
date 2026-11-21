@@ -295,7 +295,19 @@
                                 "level": "route",
                                 "perFilterType": "type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit",
                                 "request": "yes",
-                                "response": "yes"
+                                "response": "yes",
+                                "contributions": [
+                                  {
+                                    "kind": "policy",
+                                    "ref": {
+                                      "group": "gateway.kgateway.dev",
+                                      "kind": "TrafficPolicy",
+                                      "namespace": "kgwctl-proxy",
+                                      "name": "orders-ratelimit"
+                                    },
+                                    "field": "rateLimit.local"
+                                  }
+                                ]
                               },
                               {
                                 "name": "dynamic_modules/simple_mutations",
@@ -305,7 +317,19 @@
                                 "level": "route",
                                 "perFilterType": "type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilterPerRoute",
                                 "request": "yes",
-                                "response": "yes"
+                                "response": "yes",
+                                "contributions": [
+                                  {
+                                    "kind": "policy",
+                                    "ref": {
+                                      "group": "gateway.kgateway.dev",
+                                      "kind": "TrafficPolicy",
+                                      "namespace": "kgwctl-proxy",
+                                      "name": "orders-transformation"
+                                    },
+                                    "field": "transformation"
+                                  }
+                                ]
                               },
                               {
                                 "name": "envoy.filters.http.router",

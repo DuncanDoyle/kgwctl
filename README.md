@@ -144,21 +144,21 @@ kgwctl proxy routes proxy -n kgwctl-proxy --route kgwctl-proxy/orders
 ```
 
 ```
-Gateway kgwctl-proxy/proxy · pod kgwctl-proxy/proxy-575f694596-lk8s6 · 2026-11-21T11:53:12Z
+Gateway kgwctl-proxy/proxy · pod kgwctl-proxy/proxy-575f694596-lk8s6 · 2026-11-21T12:07:08Z
 listener~8080 [::]:8080 · active · Gateway kgwctl-proxy/proxy port 8080
 └─ vhost listener~8080~orders_kgwctl_example [orders.kgwctl.example] · port 8080
    └─ route / (prefix) · HTTPRoute kgwctl-proxy/orders · rule 0 · match 0
       filters (request order):
         1 ext_auth/kgwctl-proxy/authz       enabled by route · GatewayExtension kgwctl-proxy/authz · TrafficPolicy kgwctl-proxy/orders-extauth (extAuth)
-        2 ratelimit/local                   enabled by route
-        3 dynamic_modules/simple_mutations  enabled by route
+        2 ratelimit/local                   enabled by route · TrafficPolicy kgwctl-proxy/orders-ratelimit (rateLimit.local)
+        3 dynamic_modules/simple_mutations  enabled by route · TrafficPolicy kgwctl-proxy/orders-transformation (transformation)
         4 envoy.filters.http.router         on
       not run: global_disable/ext_auth (off)
       policies: TrafficPolicy kgwctl-proxy/orders-extauth (extAuth), TrafficPolicy kgwctl-proxy/orders-ratelimit (rateLimit.local), TrafficPolicy kgwctl-proxy/orders-transformation (transformation)
       backend: kube_kgwctl-proxy_backend_8080
 ```
 
-No. The route runs external auth first, then the local rate limit, then the transformation (`dynamic_modules/simple_mutations`), and last the router. Every filter but the router is off on the Gateway and switched on by this route. The `policies` line lists the TrafficPolicies that configure the route. In this version, only the external auth entry names its policy; the rate limit and transformation entries do not yet.
+No. The route runs external auth first, then the local rate limit, then the transformation (`dynamic_modules/simple_mutations`), and last the router. Every filter but the router is off on the Gateway and switched on by this route. Each filter entry names the TrafficPolicy that configures it, and the `policies` line lists them all.
 
 A saved dump gives the same view; only the header names the file instead of the pod. `--gateway` labels the origins:
 

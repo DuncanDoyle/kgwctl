@@ -53,6 +53,8 @@ listener~80 (active) · Gateway listener http
         2 envoy.filters.http.ext_authz  enabled by route   TrafficPolicy team-a/auth
         3 envoy.filters.http.router
 ```
+The filter names and order in the sketch are illustrative; the real order comes from the dump (kgateway v2.5.1 runs ext_authz, local rate limit, then the transformation).
+
 Response order: Envoy runs encoder filters in reverse, and only filters with an encoder take part. kgwctl shows a response order only where xdsview knows which filter types have an encoder; for other types it says "unknown on the response path" rather than guessing. Until xdsview carries that, the output shows request order only.
 
 ### 3.2 `kgwctl proxy dump`
