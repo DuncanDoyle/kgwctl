@@ -26,7 +26,10 @@ Status: implementation
 - [ ] phase-3-complete.md written, roadmap updated, tracked items closed
 
 ## Sub-phase
-n/a (3.2 complete: docs/phases/phase-3/phase-3.2-complete.md)
+Sub-phase: 3.3 — live check and docs (planned)
+Base: e398be9
+Brief: docs/phases/phase-3/phase-3.3-brief.md
+Status: implementation
 
 ## Program
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
