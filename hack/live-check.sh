@@ -496,7 +496,9 @@ ORDERS="$PROXY_NS/orders"
 # The orders route's filters in request order, and its policy list, on the proxy fixtures.
 ORDERS_FILTERS="ext_auth/kgwctl-proxy/authz ratelimit/local dynamic_modules/simple_mutations envoy.filters.http.router"
 ORDERS_EXTAUTH="TrafficPolicy $PROXY_NS/orders-extauth (extAuth)"
-ORDERS_POLICIES="policies: $ORDERS_EXTAUTH, TrafficPolicy $PROXY_NS/orders-ratelimit (rateLimit.local), TrafficPolicy $PROXY_NS/orders-transformation (transformation)"
+ORDERS_RATELIMIT="TrafficPolicy $PROXY_NS/orders-ratelimit (rateLimit.local)"
+ORDERS_TRANSFORM="TrafficPolicy $PROXY_NS/orders-transformation (transformation)"
+ORDERS_POLICIES="policies: $ORDERS_EXTAUTH, $ORDERS_RATELIMIT, $ORDERS_TRANSFORM"
 # The vhosts of the two route names that both read as kgwctl-proxy/orders and proxy/orders-kgwctl.
 COLLIDING=(orders-kgwctl_proxy_example orders_kgwctl_example)
 
@@ -514,16 +516,20 @@ routes_run() {
   return "$code"
 }
 
-# expect_matched <file>: exit 0, orders matched, its filters in order, the ext_authz policy and the policy list.
+# expect_matched <file>: exit 0, orders matched, its filters in order, the policy on each filter and the policy list.
 expect_matched() {
-  local f="$1" n order ok=0
+  local f="$1" n order entry ok=0
   n="$(basename "$f")"
   order="$(awk '$1 ~ /^[0-9]+$/ { print $2 }' "$f" | paste -sd' ' -)"
   [ "$(cat "$f.exit")" = 0 ] || { log "FAIL $n: exit $(cat "$f.exit"), want 0"; ok=1; }
   grep -qF "· HTTPRoute $ORDERS · rule 0 · match 0" "$f" || { log "FAIL $n: $ORDERS not matched"; ok=1; }
   [ "$order" = "$ORDERS_FILTERS" ] || { log "FAIL $n: filters '$order', want '$ORDERS_FILTERS'"; ok=1; }
-  grep -E '^ +1 ext_auth/kgwctl-proxy/authz +enabled by route ' "$f" | grep -qF "· $ORDERS_EXTAUTH" ||
-    { log "FAIL $n: ext_auth entry does not name $ORDERS_EXTAUTH"; ok=1; }
+  # Each entry is "<index> <filter>|<policy>".
+  for entry in "1 ext_auth/kgwctl-proxy/authz|$ORDERS_EXTAUTH" "2 ratelimit/local|$ORDERS_RATELIMIT" \
+    "3 dynamic_modules/simple_mutations|$ORDERS_TRANSFORM"; do
+    grep -E "^ +${entry%%|*} +enabled by route " "$f" | grep -qF "· ${entry#*|}" ||
+      { log "FAIL $n: ${entry%%|*} does not name ${entry#*|}"; ok=1; }
+  done
   grep -qxF "      $ORDERS_POLICIES" "$f" || { log "FAIL $n: policy list differs"; ok=1; }
   if grep -q ambiguous "$f"; then log "FAIL $n: lists an ambiguous route"; ok=1; fi
   return "$ok"
@@ -601,9 +607,13 @@ routes() {
   fi
 
   value="$(h get values kgateway -n "$KGW_NS" -a -o json | jq '.enableRouteSourceMetadata')"
-  log "kgateway $(h list -n "$KGW_NS" -o json | jq -r '.[] | select(.name == "kgateway") | .app_version')," \
-    "Envoy $(k -n "$PROXY_NS" exec deploy/proxy -- wget -qO- 127.0.0.1:19000/server_info | jq -r .version)," \
-    "enableRouteSourceMetadata=$value"
+  # A failed version lookup is counted, not fatal, so the summary below still runs.
+  local kgw envoy
+  kgw="$(h list -n "$KGW_NS" -o json | jq -r '.[] | select(.name == "kgateway") | .app_version')" ||
+    { log "FAIL could not read the kgateway version"; failed=1; }
+  envoy="$(k -n "$PROXY_NS" exec deploy/proxy -- wget -qO- 127.0.0.1:19000/server_info | jq -r .version)" ||
+    { log "FAIL could not read the Envoy version"; failed=1; }
+  log "kgateway $kgw, Envoy $envoy, enableRouteSourceMetadata=$value"
   [ "$value" = false ] || { log "FAIL enableRouteSourceMetadata is $value"; failed=1; }
   [ "$failed" -eq 0 ] || { log "routes failed; outputs in $dir"; exit 1; }
   log "routes passed; outputs in $dir"
