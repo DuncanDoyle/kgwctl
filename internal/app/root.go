@@ -145,10 +145,10 @@ func (f *Flags) Context(parent context.Context) (context.Context, context.Cancel
 }
 
 // NewRoot builds the root command with the global flags, get, describe, check,
-// version, completion and cfg.Commands.
-func NewRoot(cfg Config) *cobra.Command { return newRoot(cfg, checkTestHooks{}) }
+// proxy, version, completion and cfg.Commands.
+func NewRoot(cfg Config) *cobra.Command { return newRoot(cfg, checkTestHooks{}, proxyTestHooks{}) }
 
-func newRoot(cfg Config, hooks checkTestHooks) *cobra.Command {
+func newRoot(cfg Config, hooks checkTestHooks, proxyHooks proxyTestHooks) *cobra.Command {
 	if cfg.Name == "" {
 		cfg.Name = "kgwctl"
 	}
@@ -177,7 +177,7 @@ func newRoot(cfg Config, hooks checkTestHooks) *cobra.Command {
 	root.SetErr(cfg.Err)
 	(&Flags{}).Bind(root.PersistentFlags())
 	root.AddCommand(newGetCmd(cfg.Registry, cfg.Now), newDescribeCmd(cfg.Registry, cfg.Now), newVersionCmd(cfg.Registry, cfg.Build),
-		newCheckCmd(cfg.Registry, cfg.Build, cfg.Now, hooks))
+		newCheckCmd(cfg.Registry, cfg.Build, cfg.Now, hooks), newProxyCmd(proxyHooks))
 	root.AddCommand(cfg.Commands...)
 	return root
 }

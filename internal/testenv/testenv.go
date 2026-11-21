@@ -190,6 +190,29 @@ func New(t testing.TB, opts Options) *Env {
 	return env
 }
 
+// AsUser returns a kubeconfig whose one context reaches envtest as the named
+// user, through a new proxy. The user may do nothing until a binding grants it.
+func (e *Env) AsUser(t testing.TB, name string) string {
+	t.Helper()
+	shared.mu.Lock()
+	u, err := shared.env.AddUser(envtest.User{Name: name}, nil)
+	shared.mu.Unlock()
+	if err != nil {
+		t.Fatalf("testenv: add user %s: %v", name, err)
+	}
+	target, err := url.Parse(e.Admin.Host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport, err := rest.TransportFor(u.Config())
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := newProxy(target, transport)
+	t.Cleanup(p.close)
+	return writeKubeconfig(t, []*Proxy{p})
+}
+
 func writeKubeconfig(t testing.TB, proxies []*Proxy) string {
 	t.Helper()
 	kc := clientcmdapi.NewConfig()

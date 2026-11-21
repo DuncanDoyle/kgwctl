@@ -1,6 +1,7 @@
 # Least-privilege, read-only access for kgwctl (design §5, D-017): get, list and
 # watch on the kinds the checks read, plus get on pods/proxy for controller metrics and Envoy stats.
-# No Secrets, no ConfigMaps, no pods/portforward, no pods/log, no write verbs.
+# No Secrets, no ConfigMaps, no pods/log, no write verbs. The reader role grants no
+# pods/portforward; the optional Role at the end adds it for the proxy commands.
 # Bind the ClusterRole to your own user or group; the ServiceAccount below is
 # the one the live check uses.
 apiVersion: rbac.authorization.k8s.io/v1
@@ -68,3 +69,35 @@ subjects:
   - kind: ServiceAccount
     name: kgwctl-reader
     namespace: default
+---
+# Optional: the proxy commands (D-021). Uncomment, set the Gateway's namespace
+# and the subject, and apply.
+#
+# Live `proxy routes` and `proxy dump` require `create pods/portforward`. kgwctl
+# sends only `GET /config_dump`, but the grant allows any TCP forwarding to Pods
+# in the namespace, including Envoy admin operations that change or stop the
+# proxy. RBAC cannot narrow it to a port or path. Bind it only to trusted operators.
+#
+# apiVersion: rbac.authorization.k8s.io/v1
+# kind: Role
+# metadata:
+#   name: kgwctl-proxy-portforward
+#   namespace: kgateway-system
+# rules:
+#   - apiGroups: [""]
+#     resources: ["pods/portforward"]
+#     verbs: ["create"]
+# ---
+# apiVersion: rbac.authorization.k8s.io/v1
+# kind: RoleBinding
+# metadata:
+#   name: kgwctl-proxy-portforward
+#   namespace: kgateway-system
+# roleRef:
+#   apiGroup: rbac.authorization.k8s.io
+#   kind: Role
+#   name: kgwctl-proxy-portforward
+# subjects:
+#   - apiGroup: rbac.authorization.k8s.io
+#     kind: User
+#     name: jane@example.com

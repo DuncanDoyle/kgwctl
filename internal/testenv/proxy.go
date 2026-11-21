@@ -46,8 +46,9 @@ type Match struct {
 	Resource string
 	// LabelSelector is compared as a parsed selector; "" matches any.
 	LabelSelector string
-	// Subresource, if set, selects GETs of an object's subresource, such as
-	// "proxy" for pods/<name>/proxy/...; Kind and LabelSelector are then ignored.
+	// Subresource, if set, selects requests of any verb to an object's
+	// subresource, such as "proxy" for pods/<name>/proxy/... or a POST to
+	// "portforward"; Kind and LabelSelector are then ignored.
 	Subresource string
 }
 
@@ -65,10 +66,19 @@ type Action struct {
 }
 
 // RuleHits counts the requests a rule applied to.
-type RuleHits struct{ n atomic.Int64 }
+type RuleHits struct {
+	n        atomic.Int64
+	goneOnce sync.Once
+	gone     chan struct{}
+}
 
 // N returns the number of requests the rule applied to so far.
 func (h *RuleHits) N() int { return int(h.n.Load()) }
+
+// ClientGone is closed once a client went away while the rule held its request.
+func (h *RuleHits) ClientGone() <-chan struct{} { return h.gone }
+
+func (h *RuleHits) clientGone() { h.goneOnce.Do(func() { close(h.gone) }) }
 
 type rule struct {
 	m        Match
@@ -82,7 +92,7 @@ type request struct {
 	kind     string // a Kind constant, or "" when no Kind rule can match
 	resource string
 	selector string // canonical label selector
-	// subresource is set for a GET of a named object's subresource.
+	// subresource is set for a request to a named object's subresource.
 	subresource string
 }
 
@@ -142,7 +152,7 @@ func (p *Proxy) Rule(m Match, a Action) *RuleHits {
 		}
 		sel = s.String()
 	}
-	r := &rule{m: m, selector: sel, a: a, hits: &RuleHits{}}
+	r := &rule{m: m, selector: sel, a: a, hits: &RuleHits{gone: make(chan struct{})}}
 	p.mu.Lock()
 	p.rules = append(p.rules, r)
 	p.mu.Unlock()
@@ -218,6 +228,9 @@ func (p *Proxy) serve(w http.ResponseWriter, r *http.Request) {
 	if match != nil {
 		match.hits.n.Add(1)
 		if !p.apply(w, r, req, match.a) {
+			if r.Context().Err() != nil {
+				match.hits.clientGone()
+			}
 			return
 		}
 	}
@@ -321,10 +334,16 @@ func (ru *rule) matches(req request) bool {
 
 // classify parses the request path the way the API server lays it out:
 // /api/v1[/namespaces/<ns>]/<resource>[/<name>] and the same under /apis/<group>/<version>.
+// Only a GET gets a kind; a subresource is classified for any verb.
 func classify(r *http.Request) request {
+	req := classifyPath(r)
 	if r.Method != http.MethodGet {
-		return request{}
+		req.kind = ""
 	}
+	return req
+}
+
+func classifyPath(r *http.Request) request {
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 	var group string
 	var rest []string

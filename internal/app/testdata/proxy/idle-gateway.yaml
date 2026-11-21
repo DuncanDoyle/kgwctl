@@ -1,0 +1,12 @@
+# A Gateway with no proxy Pods.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: idle
+  namespace: kgateway-system
+spec:
+  gatewayClassName: kgateway
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 8080

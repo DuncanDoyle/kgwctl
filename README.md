@@ -117,6 +117,20 @@ The first Ctrl-C stops the run and prints the report, then `Stopped by Ctrl-C.` 
 
 Exit codes follow the same rules as `check`, applied to the final state. With `-o json|yaml` you get one document at the end, with an `observation` block ([`docs/output.md`](docs/output.md)).
 
+### `proxy dump <gateway>`
+
+Streams the Envoy config dump of one replica of the Gateway to stdout, unchanged. It picks the oldest Ready replica; `--pod <pod>` names another replica of the same Gateway, Ready or not.
+
+```bash
+kgwctl proxy dump http -n kgateway-system > dump.json
+```
+
+Envoy redacts only the fields it knows are sensitive, and only in strongly typed config. The dump can still contain credentials, tokens or keys in other config. Check it before you attach it to a ticket.
+
+It reads the dump over a port-forward to Envoy's admin port. `--request-timeout` bounds the whole command; there is no size limit. Exit codes: `0` when printed, `2` when the dump could not be read (no Ready replica, `--pod` not a replica of the Gateway, RBAC, timeout).
+
+Live `proxy routes` and `proxy dump` require `create pods/portforward`. kgwctl sends only `GET /config_dump`, but the grant allows any TCP forwarding to Pods in the namespace, including Envoy admin operations that change or stop the proxy. RBAC cannot narrow it to a port or path. Bind it only to trusted operators. The optional `kgwctl-proxy-portforward` Role in [`docs/rbac.yaml`](docs/rbac.yaml) grants it.
+
 ## Global flags
 
 | Flag | Meaning |
@@ -131,11 +145,11 @@ Exit codes follow the same rules as `check`, applied to the final state. With `-
 
 ## Output and exit codes
 
-`get`, `describe` and `version` exit `0` on success and `1` on any error. `check` exits `0` when clean, `1` for problems and `2` when it could not check something. Data goes to stdout; errors and warnings go to stderr. With `-o json|yaml`, `describe`, `version` and `check` print a versioned envelope, documented in [`docs/output.md`](docs/output.md); `get` prints a plain Kubernetes `List`. Tables and text layouts are not a stable interface.
+`get`, `describe` and `version` exit `0` on success and `1` on any error. `check` exits `0` when clean, `1` for problems and `2` when it could not check something. `proxy dump` exits `0` or `2`. Data goes to stdout; errors and warnings go to stderr. With `-o json|yaml`, `describe`, `version` and `check` print a versioned envelope, documented in [`docs/output.md`](docs/output.md); `get` prints a plain Kubernetes `List`. Tables and text layouts are not a stable interface.
 
 ## Permissions
 
-kgwctl only reads. It needs `get`, `list` and `watch` on the Gateway API and kgateway kinds, Namespaces, Pods, Events, Services, EndpointSlices, Deployments and CustomResourceDefinitions, and `get` on `pods/proxy` for `check`. It never reads Secrets or ConfigMaps. [`docs/rbac.yaml`](docs/rbac.yaml) holds that ClusterRole, plus a sample ServiceAccount and binding:
+kgwctl only reads. It needs `get`, `list` and `watch` on the Gateway API and kgateway kinds, Namespaces, Pods, Events, Services, EndpointSlices, Deployments and CustomResourceDefinitions, and `get` on `pods/proxy` for `check`. It never reads Secrets or ConfigMaps. [`docs/rbac.yaml`](docs/rbac.yaml) holds that ClusterRole, plus a sample ServiceAccount and binding. The reader role grants no `pods/portforward`; the optional Role at the end of the file adds it for the `proxy` commands (see [`proxy dump`](#proxy-dump-gateway)):
 
 ```bash
 kubectl apply -f docs/rbac.yaml

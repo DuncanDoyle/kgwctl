@@ -317,3 +317,40 @@ func TestProxySubresourceMatch(t *testing.T) {
 		t.Fatalf("rule hits = %d, want 1", hits.N())
 	}
 }
+
+// TestProxySubresourceAnyVerb: a Subresource rule matches a POST, such as a
+// pods/portforward upgrade, for both deny and hold.
+func TestProxySubresourceAnyVerb(t *testing.T) {
+	env := testenv.New(t, testenv.Options{Fixtures: []string{healthy}})
+	const ns, pod = "kgateway-system", "kgateway-7d9f8b6c5-abcde"
+	post := func(ctx context.Context, c load.Clients) (int, error) {
+		var code int
+		err := c.Kube.CoreV1().RESTClient().Post().Namespace(ns).Resource("pods").Name(pod).
+			SubResource("portforward").Do(ctx).StatusCode(&code).Error()
+		return code, err
+	}
+
+	deny := env.Proxies[0].Rule(testenv.Match{Resource: "pods", Subresource: "portforward"}, testenv.Action{Status: http.StatusForbidden})
+	c := clients(t, env)
+	if code, _ := post(t.Context(), c); code != http.StatusForbidden || deny.N() != 1 {
+		t.Fatalf("deny: status %d, hits %d; want 403 and 1", code, deny.N())
+	}
+
+	held := make(chan struct{})
+	defer close(held)
+	env2 := testenv.New(t, testenv.Options{})
+	hold := env2.Proxies[0].Rule(testenv.Match{Resource: "pods", Subresource: "portforward"}, testenv.Action{Until: held})
+	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
+	defer cancel()
+	if _, err := post(ctx, clients(t, env2)); err == nil {
+		t.Fatal("held POST returned without error")
+	}
+	select {
+	case <-hold.ClientGone():
+	case <-time.After(10 * time.Second):
+		t.Fatal("proxy never saw the held client go away")
+	}
+	if hold.N() != 1 {
+		t.Fatalf("hold hits = %d, want 1", hold.N())
+	}
+}
