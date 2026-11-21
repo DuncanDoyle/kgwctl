@@ -60,8 +60,12 @@ func newFakeDialer(t *testing.T, h http.HandlerFunc) fakeDialer {
 	return fakeDialer{srv: srv}
 }
 
-func (d fakeDialer) Dial(context.Context, types.NamespacedName, int) (string, func(), error) {
-	return d.srv.URL, func() {}, nil
+func (d fakeDialer) Dial(context.Context, types.NamespacedName, int) (io.ReadWriteCloser, func(), error) {
+	c, err := net.Dial("tcp", d.srv.Listener.Addr().String())
+	if err != nil {
+		return nil, nil, err
+	}
+	return c, func() {}, nil
 }
 
 // runProxy runs the root command with h's dialer against kubeconfig.

@@ -214,8 +214,9 @@ func TestProxyRoutesFileErrors(t *testing.T) {
 	}
 }
 
-// loopbackTunnel stands in for a port-forward: a loopback listener that stop
-// closes. clientGone closes once the client drops a request mid-response.
+// loopbackTunnel stands in for a port-forward: a connection to a test server
+// whose listener stop closes. clientGone closes once the client drops a
+// request mid-response.
 type loopbackTunnel struct {
 	ln         net.Listener
 	clientGone chan struct{}
@@ -241,8 +242,12 @@ func newLoopbackTunnel(t *testing.T, body []byte) *loopbackTunnel {
 	return lt
 }
 
-func (lt *loopbackTunnel) Dial(context.Context, types.NamespacedName, int) (string, func(), error) {
-	return "http://" + lt.ln.Addr().String(), func() {
+func (lt *loopbackTunnel) Dial(context.Context, types.NamespacedName, int) (io.ReadWriteCloser, func(), error) {
+	c, err := net.Dial("tcp", lt.ln.Addr().String())
+	if err != nil {
+		return nil, nil, err
+	}
+	return c, func() {
 		_ = lt.ln.Close()
 		close(lt.stopped)
 	}, nil

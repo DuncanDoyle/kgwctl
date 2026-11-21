@@ -13,9 +13,11 @@ import (
 	"net/url"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/net/proxy"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -28,86 +30,146 @@ import (
 	"k8s.io/client-go/transport/spdy"
 )
 
-// stopGrace bounds how long a stop waits for the forwarder goroutine to end.
-const stopGrace = time.Second
+// errorGrace bounds how long a read waits for the error stream after the data
+// stream ends.
+const errorGrace = time.Second
 
 // maxStatusBody caps how much of a rejected upgrade's body is read.
 const maxStatusBody = 64 << 10
 
 // NewPortForwarder returns a Dialer that port-forwards through the API server
-// in cfg to an OS-assigned port on 127.0.0.1. The tunnel stops when ctx ends or
-// stop is called; no socket it opened outlives either, also through a proxy.
+// in cfg and speaks to the port over the forward's data stream, in process. The
+// tunnel stops when ctx ends or stop is called; no socket it opened outlives
+// either, also through a proxy.
 func NewPortForwarder(cfg *rest.Config) Dialer { return &portForwarder{cfg: cfg} }
 
 type portForwarder struct{ cfg *rest.Config }
 
 // Dial implements Dialer. A rejected upgrade returns the API server's status
 // as a typed error, so a denied create pods/portforward is a Forbidden.
-func (p *portForwarder) Dial(ctx context.Context, pod types.NamespacedName, port int) (string, func(), error) {
+func (p *portForwarder) Dial(ctx context.Context, pod types.NamespacedName, port int) (io.ReadWriteCloser, func(), error) {
 	kc, err := kubernetes.NewForConfig(p.cfg)
 	if err != nil {
-		return "", nil, fmt.Errorf("build kube client: %w", err)
+		return nil, nil, fmt.Errorf("build kube client: %w", err)
 	}
 	u := kc.CoreV1().RESTClient().Post().Resource("pods").Namespace(pod.Namespace).Name(pod.Name).SubResource("portforward").URL()
 	conns := &connSet{}
 	d, err := newUpgradeDialer(ctx, p.cfg, u, conns)
 	if err != nil {
 		conns.closeAll()
-		return "", nil, err
+		return nil, nil, err
 	}
-	stopCh, readyCh, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
-	fw, err := portforward.NewOnAddresses(d, []string{"127.0.0.1"}, []string{"0:" + strconv.Itoa(port)}, stopCh, readyCh, io.Discard, io.Discard)
+	conn, protocol, err := d.Dial(portforward.PortForwardProtocolV1Name)
 	if err != nil {
 		conns.closeAll()
-		return "", nil, err
+		return nil, nil, err
 	}
-	var fwErr error
-	go func() { fwErr = fw.ForwardPorts(); close(done) }()
-
-	var once sync.Once
-	stop := func() {
-		once.Do(func() {
-			close(stopCh)
-			// Closing the sockets ends ForwardPorts even mid-upgrade; wait for it, bounded.
-			conns.closeAll()
-			select {
-			case <-done:
-			case <-time.After(stopGrace):
-			}
-		})
-	}
-	select {
-	case <-readyCh:
-	case <-done:
-		stop()
-		if ctx.Err() != nil {
-			return "", nil, ctx.Err()
-		}
-		if d.err != nil {
-			return "", nil, d.err // typed, unlike ForwardPorts' wrapping
-		}
-		return "", nil, fwErr
-	case <-ctx.Done():
-		stop()
-		return "", nil, ctx.Err()
-	}
-	ports, err := fw.GetPorts()
-	if err != nil || len(ports) != 1 {
-		stop()
-		return "", nil, fmt.Errorf("port-forward has no local port: %v", err)
-	}
+	stop := sync.OnceFunc(func() {
+		_ = conn.Close()
+		conns.closeAll()
+	})
 	stopAfter := context.AfterFunc(ctx, stop)
-	return "http://127.0.0.1:" + strconv.Itoa(int(ports[0].Local)), func() { stopAfter(); stop() }, nil
+	release := func() { stopAfter(); stop() }
+	if protocol != portforward.PortForwardProtocolV1Name {
+		release()
+		return nil, nil, fmt.Errorf("port-forward to %s: server speaks %q, not %q", pod, protocol, portforward.PortForwardProtocolV1Name)
+	}
+	s, err := openPortStream(conn, port)
+	if err != nil {
+		release()
+		if ctx.Err() != nil {
+			return nil, nil, ctx.Err()
+		}
+		return nil, nil, err
+	}
+	return s, release, nil
 }
 
-// upgradeDialer is spdy.NewDialer with the upgrade bound to ctx. It keeps the
-// typed error of a rejected upgrade, since ForwardPorts flattens it to text.
+// portStream is one forwarded connection: the data stream, plus the error
+// stream on which the remote side reports a forward that failed.
+type portStream struct {
+	data   httpstream.Stream
+	errs   httpstream.Stream
+	port   int
+	closed atomic.Bool
+	done   chan struct{} // closed once the error stream is read to its end
+	remote error         // the remote side's error; set before done closes
+}
+
+// openPortStream creates the error and data streams for port on conn, with
+// the headers client-go's port forwarder sends.
+func openPortStream(conn httpstream.Connection, port int) (*portStream, error) {
+	h := http.Header{}
+	h.Set(corev1.StreamType, corev1.StreamTypeError)
+	h.Set(corev1.PortHeader, strconv.Itoa(port))
+	h.Set(corev1.PortForwardRequestIDHeader, "0")
+	errs, err := conn.CreateStream(h)
+	if err != nil {
+		return nil, fmt.Errorf("create error stream for port %d: %w", port, err)
+	}
+	_ = errs.Close() // kgwctl writes nothing on it
+	h.Set(corev1.StreamType, corev1.StreamTypeData)
+	data, err := conn.CreateStream(h)
+	if err != nil {
+		_ = errs.Reset()
+		return nil, fmt.Errorf("create data stream for port %d: %w", port, err)
+	}
+	s := &portStream{data: data, errs: errs, port: port, done: make(chan struct{})}
+	go s.watch()
+	return s, nil
+}
+
+// watch reads the error stream; a message fails the forward and ends reads.
+func (s *portStream) watch() {
+	msg, _ := io.ReadAll(s.errs)
+	if len(msg) > 0 {
+		s.remote = fmt.Errorf("port-forward to port %d failed: %s", s.port, msg)
+	}
+	close(s.done)
+	if s.remote != nil {
+		_ = s.data.Reset()
+	}
+}
+
+// Read returns the remote side's error, if it reported one, in place of the
+// data stream's end. After Close it returns net.ErrClosed, never a clean EOF.
+func (s *portStream) Read(p []byte) (int, error) {
+	n, err := s.data.Read(p)
+	if err == nil {
+		return n, nil
+	}
+	if s.closed.Load() {
+		return n, net.ErrClosed
+	}
+	// The error stream can trail the data stream's end; wait for it, bounded.
+	t := time.NewTimer(errorGrace)
+	defer t.Stop()
+	select {
+	case <-s.done:
+		if s.remote != nil {
+			return n, s.remote
+		}
+	case <-t.C:
+	}
+	return n, err
+}
+
+func (s *portStream) Write(p []byte) (int, error) { return s.data.Write(p) }
+
+// Close resets both streams.
+func (s *portStream) Close() error {
+	s.closed.Store(true)
+	_ = s.errs.Reset()
+	return s.data.Reset()
+}
+
+// upgradeDialer is spdy.NewDialer with the upgrade bound to ctx. It returns
+// the typed error of a rejected upgrade.
 type upgradeDialer struct {
 	ctx      context.Context
 	upgrader spdy.Upgrader
 	client   *http.Client
 	url      *url.URL
-	err      error
 }
 
 // newUpgradeDialer sends the upgrade over sockets it dials itself, directly or
@@ -165,21 +227,17 @@ func (d *upgradeDialer) Dial(protocols ...string) (httpstream.Connection, string
 		if d.ctx.Err() != nil {
 			err = d.ctx.Err()
 		}
-		d.err = err
 		return nil, "", err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
-		d.err = fmt.Errorf("port-forward upgrade at %s was redirected (%s); redirects are not followed", d.url.Host, resp.Status)
-		return nil, "", d.err
+		return nil, "", fmt.Errorf("port-forward upgrade at %s was redirected (%s); redirects are not followed", d.url.Host, resp.Status)
 	}
 	if resp.StatusCode != http.StatusSwitchingProtocols {
-		d.err = statusError(resp)
-		return nil, "", d.err
+		return nil, "", statusError(resp)
 	}
 	conn, err := d.upgrader.NewConnection(resp)
 	if err != nil {
-		d.err = err
 		return nil, "", err
 	}
 	return conn, resp.Header.Get(httpstream.HeaderProtocolVersion), nil

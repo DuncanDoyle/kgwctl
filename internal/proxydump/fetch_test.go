@@ -58,12 +58,16 @@ func newFakeTunnel(t *testing.T, h http.HandlerFunc) *fakeTunnel {
 	return ft
 }
 
-// Dial implements Dialer.
-func (ft *fakeTunnel) Dial(_ context.Context, _ types.NamespacedName, port int) (string, func(), error) {
+// Dial implements Dialer with a connection to the handler.
+func (ft *fakeTunnel) Dial(_ context.Context, _ types.NamespacedName, port int) (io.ReadWriteCloser, func(), error) {
 	if port != AdminPort {
-		return "", nil, errors.New("unexpected port")
+		return nil, nil, errors.New("unexpected port")
 	}
-	return "http://" + ft.ln.Addr().String(), func() {
+	c, err := net.Dial("tcp", ft.ln.Addr().String())
+	if err != nil {
+		return nil, nil, err
+	}
+	return c, func() {
 		_ = ft.ln.Close()
 		if ft.stops.Add(1) == 1 {
 			close(ft.stopped)
@@ -198,16 +202,17 @@ func TestFetchDeadline(t *testing.T) {
 	ft.waitListenerClosed(t)
 }
 
-// TestFetchDialError: a dial that fails after opening its listener is still released.
+// TestFetchDialError: a dial that fails after opening its tunnel is still released.
 func TestFetchDialError(t *testing.T) {
 	ft := newFakeTunnel(t, func(http.ResponseWriter, *http.Request) {})
 	dialErr := errors.New("dial failed")
-	d := dialerFunc(func(ctx context.Context, pod types.NamespacedName, port int) (string, func(), error) {
-		_, stop, err := ft.Dial(ctx, pod, port)
+	d := dialerFunc(func(ctx context.Context, pod types.NamespacedName, port int) (io.ReadWriteCloser, func(), error) {
+		c, stop, err := ft.Dial(ctx, pod, port)
 		if err != nil {
-			return "", nil, err
+			return nil, nil, err
 		}
-		return "", stop, dialErr
+		_ = c.Close()
+		return nil, stop, dialErr
 	})
 	_, err := Fetch(context.Background(), d, testPod, time.Now)
 	if !errors.Is(err, dialErr) {
@@ -216,9 +221,9 @@ func TestFetchDialError(t *testing.T) {
 	ft.requireListenerClosed(t)
 }
 
-type dialerFunc func(context.Context, types.NamespacedName, int) (string, func(), error)
+type dialerFunc func(context.Context, types.NamespacedName, int) (io.ReadWriteCloser, func(), error)
 
-func (f dialerFunc) Dial(ctx context.Context, pod types.NamespacedName, port int) (string, func(), error) {
+func (f dialerFunc) Dial(ctx context.Context, pod types.NamespacedName, port int) (io.ReadWriteCloser, func(), error) {
 	return f(ctx, pod, port)
 }
 

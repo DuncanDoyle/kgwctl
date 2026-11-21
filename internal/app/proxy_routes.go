@@ -228,36 +228,19 @@ func routesLive(cmd *cobra.Command, f *Flags, now func() time.Time, hooks proxyT
 		d = proxydump.NewPortForwarder(rc)
 	}
 
-	// As in proxyDump; reading the capped body here closes the tunnel at once.
-	done := make(chan dumpResult, 1)
-	go func() {
-		target, err := proxydump.SelectPod(ctx, c, gw, pod)
-		if err != nil {
-			done <- dumpResult{stage: stageSelect, err: err}
-			return
-		}
-		capture, err := proxydump.Fetch(ctx, d, target, now)
-		if err != nil {
-			done <- dumpResult{stage: stageFetch, target: target, err: err}
-			return
-		}
-		body, err := proxydump.ReadCapped(capture.Body, req.max)
-		_ = capture.Body.Close()
-		if err != nil && !errors.Is(err, proxydump.ErrTooLarge) {
-			err = fmt.Errorf("read config dump from %s: %w", target, err)
-		}
-		done <- dumpResult{capture: capture, body: body, stage: stageFetch, target: target, err: err}
-	}()
-	var r dumpResult
-	select {
-	case r = <-done:
-	case <-ctx.Done():
-		return dumpError(ctx, f, "proxy routes", gw, r)
+	capture, err := proxydump.FetchGateway(ctx, c, d, gw, pod, now)
+	if err != nil {
+		return dumpError(ctx, f, "proxy routes", gw, captureFailed(err))
 	}
+	// Reading the capped body here closes the tunnel at once; the read ends with ctx.
+	body, err := proxydump.ReadCapped(capture.Body, req.max)
+	_ = capture.Body.Close()
+	r := dumpResult{capture: capture, body: body, stage: stageFetch, target: capture.Pod}
 	switch {
-	case r.err != nil && ctx.Err() == nil && errors.Is(r.err, proxydump.ErrTooLarge):
+	case err != nil && ctx.Err() == nil && errors.Is(err, proxydump.ErrTooLarge):
 		return tooLarge("the config dump of Pod "+r.target.String(), req.max)
-	case r.err != nil:
+	case err != nil:
+		r.err = fmt.Errorf("read config dump from %s: %w", r.target, err)
 		return dumpError(ctx, f, "proxy routes", gw, r)
 	}
 

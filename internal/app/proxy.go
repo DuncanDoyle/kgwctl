@@ -95,6 +95,17 @@ type dumpResult struct {
 	err     error
 }
 
+// captureFailed is how far a failed FetchGateway got: a *FetchError names the
+// selected Pod, any other error failed the selection.
+func captureFailed(err error) dumpResult {
+	r := dumpResult{stage: stageSelect, err: err}
+	var fe *proxydump.FetchError
+	if errors.As(err, &fe) {
+		r.stage, r.target = stageFetch, fe.Pod
+	}
+	return r
+}
+
 func proxyDump(cmd *cobra.Command, f *Flags, hooks proxyTestHooks, name, pod string) error {
 	rc, ns, err := f.RESTConfig()
 	if err != nil {
@@ -115,30 +126,14 @@ func proxyDump(cmd *cobra.Command, f *Flags, hooks proxyTestHooks, name, pod str
 		d = proxydump.NewPortForwarder(rc)
 	}
 
-	// Run in a goroutine: client-go runs exec credential plugins without a context.
-	done := make(chan dumpResult, 1)
-	go func() {
-		target, err := proxydump.SelectPod(ctx, c, gw, pod)
-		if err != nil {
-			done <- dumpResult{stage: stageSelect, err: err}
-			return
-		}
-		capture, err := proxydump.Fetch(ctx, d, target, time.Now)
-		done <- dumpResult{capture: capture, stage: stageFetch, target: target, err: err}
-	}()
-	var r dumpResult
-	select {
-	case r = <-done:
-	case <-ctx.Done():
-		// A late capture is released by Fetch when ctx ends.
-		return dumpError(ctx, f, "proxy dump", gw, r)
+	capture, err := proxydump.FetchGateway(ctx, c, d, gw, pod, time.Now)
+	if err != nil {
+		return dumpError(ctx, f, "proxy dump", gw, captureFailed(err))
 	}
-	if r.err != nil {
-		return dumpError(ctx, f, "proxy dump", gw, r)
-	}
-	defer r.capture.Body.Close()
+	defer capture.Body.Close()
+	r := dumpResult{capture: capture, stage: stageFetch, target: capture.Pod}
 	out := &errWriter{w: cmd.OutOrStdout()}
-	if _, err := io.Copy(out, r.capture.Body); err != nil {
+	if _, err := io.Copy(out, capture.Body); err != nil {
 		if out.err != nil {
 			r.err = fmt.Errorf("write config dump of %s: %w", r.target, err)
 		} else {
