@@ -134,7 +134,7 @@ Each sub-phase ends with `make test`, `go vet ./...`, gofmt clean.
 - Modify: `hack/live-check.sh`
 
 **Interfaces:**
-- Produces: golden dumps used by 3.2: `demo.json` (snellius-demo use cases), `policies.json`, `collide.json` (no route metadata), `collide-meta.json` (route metadata on).
+- Produces: golden dumps used by 3.2: `demo.json` (snellius-demo use cases), `policies.json` (policies and colliding routes, no route metadata), `collide-meta.json` (route metadata on).
 
 - [ ] **Step 1:** `hack/live/proxy-fixtures.yaml` in namespace `kgwctl-proxy` with its own Gateway `proxy`. Controlled inputs only: no TLS listeners, no Secrets, no credentials in any policy (ext_authz points at a dummy Service by name only).
   - TrafficPolicies on HTTPRoute `orders`: a transformation (request header set), ext_authz via a GatewayExtension to a dummy Service, a local rate limit.
@@ -159,8 +159,8 @@ Task-level only. Exact xdsview signatures are filled in when the release is tagg
 - Selection rule (design §4.2): a route drives `--route` only when its origin is Exact, or Inferred with `RouteAnnotation.NarrowedByKnown == false` (xdsview `5d82113`). xdsview's `filter.Filter` still matches a `NarrowedByKnown` route; kgwctl removes such routes from the selection after `filter.Filter` and lists them as ambiguous with "one candidate exists in the cluster".
 - Tests on the 3.1 goldens, split by expected result:
   - Exact selection: `collide-meta.json` with `--route kgwctl-proxy/orders` returns only that route.
-  - Ambiguity: `collide.json` with the same flag returns no match and lists both colliding routes as ambiguous, live Known or not.
-  - Single survivor: `collide.json` with `Known` holding only `kgwctl-proxy/orders` (the other HTTPRoute deleted) → no match; the route is listed as ambiguous with "one candidate exists in the cluster", never shown as `kgwctl-proxy/orders`.
+  - Ambiguity: `policies.json` (no route metadata) with the same flag returns no match and lists both colliding routes as ambiguous, live Known or not.
+  - Single survivor: `policies.json` with `Known` holding only `kgwctl-proxy/orders` (the other HTTPRoute deleted) → no match; the route is listed as ambiguous with "one candidate exists in the cluster", never shown as `kgwctl-proxy/orders`.
   - A non-active listener survives narrowing (a hand-edited copy of `demo.json` with one listener moved to `warming_state`).
   - A malformed section (a hand-edited copy of `demo.json` with one route config broken) shows a parser warning in both the tree and JSON, next to the surviving routes.
   - `policies.json`: ext_authz `enabled` at `Level` route on `orders`, `disabled` on the second route; response order omits request-only filters and marks unknown ones `?`.
