@@ -163,7 +163,7 @@ Confirmed against xdsview v0.4.0 (kgwctl#10): `parser.Parse(io.Reader) (Result, 
   - Single survivor: `policies.json` with `Known` holding only `kgwctl-proxy/orders` (the other HTTPRoute deleted) → no match; the route is listed as ambiguous with "one candidate exists in the cluster", never shown as `kgwctl-proxy/orders`.
   - A non-active listener survives narrowing (a hand-edited copy of `demo.json` with one listener moved to `warming_state`).
   - A malformed section (a hand-edited copy of `demo.json` with one route config broken) shows a parser warning in both the tree and JSON, next to the surviving routes.
-  - `policies.json`: ext_authz `enabled` at `Level` route on `orders`, `disabled` on the second route; response order omits request-only filters and marks unknown ones `?`.
+  - `policies.json`: ext_authz `enabled` at `Level` route on `orders`; on `public` ext_authz is `off` and not run, and `global_disable/ext_auth` is enabled at route level (kgateway v2.5.1 disables ext_authz this way); response order omits request-only filters and marks unknown ones `?`.
 
 ### Task 3.2.2: `proxy routes` command and tree
 
