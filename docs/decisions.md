@@ -145,3 +145,9 @@ Append-only. Newest at the bottom. Supersede, don't edit.
 **Decision:** The renderer, effective chain and listener state go into xdsview (E11, xdsview#27). kgwctl writes no Envoy parsing or tree of its own; it owns access, origins input and the JSON envelope.
 **Alternatives:** A tree in kgwctl over `model` — two views of filter order that drift, and Snellius gets neither.
 **Consequences:** Sub-phase 3.2 waits on an xdsview minor release. 3.1 ships on v0.3.0.
+
+## D-023 — Add-on commands such as a local MCP server ship in downstream builds (2026-11-21, phase 3)
+**Context:** A local MCP server (`kgwctl mcp`, program edge E10) and traffic debugging were candidates for this CLI. The owner may build them outside this repo. kgwctl moves into kgateway (Phase 7) and must stay vendor-neutral, with no dependency on code outside the program (E6).
+**Decision:** kgwctl does not ship `mcp` or debug commands. A downstream build adds them through `pkg/cli` (`WithCommands`, `WithRegistry`; D-009), as `examples/downstream` shows. `-o agent` stays here: it is output, not a server.
+**Alternatives:** An MCP command in kgwctl over a shared tool set — ties kgwctl to that tool set's license and roadmap.
+**Consequences:** `pkg/cli` is a contract for downstream builds: breaking changes need a version bump and the downstream example as the test. E10's consumer is a downstream build, not kgwctl.

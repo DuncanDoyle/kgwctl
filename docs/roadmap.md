@@ -83,6 +83,7 @@ One command that collects what support asks for, so nobody hand-collects it (D-0
 - Libraries it depends on are license-clean and vendor-neutral (program edge E6).
 
 ## Deferred / out of roadmap
+- `kgwctl mcp` and traffic debugging: downstream builds on `pkg/cli` (D-023), not this repo.
 - `proxy diff` (intended vs accepted config) — waits for krp Phase 6; add as a phase when it lands.
 - Thin-client mode against the kgateway-ui API — only useful once the UI has per-user auth (its Phase 10).
 - Interactive TUI — krp's TUI covers this for now.
