@@ -328,6 +328,9 @@ func TestProxyRoutesJSONOneDocument(t *testing.T) {
 			if doc.SchemaVersion != "kgwctl.kgateway.dev/v1alpha1" || doc.Kind != "ProxyRoutes" {
 				t.Errorf("envelope = %q %q", doc.SchemaVersion, doc.Kind)
 			}
+			if strings.Contains(r.stdout, `"listeners": null`) {
+				t.Errorf("stdout has null listeners")
+			}
 			if r.stderr != "" || strings.HasSuffix(r.stdout, "\n\n") {
 				t.Errorf("stderr %q, stdout %q: want no stderr and one trailing newline", r.stderr, r.stdout)
 			}
@@ -341,6 +344,9 @@ func TestProxyRoutesYAMLGolden(t *testing.T) {
 		"--file", dumpsDir+"policies.json", "--route", "kgwctl-proxy/orders")
 	if r.code != 0 || r.stderr != "" {
 		t.Fatalf("exit %d, stderr %q; want 0 and empty", r.code, r.stderr)
+	}
+	if !strings.Contains(r.stdout, "listeners: []") {
+		t.Errorf("stdout lacks an empty listeners list:\n%s", r.stdout)
 	}
 	golden(t, "proxy-routes", "yaml-policies-orders", r.stdout)
 }
@@ -356,7 +362,7 @@ func TestProxyRoutesLiveJSON(t *testing.T) {
 		want []string
 	}{
 		{name: "live-policies", want: []string{`"certainty": "ambiguous"`, `"narrowedByKnown": true`}},
-		{name: "live-policies-orders", args: []string{"--route", "orders"}, want: []string{`"ambiguous": [`}},
+		{name: "live-policies-orders", args: []string{"--route", "orders"}, want: []string{`"ambiguous": [`, `"listeners": []`}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			d := servePolicies(t, make(chan string, 4))

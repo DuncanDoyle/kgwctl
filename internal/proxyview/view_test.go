@@ -147,6 +147,9 @@ func TestBuildAmbiguousWithoutMetadata(t *testing.T) {
 				t.Errorf("known=%v: %s candidates %v narrowed %v, want two and not narrowed", known, a.Name, a.Candidates, a.NarrowedByKnown)
 			}
 		}
+		if v.Snapshot.Listeners == nil {
+			t.Errorf("known=%v: empty listeners are nil, want an empty slice", known)
+		}
 		out := text(t, v, render.Options{})
 		for _, want := range []string{"no route matches HTTPRoute kgwctl-proxy/orders", collidingRoutes[0], "ambiguous: HTTPRoute kgwctl-proxy/orders, HTTPRoute proxy/orders-kgwctl"} {
 			if !strings.Contains(out, want) {

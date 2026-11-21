@@ -6,7 +6,7 @@
       "file": "../../testdata/dumps/policies.json"
     },
     "snapshot": {
-      "listeners": null
+      "listeners": []
     },
     "ambiguous": [
       {

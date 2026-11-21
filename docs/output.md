@@ -17,7 +17,7 @@
 ## Conventions
 
 - Field names are camelCase. Times are RFC3339 and nothing is relative to now, so there is no age field.
-- A reference is always an object, never a string. `group` is `""` for the core group. `namespace` is absent only for cluster-scoped objects.
+- A reference is always an object, never a string. `group` is `""` for the core group, except in `proxy routes`, where an empty `group` is omitted. `namespace` is absent only for cluster-scoped objects.
 - `install` is `namespace/name` of the owning install, as in `get`.
 - Optional fields are omitted when empty, not printed as null. Fields documented as always present are printed even when empty.
 - Data goes to stdout and errors to stderr. Warnings never appear in JSON or YAML output, except the parser `warnings` of `proxy routes`.
@@ -504,7 +504,7 @@ A check is still deciding when `pending` is true or it has a `hold`. Otherwise i
 | Field | Type | Meaning |
 |---|---|---|
 | `source` | ProxySource | Where the config dump came from. |
-| `snapshot` | EnvoySnapshot | The listeners, virtual hosts and routes in the dump, narrowed by `--route` and `--rule`. Always present; `listeners` is `null` when nothing is left. |
+| `snapshot` | EnvoySnapshot | The listeners, virtual hosts and routes in the dump, narrowed by `--route` and `--rule`. Always present; `listeners` is `[]` when nothing is left. |
 | `warnings` | string[] | Sections of the dump the parser skipped. Absent when none. |
 | `ambiguous` | AmbiguousRoute[] | With `--route`: Envoy routes whose name reads as the selected HTTPRoute and at least one other. They are not in `snapshot` as matches. Absent without `--route` or when none. |
 
@@ -514,8 +514,8 @@ Live, `gateway`, `pod` and `capturedAt` are set. With `--file`, `file` is set, a
 
 | Field | Type | Meaning |
 |---|---|---|
-| `gateway` | Ref | The Gateway. |
-| `pod` | Ref | The proxy Pod the dump was read from. Live only. |
+| `gateway` | Ref | The Gateway, with `group: gateway.networking.k8s.io`. |
+| `pod` | Ref | The proxy Pod the dump was read from, `kind: Pod`. Its `group` is absent, since the core group's empty value is omitted in these refs. Live only. |
 | `capturedAt` | string | RFC3339 UTC time of the capture. Live only. |
 | `file` | string | The path as given to `--file`. |
 
@@ -540,6 +540,6 @@ A route name can repeat across route configs, so `routeConfig` and `name` togeth
 - `effectiveChain` is attached to each route inside its own filter chain, never keyed by route name, so a route shared by two filter chains has two chains. Each `filters[]` entry has `runs`, `state` (`on`, `off`, `enabled`, `disabled` or `unknown`), `level`, `request` and `response` (`yes`, `no` or `unknown`) and `contributions` (the extension or policy, with `ref` and `field`).
 - `typedConfig`, `typedPerFilterConfig` and `metadata` are the dump's own config. Envoy redacts only fields it knows are sensitive, so check the output before you share it (see `proxy dump` in the README).
 
-kgwctl changes one thing in the model. A route whose origin xdsview resolved only by using the cluster's HTTPRoutes to break a tie appears with `origin.certainty: "ambiguous"` and `origin.narrowedByKnown: true`, and is listed in `ambiguous` with `narrowedByKnown: true`. kgwctl never treats a tie broken that way as a match, because Envoy can still serve a deleted HTTPRoute's route. Everything else in `snapshot` is xdsview's model unchanged.
+kgwctl changes two things in the model. First, a route whose origin xdsview resolved only by using the cluster's HTTPRoutes to break a tie appears in `snapshot` with `origin.certainty: "ambiguous"` and `origin.narrowedByKnown: true`, and is listed in `ambiguous` with `narrowedByKnown: true`. Without `--route` it appears in both places; with `--route` it is listed only in `ambiguous`. kgwctl never treats a tie broken that way as a match, because Envoy can still serve a deleted HTTPRoute's route. Second, an empty `listeners` prints as `[]` instead of null. Everything else in `snapshot` is xdsview's model unchanged.
 
 A breaking change to xdsview's `model` (a renamed or removed field, or a changed meaning) bumps `schemaVersion`, as it does for kgwctl's own fields.

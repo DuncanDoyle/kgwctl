@@ -93,7 +93,7 @@ func Build(body []byte, gw *types.NamespacedName, known []model.Ref, sel Selecti
 	snap := demote(origin.Annotate(res.Snapshot, m), nameOnly)
 	snap = chain.Annotate(snap, m)
 
-	v := View{Snapshot: snap, Warnings: res.Warnings, Selection: sel}
+	v := View{Snapshot: emptyListeners(snap), Warnings: res.Warnings, Selection: sel}
 	if sel.Route.Name == "" {
 		return v, nil
 	}
@@ -101,7 +101,7 @@ func Build(body []byte, gw *types.NamespacedName, known []model.Ref, sel Selecti
 	if sel.Rule != nil {
 		opts.RuleIndex = *sel.Rule
 	}
-	v.Snapshot = filter.Filter(snap, opts)
+	v.Snapshot = emptyListeners(filter.Filter(snap, opts))
 	// filter.Ambiguous keys by route name alone; two route configs can share one.
 	seen := map[[2]string]bool{}
 	walk(snap, func(rc *model.RouteConfig, r *model.Route) {
@@ -113,6 +113,17 @@ func Build(body []byte, gw *types.NamespacedName, known []model.Ref, sel Selecti
 		v.Ambiguous = append(v.Ambiguous, AmbiguousRoute{RouteConfig: rc.Name, Name: r.Name, Candidates: a.Candidates, NarrowedByKnown: a.NarrowedByKnown})
 	})
 	return v, nil
+}
+
+// emptyListeners gives a snapshot without listeners an empty slice, so JSON
+// prints [] and not null. It copies a snapshot it changes.
+func emptyListeners(s *model.EnvoySnapshot) *model.EnvoySnapshot {
+	if s.Listeners != nil {
+		return s
+	}
+	out := *s
+	out.Listeners = []model.Listener{}
+	return &out
 }
 
 // matches reports whether o reads as the selected HTTPRoute and rule.

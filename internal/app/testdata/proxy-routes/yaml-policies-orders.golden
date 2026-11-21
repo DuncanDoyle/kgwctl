@@ -35,7 +35,7 @@ item:
     name: listener~8080~orders_kgwctl_example-route-0-httproute-orders-kgwctl-proxy-0-0-matcher-0
     routeConfig: listener~8080
   snapshot:
-    listeners: null
+    listeners: []
   source:
     file: ../../testdata/dumps/policies.json
 kind: ProxyRoutes
