@@ -4,24 +4,32 @@
 Phase: 3 — Data plane (`proxy routes`)
 Base: 44be3b6
 Docs: docs/phases/phase-3/
-Status: design
+Status: implementation
 
 ### Queue
 - [x] Q1 Phase 3 design (`design.md`) r1: ab40189
 - [ ] Q1b xdsview E11 (xdsview#27): agreed by the xdsview session; starts when the owner confirms there. Blocks 3.2 only
 - [x] Q2 Phase 3 implementation plan (r4)
-- [ ] Q3 Cross-model review of design + plan (5 rounds, reviews/design-codex*.md; last finding fixed), owner go-ahead ← CURRENT
+- [x] Q3 Cross-model review of design + plan (5 rounds, reviews/design-codex*.md), owner go-ahead 2026-11-21
+- [ ] Q4 Sub-phase 3.1 capture and `proxy dump` ← CURRENT
+- [ ] Q5 Sub-phase 3.2 `proxy routes` (waits on xdsview v0.4.0; 6.1 in progress 2026-11-21)
+- [ ] Q6 Sub-phase 3.3 live check and docs
+- [ ] Q7 Phase review (Codex), triage
+- [ ] Q8 Phase close
 
 ### Exit gates
 - [ ] tests/vet pass
 - [ ] all queue items done or deferred
-- [ ] design+plan cross-model review + triage
+- [x] design+plan cross-model review + triage: reviews/design-codex.md (+ -r2 to -r5)
 - [ ] phase cross-model review + triage
 - [ ] decisions.md / design / plan in sync with code
 - [ ] phase-3-complete.md written, roadmap updated, tracked items closed
 
 ## Sub-phase
-n/a
+Sub-phase: 3.1 — capture and `proxy dump` (planned)
+Base: c38fe47
+Brief: docs/phases/phase-3/phase-3.1-brief.md
+Status: implementation
 
 ## Program
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
