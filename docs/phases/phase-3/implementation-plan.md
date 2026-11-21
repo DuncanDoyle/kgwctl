@@ -183,7 +183,7 @@ Confirmed against xdsview v0.4.0 (kgwctl#10): `parser.Parse(io.Reader) (Result, 
 
 ### Task 3.3.1: `proxy routes` live check
 
-- `hack/live-check.sh`: `proxy routes proxy -n kgwctl-proxy --route kgwctl-proxy/orders` as reader + Role; assert the three filters in request order with their policies. Same against a file from `proxy dump` taken with `enableRouteSourceMetadata: true`, run with `--file --gateway kgwctl-proxy/proxy`: identical output except the header. Without metadata, both the file and the live view list the colliding routes as ambiguous.
+- `hack/live-check.sh`: `proxy routes proxy -n kgwctl-proxy --route kgwctl-proxy/orders` as reader + Role; assert the three filters in request order, the ext_authz policy contribution, and the route's policy list (`route_source`/merge metadata). Transformation and local rate limit attribution waits on the xdsview patch. Same against a file from `proxy dump` taken with `enableRouteSourceMetadata: true`, run with `--file --gateway kgwctl-proxy/proxy`: identical output except the header. Without metadata, both the file and the live view list the colliding routes as ambiguous.
 - README walkthrough: "does my transformation run before ext_authz?" answered from the live tree.
 
 ## Phase close prerequisites (not done by the implementer)

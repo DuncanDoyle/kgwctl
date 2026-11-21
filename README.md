@@ -135,7 +135,7 @@ Live `proxy routes` and `proxy dump` require `create pods/portforward`. kgwctl s
 
 Shows one Gateway's Envoy listeners, virtual hosts and routes, and for each route the HTTP filters it runs in request order, with the Gateway API and kgateway objects they come from. Live, it reads the config dump of one replica (the oldest Ready one, or `--pod`) and lists the cluster's HTTPRoutes to attribute routes. With `--file` it reads a saved dump and calls no Kubernetes API. It needs the same `create pods/portforward` grant as `proxy dump` when live.
 
-`--route <ns>/<name>` shows only that HTTPRoute's routes, and `--rule <index>` one of its rules. `--response` also shows the response order. A route whose name reads as two HTTPRoutes is listed as ambiguous, never matched. The dump is capped by `--max-size` (default `64Mi`); save a larger one with `proxy dump` and read it with `--file`.
+`--route <ns>/<name>` shows only that HTTPRoute's routes, and `--rule <index>` one of its rules. `--response` also shows the response order. A route whose name reads as two HTTPRoutes is listed as ambiguous, and one whose origin is unresolved is listed as such; neither is ever matched. The dump is capped by `--max-size` (default `64Mi`); save a larger one with `proxy dump` and read it with `--file`.
 
 This is the filter order of an HTTPRoute `orders`, taken from a saved dump:
 

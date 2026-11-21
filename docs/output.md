@@ -497,7 +497,7 @@ A check is still deciding when `pending` is true or it has a `hold`. Otherwise i
 
 ## ProxyRoutes
 
-`proxy routes -o json|yaml` prints one document with `kind: ProxyRoutes`. Unlike the other commands, it carries the parser warnings in the document (`warnings`), so a partial result never looks complete. Errors exit `2` and print nothing to stdout.
+`proxy routes -o json|yaml` prints one document with `kind: ProxyRoutes`. Unlike the other commands, it carries the parser warnings in the document (`warnings`), so a partial result never looks complete. Errors exit `2` and print nothing to stdout. Valid JSON that is not an object with a `configs` array exits `2` with "not an Envoy config dump (no configs array)"; `{"configs":[]}` is an empty proxy.
 
 ### ProxyRoutes
 
@@ -506,7 +506,7 @@ A check is still deciding when `pending` is true or it has a `hold`. Otherwise i
 | `source` | ProxySource | Where the config dump came from. |
 | `snapshot` | EnvoySnapshot | The listeners, virtual hosts and routes in the dump, narrowed by `--route` and `--rule`. Always present; `listeners` is `[]` when nothing is left. |
 | `warnings` | string[] | Sections of the dump the parser skipped. Absent when none. |
-| `ambiguous` | AmbiguousRoute[] | With `--route`: Envoy routes whose name reads as the selected HTTPRoute and at least one other. They are not in `snapshot` as matches. Absent without `--route` or when none. |
+| `ambiguous` | AmbiguousRoute[] | With `--route`: Envoy routes whose name reads as the selected HTTPRoute and at least one other, or whose name names it but has no reading (`unresolved`). They are not in `snapshot` as matches. Absent without `--route` or when none. |
 
 ### ProxySource
 
@@ -527,8 +527,9 @@ A route name can repeat across route configs, so `routeConfig` and `name` togeth
 |---|---|---|
 | `routeConfig` | string | Name of the Envoy route config that holds the route. |
 | `name` | string | Name of the Envoy route. |
-| `candidates` | RouteOrigin[] | The HTTPRoute, rule and match the name could read as, each with `route` (Ref), `ruleIndex` and `matchIndex` (`-1` when unknown) and `ruleName` when the rule has one. |
+| `candidates` | RouteOrigin[] | Every HTTPRoute, rule and match the name alone could read as, whether or not that HTTPRoute exists in the cluster, each with `route` (Ref), `ruleIndex` and `matchIndex` (`-1` when unknown) and `ruleName` when the rule has one. |
 | `narrowedByKnown` | boolean | True when only the HTTPRoutes in the cluster narrowed the candidates to one. Absent otherwise. |
+| `unresolved` | boolean | True when the route's name has no reading, so it has no origin; `candidates` is `[]`. Absent otherwise. |
 
 ### EnvoySnapshot
 
@@ -540,6 +541,6 @@ A route name can repeat across route configs, so `routeConfig` and `name` togeth
 - `effectiveChain` is attached to each route inside its own filter chain, never keyed by route name, so a route shared by two filter chains has two chains. Each `filters[]` entry has `runs`, `state` (`on`, `off`, `enabled`, `disabled` or `unknown`), `level`, `request` and `response` (`yes`, `no` or `unknown`) and `contributions` (the extension or policy, with `ref` and `field`).
 - `typedConfig`, `typedPerFilterConfig` and `metadata` are the dump's own config. Envoy redacts only fields it knows are sensitive, so check the output before you share it (see `proxy dump` in the README).
 
-kgwctl changes two things in the model. First, a route whose origin xdsview resolved only by using the cluster's HTTPRoutes to break a tie appears in `snapshot` with `origin.certainty: "ambiguous"` and `origin.narrowedByKnown: true`, and is listed in `ambiguous` with `narrowedByKnown: true`. Without `--route` it appears in both places; with `--route` it is listed only in `ambiguous`. kgwctl never treats a tie broken that way as a match, because Envoy can still serve a deleted HTTPRoute's route. Second, an empty `listeners` prints as `[]` instead of null. Everything else in `snapshot` is xdsview's model unchanged.
+kgwctl changes two things in the model. First, a route whose origin xdsview resolved only by using the cluster's HTTPRoutes to break a tie appears in `snapshot` with `origin.certainty: "ambiguous"` and `origin.narrowedByKnown: true`. With `--route`, it is not a match: it is left out of `snapshot` and listed in `ambiguous` with `narrowedByKnown: true`. Without `--route`, `ambiguous` is absent and the route appears only in `snapshot`. kgwctl never treats a tie broken that way as a match, because Envoy can still serve a deleted HTTPRoute's route. When the cluster's HTTPRoutes leave two or more readings, the `snapshot` origin lists those, while `ambiguous` lists every reading of the name. Second, an empty `listeners` prints as `[]` instead of null. Everything else in `snapshot` is xdsview's model unchanged.
 
 A breaking change to xdsview's `model` (a renamed or removed field, or a changed meaning) bumps `schemaVersion`, as it does for kgwctl's own fields.
