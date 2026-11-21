@@ -15,7 +15,7 @@ Status: implementation
 - [x] Q5 Sub-phase 3.2 `proxy routes` (phase-3.2-complete.md)
 - [x] Q6 Sub-phase 3.3 live check and docs (phase-3.3-complete.md)
 - [x] Q7 Phase review (Codex), triage: reviews/phase-codex.md
-- [ ] Q7b Stabilization 3.4 (phase review findings 1, 2, 5, 6, 7; xdsview bump for 3, 4) ← proposed
+- [ ] Q7b Stabilization 3.4 (phase review findings 1, 2, 5, 6, 7; xdsview bump for 3, 4) ← CURRENT
 - [ ] Q8 Phase close
 
 ### Exit gates
@@ -27,7 +27,23 @@ Status: implementation
 - [ ] phase-3-complete.md written, roadmap updated, tracked items closed
 
 ## Sub-phase
-n/a (3.3 complete: docs/phases/phase-3/phase-3.3-complete.md)
+Sub-phase: 3.4 — Phase review fixes
+Kind: stabilization
+Base: 0e84898
+Brief: docs/phases/phase-3/phase-3.4-brief.md
+
+### Allowed work
+Bug fixes, missing designed behaviour, tests, docs.
+
+### Not allowed
+New features, architecture changes, new dependencies.
+
+### Queue
+- [ ] S1 (P1, P4) In-process stream, no local listener; capture boundary owns the deadline (findings 1, 7) ← CURRENT
+- [ ] S2 (P1, P2) HTTPRoute list behind the deadline; oversized-dump recovery names --max-size (findings 2, 5)
+- [ ] S3 (P3) Live check uses the Role from docs/rbac.yaml (finding 6)
+- [ ] S4 xdsview bump for findings 3, 4, if released before close
+- [ ] S5 Cross-model review + triage
 
 ## Program
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
