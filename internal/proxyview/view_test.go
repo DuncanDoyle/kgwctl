@@ -496,6 +496,22 @@ func TestBuildUnresolvedNeverMatches(t *testing.T) {
 	}
 }
 
+// TestBuildUnresolvedIgnoresVhostPrefix: an HTTPRoute marker inside the vhost
+// part of a route name does not list that route as unresolved for the HTTPRoute.
+func TestBuildUnresolvedIgnoresVhostPrefix(t *testing.T) {
+	const name = "listener~8080~httproute-orders-team-a-x_example-route-0-httproute-payments-team-b-0-0"
+	body := renameRoute(t, golden(t, "policies.json"), "public_kgwctl", name)
+	teamA := types.NamespacedName{Namespace: "team-a", Name: "orders"}
+	if v := build(t, body, proxyGW, nil, proxyview.Selection{Route: teamA}); len(v.Ambiguous) != 0 {
+		t.Errorf("team-a/orders: ambiguous %+v, want none", v.Ambiguous)
+	}
+	payments := types.NamespacedName{Namespace: "team-b", Name: "payments"}
+	v := build(t, body, proxyGW, nil, proxyview.Selection{Route: payments})
+	if len(v.Ambiguous) != 1 || v.Ambiguous[0].Name != name || !v.Ambiguous[0].Unresolved {
+		t.Errorf("team-b/payments: ambiguous %+v, want %s unresolved", v.Ambiguous, name)
+	}
+}
+
 // TestBuildAmbiguousJudgedOnNameReadings: with two of a name's three readings
 // in the cluster, the route still concerns the third, deleted HTTPRoute.
 func TestBuildAmbiguousJudgedOnNameReadings(t *testing.T) {

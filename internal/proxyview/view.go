@@ -116,7 +116,7 @@ func Build(body []byte, gw *types.NamespacedName, known []model.Ref, sel Selecti
 	// keeps those out, and they are listed as unresolved instead.
 	unresolved := map[[2]string]bool{}
 	walk(filter.Filter(snap, opts), func(rc *model.RouteConfig, r *model.Route) {
-		if !resolved(r.Origin) {
+		if !resolved(r.Origin) && sel.named(r.Name) {
 			unresolved[[2]string{rc.Name, r.Name}] = true
 		}
 	})
@@ -196,6 +196,37 @@ func emptyListeners(s *model.EnvoySnapshot) *model.EnvoySnapshot {
 func (s Selection) matches(o model.RouteOrigin) bool {
 	return o.Route.Kind == "HTTPRoute" && o.Route.Namespace == s.Route.Namespace && o.Route.Name == s.Route.Name &&
 		(s.Rule == nil || o.RuleIndex == *s.Rule)
+}
+
+// named reports whether a route name carries the selected HTTPRoute's marker
+// right after a `-route-<i>-` segment, so a marker inside the vhost part doesn't count.
+func (s Selection) named(name string) bool {
+	marker := "-httproute-" + s.Route.Name + "-" + s.Route.Namespace + "-"
+	for off := 0; ; {
+		k := strings.Index(name[off:], marker)
+		if k < 0 {
+			return false
+		}
+		i := off + k
+		j := strings.LastIndex(name[:i], "-route-")
+		ruleOK := s.Rule == nil || strings.HasPrefix(name[i+len(marker):], fmt.Sprintf("%d-", *s.Rule))
+		if j >= 0 && isDigits(name[j+len("-route-"):i]) && ruleOK {
+			return true
+		}
+		off = i + 1
+	}
+}
+
+func isDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // demote replaces each origin narrowed by known with its name-only reading,
