@@ -44,7 +44,7 @@ envtest (`internal/testenv`) runs no kubelet, so no port-forward can complete th
 
 | Sub-phase | Delivers | Tasks | Waits on |
 |---|---|---|---|
-| 3.1 | Capture, `proxy dump`, RBAC Role, golden dumps | 3.1.1–3.1.4 | none (`proxy dump` in Phase 3 is the design's open item 1; if the owner moves it to Phase 4, 3.1.3 keeps the dialer and drops the command, 3.1.4 captures with `kubectl port-forward` + `curl`, and its two RBAC live checks move to `proxy routes` in 3.3.1) |
+| 3.1 | Capture, `proxy dump`, RBAC Role, golden dumps | 3.1.1–3.1.4 | none |
 | 3.2 | `proxy routes` on xdsview E11 | 3.2.1–3.2.3 | xdsview release with E11 |
 | 3.3 | Live check and docs for `proxy routes` | 3.3.1 | 3.2 |
 
@@ -107,7 +107,7 @@ Each sub-phase ends with `make test`, `go vet ./...`, gofmt clean.
 
 **Interfaces:**
 - Consumes: `SelectPod`, `Fetch`, `Capture`, `AdminPort`.
-- Produces: `func NewPortForwarder(cfg *rest.Config) Dialer` (client-go `tools/portforward`, local address `127.0.0.1`, port `0`, stops on ctx cancel and on `stop`). The SPDY upgrade must honour ctx: client-go's stock dialer sends the upgrade without a context and reads the response with no deadline. Use the technique of xdsview `pkg/envoy/source/kube/portforward.go:187-228` (`ctxDialer`): send the upgrade with ctx and close the connection once ctx is done. Read the upgrade response status before the upgrader consumes it, so a 403 stays a typed Forbidden. With a kubeconfig or environment proxy, xdsview's socket-close hook doesn't reach the connection; `Fetch` must still return at the deadline (run the dial in a goroutine and stop waiting on ctx), leaving the stuck socket to process exit.
+- Produces: `func NewPortForwarder(cfg *rest.Config) Dialer` (client-go `tools/portforward`, local address `127.0.0.1`, port `0`, stops on ctx cancel and on `stop`). The SPDY upgrade must honour ctx: client-go's stock dialer sends the upgrade without a context and reads the response with no deadline. Use the technique of xdsview `pkg/envoy/source/kube/portforward.go:187-228` (`ctxDialer`): send the upgrade with ctx and close the connection once ctx is done. Read the upgrade response status before the upgrader consumes it, so a 403 stays a typed Forbidden. With a kubeconfig or environment proxy, xdsview's socket-close hook doesn't reach the connection. So the upgrade dials through a kgwctl-owned dial function: resolve the proxy as client-go would (`rest.Config.Proxy`, else `http.ProxyFromEnvironment`), speak HTTP CONNECT or SOCKS5 (`golang.org/x/net/proxy`, already a module dependency) to it, keep the `net.Conn`, and close it when ctx ends. No socket outlives the deadline.
 - Produces: `kgwctl proxy` (no-op parent with help) and `kgwctl proxy dump <gateway> [--pod <pod>]`, honouring `-n`, `--context`, `--kubeconfig`, `--request-timeout`.
 - Produces: `internal/app` test hook to inject a `Dialer` (same pattern as Phase 2's `checkTestHooks`).
 
@@ -119,7 +119,7 @@ Each sub-phase ends with `make test`, `go vet ./...`, gofmt clean.
   - `TestProxyDumpPortForwardForbidden`: real `NewPortForwarder` against envtest with the deny match → exit 2; stderr contains `create pods/portforward` and `docs/rbac.yaml`.
   - `TestProxyDumpDeadline`: `--request-timeout 300ms`, blocking fake server → exit 2 within 3 s.
   - `TestProxyDumpUpgradeHangs`: envtest serves the Gateway and Pod reads; the testenv proxy stalls only the `pods/portforward` request (a delay `Match` on that subresource, from Step 1). `--request-timeout 2s` → exit 2 within 5 s; the proxy recorded the port-forward request (so the timeout hit the upgrade, not discovery) and saw its connection closed.
-  - `TestProxyDumpUpgradeHangsViaProxy`: the kubeconfig `proxy-url` points at an HTTP CONNECT proxy in the test that forwards to the testenv proxy, so discovery passes, and the testenv proxy stalls only the port-forward request. Assert: the port-forward request arrived, exit 2 at the deadline (within `--request-timeout` + 3 s). Socket closure is not asserted on this path (design §4.1).
+  - `TestProxyDumpUpgradeHangsViaProxy`: the kubeconfig `proxy-url` points at an HTTP CONNECT proxy in the test that forwards to the testenv proxy, so discovery passes, and the testenv proxy stalls only the port-forward request. Assert: the port-forward request arrived, exit 2 at the deadline (within `--request-timeout` + 3 s), and the CONNECT proxy sees the client side of the stalled connection closed. A SOCKS5 variant does the same with a test SOCKS5 server.
   - `TestProxyDumpExecPlugin`: add `proxy dump` to the lifecycle suite's credential exec plugin cases (`internal/app/lifecycle_test.go:222` onward), so a hanging plugin ends at `--request-timeout`.
   - `TestCheckAsReader`: one `check` command test run as an envtest user bound only to `kgwctl-reader` from `docs/rbac.yaml` (envtest `AddUser` plus the ClusterRole and a binding applied as admin), asserting the same findings as the admin run. This proves the reader role alone still serves `check`.
 - [ ] **Step 3:** Implement. `proxy dump` copies `Capture.Body` to stdout with `io.Copy`, no cap. Help text carries §3.2's redaction paragraph verbatim. Error mapping: a typed Forbidden (from the API or the preserved upgrade status) → the RBAC line.
@@ -169,7 +169,7 @@ Task-level only. Exact xdsview signatures are filled in when the release is tagg
 
 - `kgwctl proxy routes [<gateway>] [--file [--gateway <ns>/<name>]] [--pod] [--route ns/name] [--rule i] [--max-size 64Mi] [-o json|yaml]`. Live: `SelectPod` + `Fetch` + `ReadCapped`, Known HTTPRoutes from kgwctl's one-shot load (`load.Load`). File: open + `ReadCapped`, and never any Kubernetes call, even when a cluster is reachable (D-021); Known is empty, and `--gateway` (file only; an error live) supplies the Gateway ref for listener and route-config origins. A test with an unreachable kubeconfig and one with a reachable envtest proves both give identical output and that the envtest proxy sees no request.
 - Tree from `render.Text` with kgwctl's header line (§3.1). Response order shown only where xdsview reports an encoder; otherwise the §3.1 wording.
-- Exit 2 for: cap exceeded (message names `--max-size` and `proxy dump`, or `kubectl port-forward` + `curl` if `proxy dump` moved to Phase 4), parse error, and every 3.1 capture error.
+- Exit 2 for: cap exceeded (message names `--max-size` and `proxy dump`), parse error, and every 3.1 capture error.
 - `TestProxyRoutesCapClosesTunnel`: live `proxy routes` with `--max-size 1Ki` through the loopback fake dialer of 3.1.2 and a 2 KiB body → exit 2 naming `--max-size`; the server sees the connection closed and the tunnel listener refuses connections.
 - Golden text tests per fixture dump.
 
@@ -183,7 +183,7 @@ Task-level only. Exact xdsview signatures are filled in when the release is tagg
 
 ### Task 3.3.1: `proxy routes` live check
 
-- `hack/live-check.sh`: `proxy routes proxy -n kgwctl-proxy --route kgwctl-proxy/orders` as reader + Role; assert the three filters in request order with their policies. Same against a file from `proxy dump` (or `kubectl port-forward` + `curl` if `proxy dump` moved to Phase 4) taken with `enableRouteSourceMetadata: true`, run with `--file --gateway kgwctl-proxy/proxy`: identical output except the header. Without metadata, both the file and the live view list the colliding routes as ambiguous.
+- `hack/live-check.sh`: `proxy routes proxy -n kgwctl-proxy --route kgwctl-proxy/orders` as reader + Role; assert the three filters in request order with their policies. Same against a file from `proxy dump` taken with `enableRouteSourceMetadata: true`, run with `--file --gateway kgwctl-proxy/proxy`: identical output except the header. Without metadata, both the file and the live view list the colliding routes as ambiguous.
 - README walkthrough: "does my transformation run before ext_authz?" answered from the live tree.
 
 ## Phase close prerequisites (not done by the implementer)
