@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strings"
 	"sync"
@@ -35,25 +36,41 @@ type Capture struct {
 	Body io.ReadCloser
 }
 
-// tunnelBody releases the tunnel exactly once, after the body is closed.
+// tunnelBody releases the tunnel exactly once, on Close or when ctx ends.
 type tunnelBody struct {
 	io.ReadCloser
-	once sync.Once
-	err  error
-	stop func()
+	ctx       context.Context
+	once      sync.Once
+	err       error
+	stop      func()
+	stopAfter func() bool
 }
 
-func (b *tunnelBody) Close() error {
+// Read reports the context's error when ctx ending cut the read short.
+func (b *tunnelBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if err != nil && err != io.EOF && b.ctx.Err() != nil {
+		err = b.ctx.Err()
+	}
+	return n, err
+}
+
+func (b *tunnelBody) release() {
 	b.once.Do(func() {
 		b.err = b.ReadCloser.Close()
 		b.stop()
 	})
+}
+
+func (b *tunnelBody) Close() error {
+	b.stopAfter()
+	b.release()
 	return b.err
 }
 
 // Fetch sends one GET /config_dump to the admin port of pod through d.
-// Redirects are refused. On success the caller must close Capture.Body; on
-// error the tunnel is already released.
+// Redirects are refused. On success the caller must close Capture.Body; the
+// tunnel is also released when ctx ends. On error it is already released.
 func Fetch(ctx context.Context, d Dialer, pod types.NamespacedName, now func() time.Time) (*Capture, error) {
 	base, stop, err := d.Dial(ctx, pod, AdminPort)
 	if err != nil {
@@ -84,13 +101,19 @@ func Fetch(ctx context.Context, d Dialer, pod types.NamespacedName, now func() t
 		stop()
 		return nil, fmt.Errorf("fetch config dump from %s: admin endpoint returned %s", pod, resp.Status)
 	}
-	return &Capture{Pod: pod, CapturedAt: now(), Body: &tunnelBody{ReadCloser: resp.Body, stop: stop}}, nil
+	body := &tunnelBody{ReadCloser: resp.Body, ctx: ctx, stop: stop}
+	body.stopAfter = context.AfterFunc(ctx, body.release)
+	return &Capture{Pod: pod, CapturedAt: now(), Body: body}, nil
 }
 
 // ReadCapped reads all of r and returns ErrTooLarge when it holds more than
 // max bytes.
 func ReadCapped(r io.Reader, max int64) ([]byte, error) {
-	b, err := io.ReadAll(io.LimitReader(r, max+1))
+	limit := max
+	if max < math.MaxInt64 {
+		limit = max + 1 // one byte over tells "at the cap" from "over it"
+	}
+	b, err := io.ReadAll(io.LimitReader(r, limit))
 	if err != nil {
 		return nil, err
 	}

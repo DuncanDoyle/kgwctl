@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"sync"
@@ -23,12 +24,13 @@ var testPod = types.NamespacedName{Namespace: "gw-ns", Name: "gw-abc"}
 // fakeTunnel stands in for a port-forward: a loopback listener in front of a
 // handler. Closure is observed server-side.
 type fakeTunnel struct {
-	ln     net.Listener
-	srv    *http.Server
-	stops  atomic.Int32
-	mu     sync.Mutex
-	reqs   []*http.Request
-	closed chan struct{} // receives one value per connection reaching StateClosed
+	ln      net.Listener
+	srv     *http.Server
+	stops   atomic.Int32
+	mu      sync.Mutex
+	reqs    []*http.Request
+	closed  chan struct{} // receives one value per connection reaching StateClosed
+	stopped chan struct{} // closed by the first stop
 }
 
 func newFakeTunnel(t *testing.T, h http.HandlerFunc) *fakeTunnel {
@@ -37,7 +39,7 @@ func newFakeTunnel(t *testing.T, h http.HandlerFunc) *fakeTunnel {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ft := &fakeTunnel{ln: ln, closed: make(chan struct{}, 16)}
+	ft := &fakeTunnel{ln: ln, closed: make(chan struct{}, 16), stopped: make(chan struct{})}
 	ft.srv = &http.Server{
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ft.mu.Lock()
@@ -62,8 +64,10 @@ func (ft *fakeTunnel) Dial(_ context.Context, _ types.NamespacedName, port int) 
 		return "", nil, errors.New("unexpected port")
 	}
 	return "http://" + ft.ln.Addr().String(), func() {
-		ft.stops.Add(1)
 		_ = ft.ln.Close()
+		if ft.stops.Add(1) == 1 {
+			close(ft.stopped)
+		}
 	}, nil
 }
 
@@ -83,6 +87,18 @@ func (ft *fakeTunnel) requireListenerClosed(t *testing.T) {
 		_ = c.Close()
 		t.Fatal("tunnel listener still accepts connections")
 	}
+}
+
+// waitListenerClosed waits for the tunnel to be released without the test
+// closing anything.
+func (ft *fakeTunnel) waitListenerClosed(t *testing.T) {
+	t.Helper()
+	select {
+	case <-ft.stopped:
+	case <-time.After(waitBound):
+		t.Fatal("tunnel never released")
+	}
+	ft.requireListenerClosed(t)
 }
 
 func (ft *fakeTunnel) requireConnClosed(t *testing.T) {
@@ -168,19 +184,39 @@ func TestFetchDeadline(t *testing.T) {
 
 	start := time.Now()
 	c, err := Fetch(ctx, ft, testPod, time.Now)
-	if err == nil {
-		// Headers arrived; the stalled body read must hit the deadline.
-		_, err = io.ReadAll(c.Body)
-		_ = c.Body.Close()
+	if err != nil {
+		t.Fatalf("Fetch: %v (headers were flushed, want nil)", err)
 	}
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("err = %v, want DeadlineExceeded", err)
+	// The stalled body read must hit the deadline; Body is never closed here.
+	if _, err := io.ReadAll(c.Body); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("read err = %v, want DeadlineExceeded", err)
 	}
 	if d := time.Since(start); d > 2*time.Second {
 		t.Fatalf("returned after %s, want under 2s", d)
 	}
 	ft.requireConnClosed(t)
-	ft.requireListenerClosed(t)
+	ft.waitListenerClosed(t)
+}
+
+func TestFetchDialError(t *testing.T) {
+	var stops atomic.Int32
+	dialErr := errors.New("dial failed")
+	d := dialerFunc(func(context.Context, types.NamespacedName, int) (string, func(), error) {
+		return "", func() { stops.Add(1) }, dialErr
+	})
+	_, err := Fetch(context.Background(), d, testPod, time.Now)
+	if !errors.Is(err, dialErr) {
+		t.Fatalf("err = %v, want %v", err, dialErr)
+	}
+	if n := stops.Load(); n != 1 {
+		t.Fatalf("stop called %d times, want 1", n)
+	}
+}
+
+type dialerFunc func(context.Context, types.NamespacedName, int) (string, func(), error)
+
+func (f dialerFunc) Dial(ctx context.Context, pod types.NamespacedName, port int) (string, func(), error) {
+	return f(ctx, pod, port)
 }
 
 func TestFetchCloseStopsTunnel(t *testing.T) {
@@ -217,6 +253,13 @@ func TestReadCappedOver(t *testing.T) {
 func TestReadCappedAt(t *testing.T) {
 	got, err := ReadCapped(bytes.NewReader(make([]byte, 64)), 64)
 	if err != nil || len(got) != 64 {
+		t.Fatalf("len=%d err=%v", len(got), err)
+	}
+}
+
+func TestReadCappedMaxInt(t *testing.T) {
+	got, err := ReadCapped(bytes.NewReader(make([]byte, 10)), math.MaxInt64)
+	if err != nil || len(got) != 10 {
 		t.Fatalf("len=%d err=%v", len(got), err)
 	}
 }
