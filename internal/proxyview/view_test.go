@@ -453,3 +453,68 @@ func TestTextNoListenersAfterNarrowing(t *testing.T) {
 		t.Errorf("text = %q, want %q", out, want)
 	}
 }
+
+// renameRoute renames the route whose name contains old to name.
+func renameRoute(t *testing.T, body []byte, old, name string) []byte {
+	t.Helper()
+	return edit(t, body, func(configs []any) []any {
+		for _, rc := range section(t, configs, ".RoutesConfigDump")["dynamic_route_configs"].([]any) {
+			for _, vh := range rc.(map[string]any)["route_config"].(map[string]any)["virtual_hosts"].([]any) {
+				for _, r := range vh.(map[string]any)["routes"].([]any) {
+					if r := r.(map[string]any); strings.Contains(r["name"].(string), old) {
+						r["name"] = name
+						return configs
+					}
+				}
+			}
+		}
+		t.Fatalf("no route named like %s", old)
+		return nil
+	})
+}
+
+// TestBuildUnresolvedNeverMatches: a route name without the matcher suffix
+// has no origin, so it is listed as unresolved, never matched by its name.
+func TestBuildUnresolvedNeverMatches(t *testing.T) {
+	const name = "listener~8080~public_kgwctl_example-route-0-httproute-orders-team-a-0-0"
+	body := renameRoute(t, golden(t, "policies.json"), "public_kgwctl", name)
+	teamA := types.NamespacedName{Namespace: "team-a", Name: "orders"}
+	for _, known := range [][]model.Ref{nil, {proxyview.HTTPRouteRef(teamA)}} {
+		v := build(t, body, proxyGW, known, proxyview.Selection{Route: teamA})
+		if v.Matched() != 0 {
+			t.Errorf("known=%v: matched %d routes, want none", known, v.Matched())
+		}
+		if len(v.Ambiguous) != 1 || v.Ambiguous[0].Name != name || !v.Ambiguous[0].Unresolved || len(v.Ambiguous[0].Candidates) != 0 {
+			t.Fatalf("known=%v: ambiguous %+v, want %s unresolved without candidates", known, v.Ambiguous, name)
+		}
+		out := text(t, v, render.Options{})
+		for _, want := range []string{"no route matches HTTPRoute team-a/orders", name + " · origin unresolved"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("known=%v: text lacks %q:\n%s", known, want, out)
+			}
+		}
+	}
+}
+
+// TestBuildAmbiguousJudgedOnNameReadings: with two of a name's three readings
+// in the cluster, the route still concerns the third, deleted HTTPRoute.
+func TestBuildAmbiguousJudgedOnNameReadings(t *testing.T) {
+	const name = "listener~8080~public_kgwctl_example-route-0-httproute-a-b-c-d-0-0-matcher-0"
+	body := renameRoute(t, golden(t, "policies.json"), "public_kgwctl", name)
+	known := []model.Ref{
+		proxyview.HTTPRouteRef(types.NamespacedName{Namespace: "b-c-d", Name: "a"}),
+		proxyview.HTTPRouteRef(types.NamespacedName{Namespace: "c-d", Name: "a-b"}),
+	}
+	for _, sel := range []types.NamespacedName{{Namespace: "d", Name: "a-b-c"}, {Namespace: "b-c-d", Name: "a"}} {
+		v := build(t, body, proxyGW, known, proxyview.Selection{Route: sel})
+		if v.Matched() != 0 {
+			t.Errorf("%s: matched %d routes, want none", sel, v.Matched())
+		}
+		if len(v.Ambiguous) != 1 || v.Ambiguous[0].Name != name || len(v.Ambiguous[0].Candidates) != 3 || v.Ambiguous[0].NarrowedByKnown {
+			t.Fatalf("%s: ambiguous %+v, want %s with three readings, not narrowed", sel, v.Ambiguous, name)
+		}
+		if out := text(t, v, render.Options{}); !strings.Contains(out, "HTTPRoute d/a-b-c") {
+			t.Errorf("%s: text lacks the deleted reading:\n%s", sel, out)
+		}
+	}
+}

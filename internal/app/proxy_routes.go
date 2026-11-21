@@ -4,17 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"strings"
 	"time"
 
-	"github.com/DuncanDoyle/snellius/pkg/extension"
-	"github.com/DuncanDoyle/snellius/pkg/kinds"
 	"github.com/DuncanDoyle/xdsview/pkg/envoy/model"
 	"github.com/DuncanDoyle/xdsview/pkg/envoy/render"
 	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 
@@ -36,7 +34,7 @@ type routesOptions struct {
 }
 
 // newProxyRoutesCmd builds proxy routes (phase 3 design §3.1).
-func newProxyRoutesCmd(reg *extension.Registry, now func() time.Time, hooks proxyTestHooks) *cobra.Command {
+func newProxyRoutesCmd(now func() time.Time, hooks proxyTestHooks) *cobra.Command {
 	var o routesOptions
 	cmd := &cobra.Command{
 		Use:   "routes [<gateway>]",
@@ -60,7 +58,7 @@ func newProxyRoutesCmd(reg *extension.Registry, now func() time.Time, hooks prox
 			if err != nil {
 				return &ExitError{Code: 2, Err: err}
 			}
-			return proxyRoutes(cmd, f, reg, now, hooks, args, o)
+			return proxyRoutes(cmd, f, now, hooks, args, o)
 		},
 	}
 	fs := cmd.Flags()
@@ -149,7 +147,7 @@ func splitRef(s string) (types.NamespacedName, bool) {
 	return types.NamespacedName{}, false
 }
 
-func proxyRoutes(cmd *cobra.Command, f *Flags, reg *extension.Registry, now func() time.Time, hooks proxyTestHooks, args []string, o routesOptions) error {
+func proxyRoutes(cmd *cobra.Command, f *Flags, now func() time.Time, hooks proxyTestHooks, args []string, o routesOptions) error {
 	req, err := parseRoutes(cmd, args, o)
 	if err != nil {
 		return err
@@ -157,7 +155,7 @@ func proxyRoutes(cmd *cobra.Command, f *Flags, reg *extension.Registry, now func
 	if !req.live {
 		return routesFromFile(cmd, f, req, o.file)
 	}
-	return routesLive(cmd, f, reg, now, hooks, req, args[0], o.pod)
+	return routesLive(cmd, f, now, hooks, req, args[0], o.pod)
 }
 
 // routeNamespace fills a --route without a namespace from ns.
@@ -207,7 +205,7 @@ func routesFromFile(cmd *cobra.Command, f *Flags, req routesRequest, path string
 	return printRoutes(cmd, body, path, req.gateway, nil, req, header, src)
 }
 
-func routesLive(cmd *cobra.Command, f *Flags, reg *extension.Registry, now func() time.Time, hooks proxyTestHooks, req routesRequest, name, pod string) error {
+func routesLive(cmd *cobra.Command, f *Flags, now func() time.Time, hooks proxyTestHooks, req routesRequest, name, pod string) error {
 	rc, ns, err := f.RESTConfig()
 	if err != nil {
 		return &ExitError{Code: 2, Err: err}
@@ -263,7 +261,7 @@ func routesLive(cmd *cobra.Command, f *Flags, reg *extension.Registry, now func(
 		return dumpError(ctx, f, "proxy routes", gw, r)
 	}
 
-	known, err := knownHTTPRoutes(ctx, c, reg, cmd.ErrOrStderr())
+	known, err := knownHTTPRoutes(ctx, c)
 	switch {
 	case err != nil && errors.Is(context.Cause(ctx), context.DeadlineExceeded):
 		return &ExitError{Code: 2, Err: fmt.Errorf("could not finish loading the HTTPRoutes of the cluster within --%s %v (the config dump of Pod %s was read)", flagRequestTimeout, f.RequestTimeout, r.target)}
@@ -285,33 +283,26 @@ func tooLarge(what string, max int64) error {
 	return &ExitError{Code: 2, Err: fmt.Errorf("%s is larger than --max-size %s: raise --max-size to read it, or save it with kgwctl proxy dump", what, q)}
 }
 
-// knownHTTPRoutes lists the cluster's HTTPRoutes with one load (design §4.2).
-// An HTTPRoute list that is not ok is a warning: origins then come from route
-// names and metadata alone, which never turns an ambiguous route into a match.
-func knownHTTPRoutes(ctx context.Context, c load.Clients, reg *extension.Registry, stderr io.Writer) ([]model.Ref, error) {
-	var gvrs []schema.GroupVersionResource
-	pick := func(served []kinds.Served) ([]schema.GroupVersionResource, error) {
-		for _, s := range served {
-			if s.Group == "gateway.networking.k8s.io" && s.Kind == "HTTPRoute" {
-				gvrs = append(gvrs, s.GVR())
-			}
-		}
-		return gvrs, nil
-	}
-	res, err := load.Load(ctx, c, reg, load.Needs{Resolve: pick, Logger: engineLogger(stderr)})
-	if err != nil {
-		return nil, err
-	}
+// httpRoutesGVR is the HTTPRoute resource listed for live origins.
+var httpRoutesGVR = schema.GroupVersionResource{Group: "gateway.networking.k8s.io", Version: "v1", Resource: "httproutes"}
+
+// knownHTTPRoutes lists the cluster's HTTPRoutes in all namespaces, page by
+// page (design §4.2). It lists no other kind, so nothing else can delay it.
+func knownHTTPRoutes(ctx context.Context, c load.Clients) ([]model.Ref, error) {
 	var known []model.Ref
-	for _, gvr := range gvrs {
-		if in := res.Inputs[gvr]; in.State != load.StateOK {
-			warn(stderr, in)
+	opts := metav1.ListOptions{Limit: 500}
+	for {
+		list, err := c.Dynamic.Resource(httpRoutesGVR).Namespace(metav1.NamespaceAll).List(ctx, opts)
+		if err != nil {
+			return nil, err
 		}
-		for _, u := range res.Model.Snapshot.Objects[gvr] {
+		for _, u := range list.Items {
 			known = append(known, proxyview.HTTPRouteRef(types.NamespacedName{Namespace: u.GetNamespace(), Name: u.GetName()}))
 		}
+		if opts.Continue = list.GetContinue(); opts.Continue == "" {
+			return known, nil
+		}
 	}
-	return known, nil
 }
 
 // gatewayRef is the envelope's reference to a Gateway.
@@ -323,6 +314,9 @@ func gatewayRef(n types.NamespacedName) *model.Ref {
 // for -o json|yaml, with src as its source.
 func printRoutes(cmd *cobra.Command, body []byte, source string, gw *types.NamespacedName, known []model.Ref, req routesRequest, header string, src proxyview.Source) error {
 	v, err := proxyview.Build(body, gw, known, req.sel)
+	if errors.Is(err, proxyview.ErrNotConfigDump) {
+		return &ExitError{Code: 2, Err: fmt.Errorf("%s: %w", source, err)}
+	}
 	if err != nil {
 		return &ExitError{Code: 2, Err: fmt.Errorf("parse config dump of %s: %w", source, err)}
 	}

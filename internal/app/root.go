@@ -191,7 +191,7 @@ func newRoot(cfg Config, hooks checkTestHooks, proxyHooks proxyTestHooks) *cobra
 	root.SetErr(cfg.Err)
 	(&Flags{}).Bind(root.PersistentFlags())
 	root.AddCommand(newGetCmd(cfg.Registry, cfg.Now), newDescribeCmd(cfg.Registry, cfg.Now), newVersionCmd(cfg.Registry, cfg.Build),
-		newCheckCmd(cfg.Registry, cfg.Build, cfg.Now, hooks), newProxyCmd(cfg.Registry, cfg.Now, proxyHooks))
+		newCheckCmd(cfg.Registry, cfg.Build, cfg.Now, hooks), newProxyCmd(cfg.Now, proxyHooks))
 	root.AddCommand(cfg.Commands...)
 	return root
 }

@@ -7,7 +7,6 @@ import (
 	"io"
 	"time"
 
-	"github.com/DuncanDoyle/snellius/pkg/extension"
 	"github.com/spf13/cobra"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
@@ -28,7 +27,7 @@ const redactionNote = "Envoy redacts only the fields it knows are sensitive, and
 	"Check it before you attach it to a ticket."
 
 // newProxyCmd builds the proxy command group (phase 3 design §3).
-func newProxyCmd(reg *extension.Registry, now func() time.Time, hooks proxyTestHooks) *cobra.Command {
+func newProxyCmd(now func() time.Time, hooks proxyTestHooks) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "proxy",
 		Short: "Read what a Gateway's Envoy proxy holds",
@@ -47,7 +46,7 @@ func newProxyCmd(reg *extension.Registry, now func() time.Time, hooks proxyTestH
 	cmd.SetFlagErrorFunc(func(c *cobra.Command, err error) error {
 		return &ExitError{Code: 2, Err: fmt.Errorf("%w\nUsage: %s", err, c.UseLine())}
 	})
-	cmd.AddCommand(newProxyDumpCmd(hooks), newProxyRoutesCmd(reg, now, hooks))
+	cmd.AddCommand(newProxyDumpCmd(hooks), newProxyRoutesCmd(now, hooks))
 	return cmd
 }
 

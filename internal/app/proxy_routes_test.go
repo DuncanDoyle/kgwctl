@@ -397,3 +397,95 @@ func TestProxyRoutesRouteLoadDeadline(t *testing.T) {
 		t.Errorf("stderr = %q, want the HTTPRoutes load and --request-timeout named", r.stderr)
 	}
 }
+
+// notADump is the error for valid JSON that is not a config dump.
+const notADump = "not an Envoy config dump (no configs array)"
+
+// wrongKinds are valid JSON documents without a configs array.
+var wrongKinds = map[string]string{
+	"empty-object": `{}`,
+	"null":         `null`,
+	"kubernetes":   `{"apiVersion":"v1","kind":"Pod","metadata":{"name":"p","namespace":"ns"}}`,
+	"configs-null": `{"configs":null}`,
+}
+
+// TestProxyRoutesFileWrongKind: valid JSON without a configs array exits 2;
+// a dump with an empty configs array is an empty proxy.
+func TestProxyRoutesFileWrongKind(t *testing.T) {
+	dir := t.TempDir()
+	for name, body := range wrongKinds {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(dir, name+".json")
+			if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			r := runRoutes(t, "unused-kubeconfig", app.ProxyTestHooks{}, "proxy", "routes", "--file", path)
+			if r.code != 2 || r.stdout != "" || !strings.Contains(r.stderr, notADump) || !strings.Contains(r.stderr, path) {
+				t.Fatalf("exit %d, stdout %q, stderr %q; want 2, empty and %q", r.code, r.stdout, r.stderr, notADump)
+			}
+		})
+	}
+	empty := filepath.Join(dir, "empty.json")
+	if err := os.WriteFile(empty, []byte(`{"configs":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, output := range []string{"text", "json"} {
+		r := runRoutes(t, "unused-kubeconfig", app.ProxyTestHooks{}, "proxy", "routes", "--file", empty, "-o", output)
+		if r.code != 0 || r.stderr != "" || r.stdout == "" {
+			t.Errorf("-o %s: exit %d, stderr %q, stdout %q; want 0 and an empty view", output, r.code, r.stderr, r.stdout)
+		}
+	}
+}
+
+// TestProxyRoutesLiveWrongKind: the same check applies to a live dump.
+func TestProxyRoutesLiveWrongKind(t *testing.T) {
+	env := newEnv(t, testenv.Options{Fixtures: []string{routesFixture}})
+	d := newFakeDialer(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(wrongKinds["kubernetes"])) })
+	r := runRoutes(t, env.Kubeconfig, app.ProxyTestHooks{Dialer: d}, "proxy", "routes", "proxy", "-n", "kgwctl-proxy")
+	if r.code != 2 || r.stdout != "" || !strings.Contains(r.stderr, notADump) {
+		t.Fatalf("exit %d, stdout %q, stderr %q; want 2, empty and %q", r.code, r.stdout, r.stderr, notADump)
+	}
+}
+
+// TestProxyRoutesListsOnlyHTTPRoutes: live, the HTTPRoutes come from one
+// direct list; no other kind is listed or watched, so none can delay it.
+func TestProxyRoutesListsOnlyHTTPRoutes(t *testing.T) {
+	env := newEnv(t, testenv.Options{Fixtures: []string{routesFixture}})
+	before := len(env.Proxies[0].Requests())
+	d := servePolicies(t, make(chan string, 4))
+	r := runRoutes(t, env.Kubeconfig, app.ProxyTestHooks{Dialer: d}, "proxy", "routes", "proxy", "-n", "kgwctl-proxy")
+	if r.code != 0 || r.stderr != "" {
+		t.Fatalf("exit %d, stderr %q; want 0 and empty", r.code, r.stderr)
+	}
+	// The cluster's HTTPRoutes were used: they narrow the colliding routes.
+	if !strings.Contains(r.stdout, "one candidate exists in the cluster") {
+		t.Errorf("stdout lacks the one-candidate note:\n%s", r.stdout)
+	}
+	var lists []string
+	for _, req := range env.Proxies[0].Requests()[before:] {
+		if strings.Contains(req, "watch=") || strings.Contains(req, "referencegrants") {
+			t.Errorf("proxy routes requested %s", req)
+		}
+		if strings.HasPrefix(req, "GET /apis/") && !strings.Contains(req, "/gateways/") {
+			lists = append(lists, req)
+		}
+	}
+	if len(lists) != 1 || !strings.HasPrefix(lists[0], "GET /apis/gateway.networking.k8s.io/v1/httproutes?") {
+		t.Errorf("API group requests %q, want one HTTPRoute list", lists)
+	}
+}
+
+// TestProxyRoutesHTTPRouteListDenied: a denied HTTPRoute list is a warning;
+// origins then come from the dump alone.
+func TestProxyRoutesHTTPRouteListDenied(t *testing.T) {
+	env := newEnv(t, testenv.Options{Fixtures: []string{routesFixture}})
+	env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindAcquire, Resource: "httproutes.gateway.networking.k8s.io"}, testenv.Action{Status: http.StatusForbidden})
+	d := servePolicies(t, make(chan string, 4))
+	r := runRoutes(t, env.Kubeconfig, app.ProxyTestHooks{Dialer: d}, "proxy", "routes", "proxy", "-n", "kgwctl-proxy")
+	if r.code != 0 || !strings.Contains(r.stderr, "Warning: could not list HTTPRoutes") {
+		t.Fatalf("exit %d, stderr %q; want 0 and the warning", r.code, r.stderr)
+	}
+	if !strings.Contains(r.stdout, "orders.kgwctl.example") || strings.Contains(r.stdout, "one candidate exists in the cluster") {
+		t.Errorf("stdout want the routes without the one-candidate note:\n%s", r.stdout)
+	}
+}
