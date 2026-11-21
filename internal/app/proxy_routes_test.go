@@ -489,3 +489,74 @@ func TestProxyRoutesHTTPRouteListDenied(t *testing.T) {
 		t.Errorf("stdout want the routes without the one-candidate note:\n%s", r.stdout)
 	}
 }
+
+// TestProxyRoutesParserWarning: a section the parser skipped is a warning on
+// stdout next to the surviving routes, in the tree and in JSON.
+func TestProxyRoutesParserWarning(t *testing.T) {
+	raw, err := os.ReadFile(dumpsDir + "demo.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dump map[string]any
+	if err := json.Unmarshal(raw, &dump); err != nil {
+		t.Fatal(err)
+	}
+	// A second routes section whose only route config is malformed.
+	dump["configs"] = append(dump["configs"].([]any), map[string]any{
+		"@type":                 "type.googleapis.com/envoy.admin.v3.RoutesConfigDump",
+		"dynamic_route_configs": []any{map[string]any{"route_config": map[string]any{"name": 81}}},
+	})
+	body, err := json.Marshal(dump)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "broken.json")
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"proxy", "routes", "--file", path, "--gateway", "team-a/team-a"}
+
+	r := runRoutes(t, "unused-kubeconfig", app.ProxyTestHooks{}, args...)
+	if r.code != 0 || r.stderr != "" {
+		t.Fatalf("text: exit %d, stderr %q; want 0 and empty", r.code, r.stderr)
+	}
+	if !strings.Contains(r.stdout, "warning: skipped RoutesConfigDump") || !strings.Contains(r.stdout, "shop.team-a.example") {
+		t.Errorf("text lacks the warning or the surviving routes:\n%s", r.stdout)
+	}
+
+	r = runRoutes(t, "unused-kubeconfig", app.ProxyTestHooks{}, append(args, "-o", "json")...)
+	if r.code != 0 || r.stderr != "" {
+		t.Fatalf("json: exit %d, stderr %q; want 0 and empty", r.code, r.stderr)
+	}
+	var doc struct {
+		Item struct {
+			Snapshot struct{ Listeners []any }
+			Warnings []string
+		}
+	}
+	if err := json.Unmarshal([]byte(r.stdout), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Item.Warnings) != 1 || !strings.Contains(doc.Item.Warnings[0], "RoutesConfigDump") || len(doc.Item.Snapshot.Listeners) != 1 {
+		t.Errorf("JSON warnings %q, listeners %d; want one warning next to the listener", doc.Item.Warnings, len(doc.Item.Snapshot.Listeners))
+	}
+	if !strings.Contains(r.stdout, "shop.team-a.example") {
+		t.Errorf("JSON lacks the surviving routes")
+	}
+}
+
+// TestProxyRoutesPortForwardForbidden: a denied port-forward names the
+// permission and the Role that grants it.
+func TestProxyRoutesPortForwardForbidden(t *testing.T) {
+	env := newEnv(t, testenv.Options{Fixtures: []string{routesFixture}})
+	env.Proxies[0].Rule(testenv.Match{Resource: "pods", Subresource: "portforward"}, testenv.Action{Status: http.StatusForbidden})
+	r := runRoutes(t, env.Kubeconfig, app.ProxyTestHooks{}, "proxy", "routes", "proxy", "-n", "kgwctl-proxy")
+	if r.code != 2 || r.stdout != "" {
+		t.Fatalf("exit %d, stdout %q; want 2 and empty; stderr %q", r.code, r.stdout, r.stderr)
+	}
+	for _, want := range []string{"create pods/portforward", "docs/rbac.yaml"} {
+		if !strings.Contains(r.stderr, want) {
+			t.Errorf("stderr = %q, want %q", r.stderr, want)
+		}
+	}
+}
