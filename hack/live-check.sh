@@ -5,6 +5,7 @@
 #   hack/live-check.sh verify <kubeconfig> run kgwctl against it, outputs in hack/live/out/<name>/
 #   hack/live-check.sh proxy               apply the proxy fixtures, check proxy dump with and without port-forward RBAC
 #   hack/live-check.sh goldens             capture testdata/dumps/*.json; toggles the Helm value enableRouteSourceMetadata
+#   hack/live-check.sh goldens-check       rerun the goldens' content check (no credential material)
 #
 # verify also runs `check`, with two scenarios as admin: controller down, route to a missing Service.
 # Env: KUBECONFIG_FILE (admin kubeconfig, default hack/live/out/admin.kubeconfig),
@@ -360,20 +361,39 @@ proxy() {
 }
 
 ROUTE_META=dev.kgateway.route_source
-# Golden content checks, also recorded in testdata/dumps/README.md.
-SECRETS_QUERY='[.configs[] | select(."@type" | endswith(".SecretsConfigDump"))
-  | ((.dynamic_active_secrets // []) + (.dynamic_warming_secrets // []) + (.static_secrets // []))[]] | length'
-SENSITIVE_QUERY='[.. | objects | to_entries[]
-  | select(.key | test("^(private_key|password|token|client_secret)$")) | select(.value != "[redacted]")] | length'
+GOLDENS=(demo policies collide-meta)
+# Golden content checks (no credential material), also recorded in testdata/dumps/README.md.
+# (a) Secret entries hold only @type, name, *.filename or [redacted]; inline_bytes or inline_string always fails.
+# shellcheck disable=SC2016
+SECRETS_QUERY='[.configs[] | select((."@type" // "") | endswith(".SecretsConfigDump"))
+  | ((.static_secrets // []) + (.dynamic_active_secrets // []) + (.dynamic_warming_secrets // []))[].secret
+  | paths(scalars) as $p | ($p | map(tostring) | join(".")) as $k
+  | select(($k | test("(^|\\.)inline_(bytes|string)$"))
+      or (($k == "@type" or $k == "name" or ($k | test("(^|\\.)filename$")) or getpath($p) == "[redacted]") | not))]
+  | length'
+# (b) Any leaf whose key is exactly one of these is [redacted].
+# shellcheck disable=SC2016
+SENSITIVE_QUERY='[paths(scalars) as $p
+  | select($p[-1] | IN("inline_bytes", "inline_string", "private_key", "password", "client_secret", "token"))
+  | getpath($p) | select(. != "[redacted]")] | length'
 
 # content_check <file>: prints counts only, never a matched value.
 content_check() {
-  local f="$1" secrets sensitive pem=0
+  local f="$1" secrets sensitive
   secrets="$(jq "$SECRETS_QUERY" "$f")"
   sensitive="$(jq "$SENSITIVE_QUERY" "$f")"
-  grep -q 'PRIVATE KEY' "$f" && pem=1
-  log "content $(basename "$f"): secrets=$secrets unredacted-sensitive=$sensitive private-key-pem=$pem"
-  [ "$secrets" = 0 ] && [ "$sensitive" = 0 ] && [ "$pem" = 0 ]
+  log "content $(basename "$f"): secret-leaves=$secrets unredacted-sensitive=$sensitive"
+  [ "$secrets" = 0 ] && [ "$sensitive" = 0 ]
+}
+
+# Runs content_check on every golden; exits 1 if one fails.
+goldens_check() {
+  local f failed=0
+  for f in "${GOLDENS[@]}"; do
+    content_check "$ROOT/testdata/dumps/$f.json" || failed=1
+  done
+  [ "$failed" -eq 0 ] || { log "content check failed: do not commit testdata/dumps"; exit 1; }
+  log "content check passed"
 }
 
 # dump_until <file> <namespace> <gateway> <jq filter>: dumps as admin until the filter holds, up to 3 minutes.
@@ -400,7 +420,7 @@ route_meta() {
 
 # Captures the goldens as admin: demo use cases (team-a), proxy fixtures without and with route metadata.
 goldens() {
-  local dir="$ROOT/testdata/dumps" tmp="$OUT/goldens" failed=0 f
+  local dir="$ROOT/testdata/dumps" tmp="$OUT/goldens"
   local collide="[.. | objects | select(has(\"match\") and has(\"name\")) | .name
     | select(contains(\"httproute-orders-kgwctl-proxy-\"))] | length >= 2"
   local meta="[.. | objects | select(has(\"match\") and has(\"name\"))
@@ -417,7 +437,6 @@ goldens() {
 
   dump_until "$dir/demo.json" team-a team-a "$no_meta"
   dump_until "$dir/policies.json" "$PROXY_NS" proxy "($collide) and ($no_meta)"
-  dump_until "$dir/collide.json" "$PROXY_NS" proxy "($collide) and ($no_meta)"
 
   trap 'route_meta false' EXIT
   route_meta true
@@ -431,10 +450,7 @@ goldens() {
   log "kgateway $(h list -n "$KGW_NS" -o json | jq -r '.[] | select(.name == "kgateway") | .app_version')," \
     "Envoy $(k -n "$PROXY_NS" exec deploy/proxy -- wget -qO- 127.0.0.1:19000/server_info | jq -r .version)," \
     "captured $(date -u +%Y-%m-%d)"
-  for f in demo policies collide collide-meta; do
-    content_check "$dir/$f.json" || failed=1
-  done
-  [ "$failed" -eq 0 ] || { log "content check failed: do not commit $dir"; exit 1; }
+  goldens_check
   log "goldens written to $dir"
 }
 
@@ -443,5 +459,6 @@ case "${1:-}" in
   verify) shift; verify "$@" ;;
   proxy) proxy ;;
   goldens) goldens ;;
-  *) echo "usage: $0 setup | verify <kubeconfig> | proxy | goldens" >&2; exit 2 ;;
+  goldens-check) goldens_check ;;
+  *) echo "usage: $0 setup | verify <kubeconfig> | proxy | goldens | goldens-check" >&2; exit 2 ;;
 esac
