@@ -40,10 +40,11 @@ New features, architecture changes, new dependencies.
 
 ### Queue
 - [x] S1 (P1, P4) findings 1, 7 — 0e5df04: GET over the port-forward data stream, no listener; proxydump.FetchGateway owns the deadline; live proxy + routes pass
-- [ ] S2 (P1, P2) HTTPRoute list behind the deadline; oversized-dump recovery names --max-size (findings 2, 5) ← CURRENT
-- [ ] S3 (P3) Live check uses the Role from docs/rbac.yaml (finding 6)
-- [ ] S4 xdsview v0.4.3 bump for findings 3, 4 (xdsview#31; finding 8 → xdsview#32, xdsview Phase 8)
-- [ ] S5 Cross-model review + triage
+- [x] S2 (P1, P2) findings 2, 5 — 5b2bbd0: HTTPRoute list behind the deadline; live oversize advice names --file <path> --max-size <n>
+- [x] S3 (P3) finding 6 — bc06a9e: live check applies the Role from docs/rbac.yaml
+- [x] S4 efa679f: xdsview v0.4.3 bump for findings 3, 4 (xdsview#31; finding 8 → xdsview#32, xdsview Phase 8)
+- [x] S5 Cross-model review + triage: reviews/3.4-codex.md
+- [ ] S6 Review fix wave (P1-1, P1-2, P2-1, P3-2, P3-3, P4-1) ← CURRENT
 
 ## Program
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
