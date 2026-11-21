@@ -179,8 +179,9 @@ func forbiddenSnellius(pkg, sub string) bool {
 	return pkg == p || strings.HasPrefix(pkg, p+"/")
 }
 
-// TestBinaryDeps keeps the Snellius server (pkg/app) out of the binary. pkg/api
-// is allowed transitively (pkg/extension imports it); see TestNoDirectServerImports.
+// TestBinaryDeps keeps the Snellius server (pkg/app), terminal UI libraries and
+// xdsview outside pkg/envoy's core out of the binary. pkg/api is allowed
+// transitively (pkg/extension imports it); see TestNoDirectServerImports.
 func TestBinaryDeps(t *testing.T) {
 	cmd := exec.Command("go", "list", "-deps", "./cmd/kgwctl", "./examples/downstream")
 	cmd.Dir = "../.." // module root
@@ -191,10 +192,27 @@ func TestBinaryDeps(t *testing.T) {
 	for _, pkg := range strings.Fields(string(out)) {
 		if strings.HasPrefix(pkg, "sigs.k8s.io/controller-runtime") ||
 			forbiddenSnellius(pkg, "pkg/app") ||
-			strings.HasPrefix(pkg, "github.com/DuncanDoyle/kgateway-ui") {
+			strings.HasPrefix(pkg, "github.com/DuncanDoyle/kgateway-ui") ||
+			strings.HasPrefix(pkg, "github.com/charmbracelet/") ||
+			strings.HasPrefix(pkg, "github.com/muesli/") ||
+			forbiddenXdsview(pkg) {
 			t.Errorf("binary depends on %s", pkg)
 		}
 	}
+}
+
+// forbiddenXdsview reports whether pkg is an xdsview package outside the
+// pkg/envoy core kgwctl may use.
+func forbiddenXdsview(pkg string) bool {
+	rest, ok := strings.CutPrefix(pkg, "github.com/DuncanDoyle/xdsview/")
+	if !ok {
+		return false
+	}
+	switch rest {
+	case "pkg/envoy/parser", "pkg/envoy/origin", "pkg/envoy/chain", "pkg/envoy/filter", "pkg/envoy/model", "pkg/envoy/render":
+		return false
+	}
+	return true
 }
 
 // TestNoDirectServerImports checks that no kgwctl package imports Snellius

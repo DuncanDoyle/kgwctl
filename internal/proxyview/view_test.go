@@ -1,0 +1,342 @@
+package proxyview_test
+
+import (
+	"bytes"
+	"encoding/json"
+	"os"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/DuncanDoyle/xdsview/pkg/envoy/model"
+	"github.com/DuncanDoyle/xdsview/pkg/envoy/render"
+	"k8s.io/apimachinery/pkg/types"
+
+	"github.com/DuncanDoyle/kgwctl/internal/proxyview"
+)
+
+var (
+	proxyGW = &types.NamespacedName{Namespace: "kgwctl-proxy", Name: "proxy"}
+	demoGW  = &types.NamespacedName{Namespace: "team-a", Name: "team-a"}
+	orders  = types.NamespacedName{Namespace: "kgwctl-proxy", Name: "orders"}
+
+	// The two route names that both read as kgwctl-proxy/orders and proxy/orders-kgwctl.
+	collidingRoutes = []string{
+		"listener~8080~orders-kgwctl_proxy_example-route-0-httproute-orders-kgwctl-proxy-0-0-matcher-0",
+		"listener~8080~orders_kgwctl_example-route-0-httproute-orders-kgwctl-proxy-0-0-matcher-0",
+	}
+)
+
+// golden reads a 3.1 golden dump.
+func golden(t *testing.T, name string) []byte {
+	t.Helper()
+	b, err := os.ReadFile("../../testdata/dumps/" + name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// edit returns a copy of a dump changed by fn, which gets the decoded "configs" array.
+func edit(t *testing.T, body []byte, fn func(configs []any) []any) []byte {
+	t.Helper()
+	var dump map[string]any
+	if err := json.Unmarshal(body, &dump); err != nil {
+		t.Fatal(err)
+	}
+	dump["configs"] = fn(dump["configs"].([]any))
+	out, err := json.Marshal(dump)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// section returns the config section whose @type ends with suffix.
+func section(t *testing.T, configs []any, suffix string) map[string]any {
+	t.Helper()
+	for _, c := range configs {
+		m := c.(map[string]any)
+		if strings.HasSuffix(m["@type"].(string), suffix) {
+			return m
+		}
+	}
+	t.Fatalf("no %s section", suffix)
+	return nil
+}
+
+func build(t *testing.T, body []byte, gw *types.NamespacedName, known []model.Ref, sel proxyview.Selection) proxyview.View {
+	t.Helper()
+	v, err := proxyview.Build(body, gw, known, sel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return v
+}
+
+func text(t *testing.T, v proxyview.View, opts render.Options) string {
+	t.Helper()
+	var b bytes.Buffer
+	if err := proxyview.Text(&b, v, opts); err != nil {
+		t.Fatal(err)
+	}
+	return b.String()
+}
+
+// routes returns every route in snap with the domains of its virtual host.
+func routes(snap *model.EnvoySnapshot) map[string]model.Route {
+	out := map[string]model.Route{}
+	for _, l := range snap.Listeners {
+		for _, fc := range l.FilterChains {
+			if fc.HCM == nil || fc.HCM.RouteConfig == nil {
+				continue
+			}
+			for _, vh := range fc.HCM.RouteConfig.VirtualHosts {
+				for _, r := range vh.Routes {
+					out[strings.Join(vh.Domains, ",")] = r
+				}
+			}
+		}
+	}
+	return out
+}
+
+func ambiguousNames(v proxyview.View) []string {
+	var out []string
+	for _, a := range v.Ambiguous {
+		out = append(out, a.Name)
+	}
+	slices.Sort(out)
+	return out
+}
+
+func TestBuildExactSelection(t *testing.T) {
+	body := golden(t, "collide-meta.json")
+	for _, known := range [][]model.Ref{nil, {proxyview.HTTPRouteRef(orders), proxyview.HTTPRouteRef(types.NamespacedName{Namespace: "proxy", Name: "orders-kgwctl"})}} {
+		v := build(t, body, proxyGW, known, proxyview.Selection{Route: orders})
+		got := routes(v.Snapshot)
+		if len(got) != 1 {
+			t.Fatalf("known=%v: routes %v, want only orders.kgwctl.example", known, got)
+		}
+		r, ok := got["orders.kgwctl.example"]
+		if !ok {
+			t.Fatalf("known=%v: routes %v, want orders.kgwctl.example", known, got)
+		}
+		if r.Origin == nil || r.Origin.Certainty != model.Exact || r.Origin.Candidates[0].Route != proxyview.HTTPRouteRef(orders) {
+			t.Errorf("origin %+v, want Exact kgwctl-proxy/orders", r.Origin)
+		}
+		if v.Matched() != 1 || len(v.Ambiguous) != 0 {
+			t.Errorf("matched %d, ambiguous %v; want 1 and none", v.Matched(), v.Ambiguous)
+		}
+	}
+}
+
+func TestBuildAmbiguousWithoutMetadata(t *testing.T) {
+	body := golden(t, "policies.json")
+	both := []model.Ref{proxyview.HTTPRouteRef(orders), proxyview.HTTPRouteRef(types.NamespacedName{Namespace: "proxy", Name: "orders-kgwctl"})}
+	for _, known := range [][]model.Ref{nil, both} {
+		v := build(t, body, proxyGW, known, proxyview.Selection{Route: orders})
+		if v.Matched() != 0 {
+			t.Errorf("known=%v: matched %d routes, want none", known, v.Matched())
+		}
+		if got := ambiguousNames(v); !slices.Equal(got, collidingRoutes) {
+			t.Errorf("known=%v: ambiguous %v, want %v", known, got, collidingRoutes)
+		}
+		for _, a := range v.Ambiguous {
+			if len(a.Candidates) != 2 || a.NarrowedByKnown {
+				t.Errorf("known=%v: %s candidates %v narrowed %v, want two and not narrowed", known, a.Name, a.Candidates, a.NarrowedByKnown)
+			}
+		}
+		out := text(t, v, render.Options{})
+		for _, want := range []string{"no route matches HTTPRoute kgwctl-proxy/orders", collidingRoutes[0], "ambiguous: HTTPRoute kgwctl-proxy/orders, HTTPRoute proxy/orders-kgwctl"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("known=%v: text lacks %q:\n%s", known, want, out)
+			}
+		}
+		if strings.Contains(out, "one candidate exists in the cluster") {
+			t.Errorf("known=%v: text claims one candidate exists:\n%s", known, out)
+		}
+	}
+}
+
+func TestBuildSingleSurvivorIsNotAMatch(t *testing.T) {
+	body := golden(t, "policies.json")
+	// proxy/orders-kgwctl is deleted; Envoy may still serve its route.
+	known := []model.Ref{proxyview.HTTPRouteRef(orders), proxyview.HTTPRouteRef(types.NamespacedName{Namespace: "kgwctl-proxy", Name: "public"})}
+
+	v := build(t, body, proxyGW, known, proxyview.Selection{Route: orders})
+	if v.Matched() != 0 {
+		t.Errorf("matched %d routes, want none", v.Matched())
+	}
+	if got := ambiguousNames(v); !slices.Equal(got, collidingRoutes) {
+		t.Errorf("ambiguous %v, want %v", got, collidingRoutes)
+	}
+	for _, a := range v.Ambiguous {
+		if !a.NarrowedByKnown || len(a.Candidates) != 2 {
+			t.Errorf("%s: narrowed %v candidates %v, want narrowed with both readings", a.Name, a.NarrowedByKnown, a.Candidates)
+		}
+	}
+	out := text(t, v, render.Options{})
+	if !strings.Contains(out, "one candidate exists in the cluster") {
+		t.Errorf("text lacks the one-candidate note:\n%s", out)
+	}
+
+	// The unnarrowed tree never shows the route as kgwctl-proxy/orders either.
+	full := build(t, body, proxyGW, known, proxyview.Selection{})
+	out = text(t, full, render.Options{})
+	for _, bad := range []string{"chosen from known HTTPRoutes", "HTTPRoute kgwctl-proxy/orders · rule"} {
+		if strings.Contains(out, bad) {
+			t.Errorf("full tree shows %q:\n%s", bad, out)
+		}
+	}
+	if r := routes(full.Snapshot)["orders.kgwctl.example"]; r.Origin == nil || r.Origin.Certainty != model.Ambiguous {
+		t.Errorf("orders origin %+v, want ambiguous", r.Origin)
+	}
+}
+
+func TestBuildWarmingListenerSurvivesNarrowing(t *testing.T) {
+	body := edit(t, golden(t, "demo.json"), func(configs []any) []any {
+		l := section(t, configs, ".ListenersConfigDump")["dynamic_listeners"].([]any)[0].(map[string]any)
+		l["warming_state"] = l["active_state"]
+		delete(l, "active_state")
+		return configs
+	})
+	v := build(t, body, demoGW, nil, proxyview.Selection{Route: types.NamespacedName{Namespace: "team-a", Name: "nope"}})
+	if len(v.Snapshot.Listeners) != 1 || v.Snapshot.Listeners[0].State.Status != model.ListenerWarming {
+		t.Fatalf("listeners %+v, want listener~80 warming", v.Snapshot.Listeners)
+	}
+	if v.Matched() != 0 {
+		t.Errorf("matched %d routes, want none", v.Matched())
+	}
+	if out := text(t, v, render.Options{}); !strings.Contains(out, "listener~80") || !strings.Contains(out, "warming") {
+		t.Errorf("text lacks the warming listener:\n%s", out)
+	}
+}
+
+func TestBuildParserWarning(t *testing.T) {
+	// A second routes section whose only route config is malformed.
+	body := edit(t, golden(t, "demo.json"), func(configs []any) []any {
+		return append(configs, map[string]any{
+			"@type":                 "type.googleapis.com/envoy.admin.v3.RoutesConfigDump",
+			"dynamic_route_configs": []any{map[string]any{"route_config": map[string]any{"name": 81}}},
+		})
+	})
+	v := build(t, body, demoGW, nil, proxyview.Selection{})
+	if len(v.Warnings) != 1 || !strings.Contains(v.Warnings[0], "RoutesConfigDump") {
+		t.Fatalf("warnings %q, want one for the routes section", v.Warnings)
+	}
+	if got := len(routes(v.Snapshot)); got != 5 {
+		t.Errorf("%d virtual hosts with routes, want the 5 that survive", got)
+	}
+	out := text(t, v, render.Options{})
+	if !strings.Contains(out, "warning: "+v.Warnings[0]) || !strings.Contains(out, "shop.team-a.example") {
+		t.Errorf("text lacks the warning or the surviving routes:\n%s", out)
+	}
+	j, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Snapshot model.EnvoySnapshot `json:"snapshot"`
+		Warnings []string            `json:"warnings"`
+	}
+	if err := json.Unmarshal(j, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(doc.Warnings, v.Warnings) || len(doc.Snapshot.Listeners) != 1 {
+		t.Errorf("JSON warnings %q, listeners %d; want the warning next to the snapshot", doc.Warnings, len(doc.Snapshot.Listeners))
+	}
+}
+
+// entry returns the chain entry named name.
+func entry(t *testing.T, r model.Route, name string) model.ChainEntry {
+	t.Helper()
+	if r.Chain == nil {
+		t.Fatalf("%s has no chain", r.Name)
+	}
+	for _, e := range r.Chain.Filters {
+		if e.Name == name {
+			return e
+		}
+	}
+	t.Fatalf("%s has no filter %s", r.Name, name)
+	return model.ChainEntry{}
+}
+
+func TestBuildPolicyChain(t *testing.T) {
+	v := build(t, golden(t, "policies.json"), proxyGW, nil, proxyview.Selection{})
+	rs := routes(v.Snapshot)
+
+	ord := rs["orders.kgwctl.example"]
+	authz := entry(t, ord, "ext_auth/kgwctl-proxy/authz")
+	if !authz.Runs || authz.State != model.FilterEnabled || authz.Level != model.LevelRoute {
+		t.Errorf("orders ext_authz %+v, want enabled at route level", authz)
+	}
+	wantPolicy := model.Contribution{Kind: model.ContributionPolicy, Ref: model.Ref{Group: "gateway.kgateway.dev", Kind: "TrafficPolicy", Namespace: "kgwctl-proxy", Name: "orders-extauth"}, Field: "extAuth"}
+	if !slices.Contains(authz.Contributions, wantPolicy) {
+		t.Errorf("orders ext_authz contributions %+v lack %+v", authz.Contributions, wantPolicy)
+	}
+
+	// kgateway disables ext_authz for a route by enabling its global_disable
+	// filter; the ext_authz filter itself stays off, as the HCM default.
+	pub := rs["public.kgwctl.example"]
+	if e := entry(t, pub, "ext_auth/kgwctl-proxy/authz"); e.Runs || e.State != model.FilterOff {
+		t.Errorf("public ext_authz %+v, want off", e)
+	}
+	if e := entry(t, pub, "global_disable/ext_auth"); !e.Runs || e.State != model.FilterEnabled || e.Level != model.LevelRoute {
+		t.Errorf("public global_disable/ext_auth %+v, want enabled at route level", e)
+	}
+
+	// Response order: reversed, without the request-only router.
+	var resp []string
+	for _, e := range ord.Chain.ResponseOrder() {
+		resp = append(resp, e.Name)
+	}
+	if want := []string{"dynamic_modules/simple_mutations", "ratelimit/local", "ext_auth/kgwctl-proxy/authz"}; !slices.Equal(resp, want) {
+		t.Errorf("orders response order %v, want %v", resp, want)
+	}
+}
+
+func TestBuildResponseOrderMarksUnknownSide(t *testing.T) {
+	// The transformation filter with a type xdsview has no side record for.
+	body := edit(t, golden(t, "policies.json"), func(configs []any) []any {
+		l := section(t, configs, ".ListenersConfigDump")["dynamic_listeners"].([]any)[0].(map[string]any)
+		hcm := l["active_state"].(map[string]any)["listener"].(map[string]any)["filter_chains"].([]any)[0].(map[string]any)["filters"].([]any)[0].(map[string]any)["typed_config"].(map[string]any)
+		for _, f := range hcm["http_filters"].([]any) {
+			f := f.(map[string]any)
+			if f["name"] == "dynamic_modules/simple_mutations" {
+				f["typed_config"].(map[string]any)["@type"] = "type.googleapis.com/example.v1.Unrecorded"
+			}
+		}
+		return configs
+	})
+	v := build(t, body, proxyGW, nil, proxyview.Selection{})
+	out := text(t, v, render.Options{ResponseOrder: true})
+	if !strings.Contains(out, "1? dynamic_modules/simple_mutations") {
+		t.Errorf("response order lacks the unknown mark:\n%s", out)
+	}
+	resp := strings.SplitN(out, "filters (response order):", 2)
+	if len(resp) != 2 || strings.Contains(strings.SplitN(resp[1], "policies:", 2)[0], "envoy.filters.http.router") {
+		t.Errorf("response order shows the request-only router:\n%s", out)
+	}
+}
+
+func TestBuildRuleSelection(t *testing.T) {
+	body := golden(t, "collide-meta.json")
+	for rule, want := range map[int]int{0: 1, 1: 0} {
+		v := build(t, body, proxyGW, nil, proxyview.Selection{Route: orders, Rule: &rule})
+		if v.Matched() != want {
+			t.Errorf("rule %d: matched %d routes, want %d", rule, v.Matched(), want)
+		}
+	}
+	neg := -1
+	if _, err := proxyview.Build(body, proxyGW, nil, proxyview.Selection{Route: orders, Rule: &neg}); err == nil {
+		t.Error("rule -1: want an error")
+	}
+}
+
+func TestBuildParseError(t *testing.T) {
+	if _, err := proxyview.Build([]byte("{"), nil, nil, proxyview.Selection{}); err == nil {
+		t.Fatal("want a parse error")
+	}
+}
