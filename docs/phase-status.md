@@ -15,11 +15,11 @@ Status: implementation
 - [x] Q5 Sub-phase 3.2 `proxy routes` (phase-3.2-complete.md)
 - [x] Q6 Sub-phase 3.3 live check and docs (phase-3.3-complete.md)
 - [x] Q7 Phase review (Codex), triage: reviews/phase-codex.md
-- [ ] Q7b Stabilization 3.4 (phase review findings 1, 2, 5, 6, 7; xdsview bump for 3, 4) ← CURRENT
-- [ ] Q8 Phase close
+- [x] Q7b Stabilization 3.4 (phase-3.4-complete.md)
+- [ ] Q8 Phase close ← CURRENT
 
 ### Exit gates
-- [x] tests/vet pass (observed 2026-11-21 at 87bb3c8)
+- [x] tests/vet pass (observed 2026-11-21 at 59dec54, live checks on kind)
 - [ ] all queue items done or deferred
 - [x] design+plan cross-model review + triage: reviews/design-codex.md (+ -r2 to -r5)
 - [x] phase cross-model review + triage: reviews/phase-codex.md
@@ -27,25 +27,7 @@ Status: implementation
 - [ ] phase-3-complete.md written, roadmap updated, tracked items closed
 
 ## Sub-phase
-Sub-phase: 3.4 — Phase review fixes
-Kind: stabilization
-Base: 0e84898
-Brief: docs/phases/phase-3/phase-3.4-brief.md
-
-### Allowed work
-Bug fixes, missing designed behaviour, tests, docs.
-
-### Not allowed
-New features, architecture changes, new dependencies.
-
-### Queue
-- [x] S1 (P1, P4) findings 1, 7 — 0e5df04: GET over the port-forward data stream, no listener; proxydump.FetchGateway owns the deadline; live proxy + routes pass
-- [x] S2 (P1, P2) findings 2, 5 — 5b2bbd0: HTTPRoute list behind the deadline; live oversize advice names --file <path> --max-size <n>
-- [x] S3 (P3) finding 6 — bc06a9e: live check applies the Role from docs/rbac.yaml
-- [x] S4 efa679f: xdsview v0.4.3 bump for findings 3, 4 (xdsview#31; finding 8 → xdsview#32, xdsview Phase 8)
-- [x] S5 Cross-model review + triage: reviews/3.4-codex.md
-- [x] S6 Review fix wave — 9414571, 4be9744 (reviews/3.4-codex.md triage)
-- [ ] S7 Re-review round 2 fixes (reviews/3.4-codex-r2.md triage) ← CURRENT
+n/a (3.4 complete: docs/phases/phase-3/phase-3.4-complete.md)
 
 ## Program
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
