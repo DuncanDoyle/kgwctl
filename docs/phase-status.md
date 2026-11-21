@@ -13,12 +13,12 @@ Status: implementation
 - [x] Q3 Cross-model review of design + plan (5 rounds, reviews/design-codex*.md), owner go-ahead 2026-11-21
 - [x] Q4 Sub-phase 3.1 capture and `proxy dump` (phase-3.1-complete.md)
 - [x] Q5 Sub-phase 3.2 `proxy routes` (phase-3.2-complete.md)
-- [ ] Q6 Sub-phase 3.3 live check and docs ← CURRENT
-- [ ] Q7 Phase review (Codex), triage
+- [x] Q6 Sub-phase 3.3 live check and docs (phase-3.3-complete.md)
+- [ ] Q7 Phase review (Codex), triage ← CURRENT
 - [ ] Q8 Phase close
 
 ### Exit gates
-- [ ] tests/vet pass
+- [x] tests/vet pass (observed 2026-11-21 at 87bb3c8)
 - [ ] all queue items done or deferred
 - [x] design+plan cross-model review + triage: reviews/design-codex.md (+ -r2 to -r5)
 - [ ] phase cross-model review + triage
@@ -26,10 +26,7 @@ Status: implementation
 - [ ] phase-3-complete.md written, roadmap updated, tracked items closed
 
 ## Sub-phase
-Sub-phase: 3.3 — live check and docs (planned)
-Base: e398be9
-Brief: docs/phases/phase-3/phase-3.3-brief.md
-Status: implementation
+n/a (3.3 complete: docs/phases/phase-3/phase-3.3-complete.md)
 
 ## Program
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
