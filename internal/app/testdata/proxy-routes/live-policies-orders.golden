@@ -1,0 +1,5 @@
+Gateway kgwctl-proxy/proxy · pod kgwctl-proxy/proxy-7d9f8c6b5-k2x · 2026-11-21T10:00:00Z
+no route matches HTTPRoute kgwctl-proxy/orders
+ambiguous routes, not matched:
+  listener~8080~orders-kgwctl_proxy_example-route-0-httproute-orders-kgwctl-proxy-0-0-matcher-0 · ambiguous: HTTPRoute kgwctl-proxy/orders, HTTPRoute proxy/orders-kgwctl · one candidate exists in the cluster
+  listener~8080~orders_kgwctl_example-route-0-httproute-orders-kgwctl-proxy-0-0-matcher-0 · ambiguous: HTTPRoute kgwctl-proxy/orders, HTTPRoute proxy/orders-kgwctl · one candidate exists in the cluster

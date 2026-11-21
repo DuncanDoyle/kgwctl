@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/DuncanDoyle/xdsview/pkg/envoy/chain"
@@ -34,8 +35,9 @@ type Selection struct {
 // AmbiguousRoute is an Envoy route whose name reads as the selected HTTPRoute
 // and at least one other, so it is listed rather than matched.
 type AmbiguousRoute struct {
-	Name       string              `json:"name"`
-	Candidates []model.RouteOrigin `json:"candidates"`
+	RouteConfig string              `json:"routeConfig"`
+	Name        string              `json:"name"`
+	Candidates  []model.RouteOrigin `json:"candidates"`
 	// NarrowedByKnown is set when one candidate exists in the cluster.
 	NarrowedByKnown bool `json:"narrowedByKnown,omitempty"`
 }
@@ -84,20 +86,32 @@ func Build(body []byte, gw *types.NamespacedName, known []model.Ref, sel Selecti
 		opts.RuleIndex = *sel.Rule
 	}
 	v.Snapshot = filter.Filter(snap, opts)
-	byName := map[string]*model.RouteAnnotation{}
-	walk(snap, func(r *model.Route) { byName[r.Name] = r.Origin })
-	for _, name := range filter.Ambiguous(snap, opts) {
-		a := byName[name]
-		v.Ambiguous = append(v.Ambiguous, AmbiguousRoute{Name: name, Candidates: a.Candidates, NarrowedByKnown: a.NarrowedByKnown})
-	}
+	// filter.Ambiguous keys by route name alone; two route configs can share one.
+	seen := map[[2]string]bool{}
+	walk(snap, func(rc *model.RouteConfig, r *model.Route) {
+		a, key := r.Origin, [2]string{rc.Name, r.Name}
+		if a == nil || a.Certainty != model.Ambiguous || seen[key] || !slices.ContainsFunc(a.Candidates, sel.matches) {
+			return
+		}
+		seen[key] = true
+		v.Ambiguous = append(v.Ambiguous, AmbiguousRoute{RouteConfig: rc.Name, Name: r.Name, Candidates: a.Candidates, NarrowedByKnown: a.NarrowedByKnown})
+	})
 	return v, nil
+}
+
+// matches reports whether o reads as the selected HTTPRoute and rule.
+func (s Selection) matches(o model.RouteOrigin) bool {
+	return o.Route.Kind == "HTTPRoute" && o.Route.Namespace == s.Route.Namespace && o.Route.Name == s.Route.Name &&
+		(s.Rule == nil || o.RuleIndex == *s.Rule)
 }
 
 // demote replaces each origin narrowed by known with its name-only reading,
 // keeping NarrowedByKnown. It copies what it changes; snap stays unchanged.
 func demote(snap *model.EnvoySnapshot, nameOnly origin.Mapper) *model.EnvoySnapshot {
 	narrowed := false
-	walk(snap, func(r *model.Route) { narrowed = narrowed || (r.Origin != nil && r.Origin.NarrowedByKnown) })
+	walk(snap, func(_ *model.RouteConfig, r *model.Route) {
+		narrowed = narrowed || (r.Origin != nil && r.Origin.NarrowedByKnown)
+	})
 	if !narrowed {
 		return snap
 	}
@@ -132,7 +146,7 @@ func demote(snap *model.EnvoySnapshot, nameOnly origin.Mapper) *model.EnvoySnaps
 }
 
 // walk calls fn for every route in snap, in snapshot order.
-func walk(snap *model.EnvoySnapshot, fn func(*model.Route)) {
+func walk(snap *model.EnvoySnapshot, fn func(*model.RouteConfig, *model.Route)) {
 	for _, l := range snap.Listeners {
 		for _, fc := range l.FilterChains {
 			if fc.HCM == nil || fc.HCM.RouteConfig == nil {
@@ -140,7 +154,7 @@ func walk(snap *model.EnvoySnapshot, fn func(*model.Route)) {
 			}
 			for _, vh := range fc.HCM.RouteConfig.VirtualHosts {
 				for i := range vh.Routes {
-					fn(&vh.Routes[i])
+					fn(fc.HCM.RouteConfig, &vh.Routes[i])
 				}
 			}
 		}
@@ -150,16 +164,27 @@ func walk(snap *model.EnvoySnapshot, fn func(*model.Route)) {
 // Matched returns the number of routes in the view, counted once per filter chain.
 func (v View) Matched() int {
 	n := 0
-	walk(v.Snapshot, func(*model.Route) { n++ })
+	walk(v.Snapshot, func(*model.RouteConfig, *model.Route) { n++ })
 	return n
 }
 
 // Text writes v as xdsview's tree, then, under a Selection, a no-match line
-// and the ambiguous routes, then the parser warnings.
+// and the ambiguous routes, then the parser warnings. A route only the known
+// HTTPRoutes narrowed carries OneCandidateNote in the tree too.
 func Text(w io.Writer, v View, opts render.Options) error {
 	var b bytes.Buffer
-	if err := render.Text(&b, v.Snapshot, opts); err != nil {
-		return err
+	switch {
+	case v.Selection.Route.Name != "" && len(v.Snapshot.Listeners) == 0:
+		// Narrowing left nothing: the no-match line says so, not "no listeners".
+		if opts.Header != "" {
+			fmt.Fprintln(&b, clean(opts.Header))
+		}
+	default:
+		tree := opts
+		tree.Style = noteNarrowed(v.Snapshot, opts.Style)
+		if err := render.Text(&b, v.Snapshot, tree); err != nil {
+			return err
+		}
 	}
 	style := func(c render.Class, s string) string {
 		s = clean(s)
@@ -178,14 +203,22 @@ func Text(w io.Writer, v View, opts render.Options) error {
 	if len(v.Ambiguous) > 0 {
 		fmt.Fprintln(&b, "ambiguous routes, not matched:")
 	}
+	names := map[string]int{}
 	for _, a := range v.Ambiguous {
+		names[a.Name]++
+	}
+	for _, a := range v.Ambiguous {
+		label := clean(a.Name)
+		if names[a.Name] > 1 {
+			label += " · route config " + clean(a.RouteConfig)
+		}
 		var refs []string
 		for _, c := range a.Candidates {
 			if s := c.Route.String(); len(refs) == 0 || refs[len(refs)-1] != s {
 				refs = append(refs, s)
 			}
 		}
-		line := "  " + clean(a.Name) + " · " + style(render.ClassOrigin, "ambiguous: "+strings.Join(refs, ", "))
+		line := "  " + label + " · " + style(render.ClassOrigin, "ambiguous: "+strings.Join(refs, ", "))
 		if a.NarrowedByKnown {
 			line += " · " + OneCandidateNote
 		}
@@ -196,6 +229,35 @@ func Text(w io.Writer, v View, opts render.Options) error {
 	}
 	_, err := w.Write(b.Bytes())
 	return err
+}
+
+// noteNarrowed returns style, extended to add OneCandidateNote after a narrowed
+// route's origin. render styles each route's match, then its origin.
+func noteNarrowed(snap *model.EnvoySnapshot, style func(render.Class, *render.FilterRef, string) string) func(render.Class, *render.FilterRef, string) string {
+	var origins []*model.RouteAnnotation
+	narrowed := false
+	walk(snap, func(_ *model.RouteConfig, r *model.Route) {
+		origins = append(origins, r.Origin)
+		narrowed = narrowed || (r.Origin != nil && r.Origin.NarrowedByKnown)
+	})
+	if !narrowed {
+		return style
+	}
+	route := -1
+	return func(c render.Class, ref *render.FilterRef, s string) string {
+		if c == render.ClassRoute {
+			route++
+		}
+		out := s
+		if style != nil {
+			out = style(c, ref, s)
+		}
+		if c == render.ClassOrigin && strings.HasPrefix(s, "ambiguous: ") && route >= 0 && route < len(origins) &&
+			origins[route] != nil && origins[route].NarrowedByKnown {
+			out += " · " + OneCandidateNote
+		}
+		return out
+	}
 }
 
 // clean escapes control characters in dump strings, as render does, so they

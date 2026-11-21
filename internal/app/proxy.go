@@ -7,6 +7,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/DuncanDoyle/snellius/pkg/extension"
 	"github.com/spf13/cobra"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
@@ -27,7 +28,7 @@ const redactionNote = "Envoy redacts only the fields it knows are sensitive, and
 	"Check it before you attach it to a ticket."
 
 // newProxyCmd builds the proxy command group (phase 3 design §3).
-func newProxyCmd(hooks proxyTestHooks) *cobra.Command {
+func newProxyCmd(reg *extension.Registry, now func() time.Time, hooks proxyTestHooks) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "proxy",
 		Short: "Read what a Gateway's Envoy proxy holds",
@@ -42,11 +43,11 @@ func newProxyCmd(hooks proxyTestHooks) *cobra.Command {
 			return &ExitError{Code: 2, Err: fmt.Errorf("unknown command %q for %q\nRun '%s --help' for usage", args[0], cmd.CommandPath(), cmd.CommandPath())}
 		},
 	}
-	// Proxy commands exit 0 or 2 (design §3.3); dump inherits this.
+	// Proxy commands exit 0 or 2 (design §3.3); dump and routes inherit this.
 	cmd.SetFlagErrorFunc(func(c *cobra.Command, err error) error {
 		return &ExitError{Code: 2, Err: fmt.Errorf("%w\nUsage: %s", err, c.UseLine())}
 	})
-	cmd.AddCommand(newProxyDumpCmd(hooks))
+	cmd.AddCommand(newProxyDumpCmd(hooks), newProxyRoutesCmd(reg, now, hooks))
 	return cmd
 }
 
@@ -89,6 +90,7 @@ const (
 // dumpResult is how far a dump got.
 type dumpResult struct {
 	capture *proxydump.Capture
+	body    []byte // the capped body, read by proxy routes
 	stage   dumpStage
 	target  types.NamespacedName
 	err     error
@@ -130,10 +132,10 @@ func proxyDump(cmd *cobra.Command, f *Flags, hooks proxyTestHooks, name, pod str
 	case r = <-done:
 	case <-ctx.Done():
 		// A late capture is released by Fetch when ctx ends.
-		return dumpError(ctx, f, gw, r)
+		return dumpError(ctx, f, "proxy dump", gw, r)
 	}
 	if r.err != nil {
-		return dumpError(ctx, f, gw, r)
+		return dumpError(ctx, f, "proxy dump", gw, r)
 	}
 	defer r.capture.Body.Close()
 	out := &errWriter{w: cmd.OutOrStdout()}
@@ -143,7 +145,7 @@ func proxyDump(cmd *cobra.Command, f *Flags, hooks proxyTestHooks, name, pod str
 		} else {
 			r.err = fmt.Errorf("read config dump from %s: %w", r.target, err)
 		}
-		return dumpError(ctx, f, gw, r)
+		return dumpError(ctx, f, "proxy dump", gw, r)
 	}
 	return nil
 }
@@ -163,7 +165,7 @@ func (e *errWriter) Write(p []byte) (int, error) {
 }
 
 // dumpError maps a failed dump to exit 2 with what to do next (design §3.3, §4.1).
-func dumpError(ctx context.Context, f *Flags, gw types.NamespacedName, r dumpResult) error {
+func dumpError(ctx context.Context, f *Flags, cmd string, gw types.NamespacedName, r dumpResult) error {
 	err := r.err
 	switch {
 	case errors.Is(context.Cause(ctx), context.DeadlineExceeded):
@@ -176,7 +178,7 @@ func dumpError(ctx context.Context, f *Flags, gw types.NamespacedName, r dumpRes
 		err = fmt.Errorf("%w\nport-forward to Pod %s needs create pods/portforward in namespace %s: see the kgwctl-proxy-portforward Role in docs/rbac.yaml",
 			err, r.target, gw.Namespace)
 	case apierrors.IsForbidden(err):
-		err = fmt.Errorf("%w\nproxy dump needs get on Gateways and list on Pods: see the kgwctl-reader ClusterRole in docs/rbac.yaml", err)
+		err = fmt.Errorf("%w\n%s needs get on Gateways and list on Pods: see the kgwctl-reader ClusterRole in docs/rbac.yaml", err, cmd)
 	}
 	return &ExitError{Code: 2, Err: err}
 }

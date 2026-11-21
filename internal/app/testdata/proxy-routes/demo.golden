@@ -1,0 +1,31 @@
+File ../../testdata/dumps/demo.json · Gateway team-a/team-a
+listener~80 [::]:80 · active · Gateway team-a/team-a port 80
+├─ vhost listener~80~admin_team-a_example [admin.team-a.example] · port 80
+│  └─ route / (prefix) · ambiguous: HTTPRoute admin-team-c/internal, HTTPRoute team-c/internal-admin, HTTPRoute c/internal-admin-team
+│     filters (request order):
+│       1 envoy.filters.http.router  on
+│     backend: blackhole-cluster
+├─ vhost listener~80~broken_team-a_example [broken.team-a.example] · port 80
+│  └─ route / (prefix) · ambiguous: HTTPRoute team-a/broken, HTTPRoute a/broken-team
+│     filters (request order):
+│       1 envoy.filters.http.router  on
+│     backend: blackhole-cluster
+├─ vhost listener~80~orders_team-a_example [orders.team-a.example] · port 80
+│  ├─ route /pay (path-prefix) · ambiguous: HTTPRoute team-a/orders, HTTPRoute a/orders-team
+│  │  filters (request order):
+│  │    1 envoy.filters.http.router  on
+│  │  backend: kube_team-c_payments_80
+│  └─ route / (prefix) · ambiguous: HTTPRoute team-a/orders, HTTPRoute a/orders-team
+│     filters (request order):
+│       1 envoy.filters.http.router  on
+│     backend: kube_team-a_web_80
+├─ vhost listener~80~partner_team-a_example [partner.team-a.example] · port 80
+│  └─ route / (prefix) · ambiguous: HTTPRoute team-b/partner, HTTPRoute b/partner-team
+│     filters (request order):
+│       1 envoy.filters.http.router  on
+│     backend: backend_team-b_partner-api_0
+└─ vhost listener~80~shop_team-a_example [shop.team-a.example] · port 80
+   └─ route /shop/items (path-prefix) · ambiguous: HTTPRoute items-team-b/shop, HTTPRoute team-b/shop-items, HTTPRoute b/shop-items-team
+      filters (request order):
+        1 envoy.filters.http.router  on
+      backend: kube_team-b_catalog_80

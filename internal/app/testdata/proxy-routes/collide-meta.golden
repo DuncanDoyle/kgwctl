@@ -1,0 +1,26 @@
+File ../../testdata/dumps/collide-meta.json · Gateway kgwctl-proxy/proxy
+listener~8080 [::]:8080 · active · Gateway kgwctl-proxy/proxy port 8080
+├─ vhost listener~8080~orders-kgwctl_proxy_example [orders-kgwctl.proxy.example] · port 8080
+│  └─ route / (prefix) · HTTPRoute proxy/orders-kgwctl · rule 0 · match 0
+│     filters (request order):
+│       1 envoy.filters.http.router  on
+│     not run: global_disable/ext_auth (off), ext_auth/kgwctl-proxy/authz (off), ratelimit/local (off), dynamic_modules/simple_mutations (off)
+│     backend: kube_proxy_backend_8080
+├─ vhost listener~8080~orders_kgwctl_example [orders.kgwctl.example] · port 8080
+│  └─ route / (prefix) · HTTPRoute kgwctl-proxy/orders · rule 0 · match 0
+│     filters (request order):
+│       1 ext_auth/kgwctl-proxy/authz       enabled by route · GatewayExtension kgwctl-proxy/authz · TrafficPolicy kgwctl-proxy/orders-extauth (extAuth)
+│       2 ratelimit/local                   enabled by route
+│       3 dynamic_modules/simple_mutations  enabled by route
+│       4 envoy.filters.http.router         on
+│     not run: global_disable/ext_auth (off)
+│     policies: TrafficPolicy kgwctl-proxy/orders-extauth (extAuth), TrafficPolicy kgwctl-proxy/orders-ratelimit (rateLimit.local), TrafficPolicy kgwctl-proxy/orders-transformation (transformation)
+│     backend: kube_kgwctl-proxy_backend_8080
+└─ vhost listener~8080~public_kgwctl_example [public.kgwctl.example] · port 8080
+   └─ route / (prefix) · HTTPRoute kgwctl-proxy/public · rule 0 · match 0
+      filters (request order):
+        1 global_disable/ext_auth    enabled by route
+        2 envoy.filters.http.router  on
+      not run: ext_auth/kgwctl-proxy/authz (off), ratelimit/local (off), dynamic_modules/simple_mutations (off)
+      policies: TrafficPolicy kgwctl-proxy/public-no-extauth (extAuth)
+      backend: kube_kgwctl-proxy_backend_8080

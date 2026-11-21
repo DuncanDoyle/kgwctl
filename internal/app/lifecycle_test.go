@@ -290,16 +290,18 @@ func TestExecPluginHangsPastDeadline(t *testing.T) {
 			t.Errorf("%v: returned after %v, want within 2s of start", args, r.took)
 		}
 	}
-	// proxy dump is exit 2: it could not read the dump (phase 3 design §3.3).
-	r := runCmd(t, &execEnv, "proxy", "dump", "http", "-n", "kgateway-system", "--request-timeout", "1s")
-	if r.code != 2 || r.stdout != "" {
-		t.Errorf("proxy dump: exit %d, stdout %q; want 2 and empty", r.code, r.stdout)
-	}
-	if !strings.Contains(r.stderr, "--request-timeout 1s") {
-		t.Errorf("proxy dump: stderr = %q, want the deadline named", r.stderr)
-	}
-	if r.took > 2*time.Second {
-		t.Errorf("proxy dump: returned after %v, want within 2s of start", r.took)
+	// proxy dump and routes are exit 2: they could not read the dump (phase 3 design §3.3).
+	for _, sub := range []string{"dump", "routes"} {
+		r := runCmd(t, &execEnv, "proxy", sub, "http", "-n", "kgateway-system", "--request-timeout", "1s")
+		if r.code != 2 || r.stdout != "" {
+			t.Errorf("proxy %s: exit %d, stdout %q; want 2 and empty", sub, r.code, r.stdout)
+		}
+		if !strings.Contains(r.stderr, "--request-timeout 1s") {
+			t.Errorf("proxy %s: stderr = %q, want the deadline named", sub, r.stderr)
+		}
+		if r.took > 2*time.Second {
+			t.Errorf("proxy %s: returned after %v, want within 2s of start", sub, r.took)
+		}
 	}
 	// check is exit 2: it could not check (design §3.4).
 	for _, args := range [][]string{{"check"}, {"check", "--live", "--timeout", "1m"}} {

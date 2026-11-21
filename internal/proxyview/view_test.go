@@ -340,3 +340,113 @@ func TestBuildParseError(t *testing.T) {
 		t.Fatal("want a parse error")
 	}
 }
+
+// TestTextMarksNarrowedInFullTree: without --route, a route only the known
+// HTTPRoutes narrowed still prints as ambiguous, with the one-candidate note.
+func TestTextMarksNarrowedInFullTree(t *testing.T) {
+	body := golden(t, "policies.json")
+	single := []model.Ref{proxyview.HTTPRouteRef(orders), proxyview.HTTPRouteRef(types.NamespacedName{Namespace: "kgwctl-proxy", Name: "public"})}
+	marked := "ambiguous: HTTPRoute kgwctl-proxy/orders, HTTPRoute proxy/orders-kgwctl · " + proxyview.OneCandidateNote
+
+	v := build(t, body, proxyGW, single, proxyview.Selection{})
+	if n := strings.Count(text(t, v, render.Options{}), marked); n != 2 {
+		t.Errorf("full tree marks %d routes, want both colliding routes:\n%s", n, text(t, v, render.Options{}))
+	}
+	// A caller's Style still sees the origin, and the note follows it.
+	styled := text(t, v, render.Options{Style: func(c render.Class, _ *render.FilterRef, s string) string {
+		if c == render.ClassOrigin {
+			return "<" + s + ">"
+		}
+		return s
+	}})
+	if !strings.Contains(styled, "<ambiguous: HTTPRoute kgwctl-proxy/orders, HTTPRoute proxy/orders-kgwctl> · "+proxyview.OneCandidateNote) {
+		t.Errorf("styled tree lacks the styled origin and note:\n%s", styled)
+	}
+	for _, known := range [][]model.Ref{nil, append(single, proxyview.HTTPRouteRef(types.NamespacedName{Namespace: "proxy", Name: "orders-kgwctl"}))} {
+		if out := text(t, build(t, body, proxyGW, known, proxyview.Selection{}), render.Options{}); strings.Contains(out, marked) {
+			t.Errorf("known=%v: note on the orders routes, which the cluster did not narrow:\n%s", known, out)
+		}
+	}
+}
+
+// copyListener prepends a copy of the dump's listener on port 9090 whose route
+// config is a copy named "copy"; strip removes route metadata from the copy.
+func copyListener(t *testing.T, body []byte, strip bool) []byte {
+	t.Helper()
+	return edit(t, body, func(configs []any) []any {
+		clone := func(v any) map[string]any {
+			b, err := json.Marshal(v)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var m map[string]any
+			if err := json.Unmarshal(b, &m); err != nil {
+				t.Fatal(err)
+			}
+			return m
+		}
+		ls := section(t, configs, ".ListenersConfigDump")
+		dl := ls["dynamic_listeners"].([]any)
+		l := clone(dl[0])
+		l["name"] = "listener~9090"
+		lst := l["active_state"].(map[string]any)["listener"].(map[string]any)
+		lst["name"] = "listener~9090"
+		lst["address"].(map[string]any)["socket_address"].(map[string]any)["port_value"] = 9090
+		lst["filter_chains"].([]any)[0].(map[string]any)["filters"].([]any)[0].(map[string]any)["typed_config"].(map[string]any)["rds"].(map[string]any)["route_config_name"] = "copy"
+		ls["dynamic_listeners"] = append([]any{l}, dl...)
+
+		rs := section(t, configs, ".RoutesConfigDump")
+		drc := rs["dynamic_route_configs"].([]any)
+		rc := clone(drc[0])
+		rc["route_config"].(map[string]any)["name"] = "copy"
+		if strip {
+			for _, vh := range rc["route_config"].(map[string]any)["virtual_hosts"].([]any) {
+				for _, r := range vh.(map[string]any)["routes"].([]any) {
+					delete(r.(map[string]any), "metadata")
+				}
+			}
+		}
+		rs["dynamic_route_configs"] = append([]any{rc}, drc...)
+		return configs
+	})
+}
+
+// TestBuildAmbiguousPerRouteConfig: the ambiguous list is per route config and
+// route name, so same-named routes in two HCMs keep their own readings.
+func TestBuildAmbiguousPerRouteConfig(t *testing.T) {
+	// The copy has no metadata (ambiguous); the original has it (exact).
+	v := build(t, copyListener(t, golden(t, "collide-meta.json"), true), proxyGW, nil, proxyview.Selection{Route: orders})
+	if v.Matched() != 1 {
+		t.Errorf("matched %d routes, want the exact one", v.Matched())
+	}
+	if got := ambiguousNames(v); !slices.Equal(got, collidingRoutes) {
+		t.Fatalf("ambiguous %v, want %v", got, collidingRoutes)
+	}
+	for _, a := range v.Ambiguous {
+		if a.RouteConfig != "copy" || len(a.Candidates) != 2 {
+			t.Errorf("%s: route config %q, candidates %v; want copy and both readings", a.Name, a.RouteConfig, a.Candidates)
+		}
+	}
+
+	// No metadata anywhere: each colliding name is listed once per route config.
+	v = build(t, copyListener(t, golden(t, "policies.json"), false), proxyGW, nil, proxyview.Selection{Route: orders})
+	if len(v.Ambiguous) != 4 {
+		t.Fatalf("ambiguous %+v, want 4 entries", v.Ambiguous)
+	}
+	out := text(t, v, render.Options{})
+	for _, want := range []string{collidingRoutes[0] + " · route config copy · ambiguous", collidingRoutes[0] + " · route config listener~8080 · ambiguous"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("text lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestTextNoListenersAfterNarrowing: a selection that leaves nothing prints
+// the header and the no-match line, not "no listeners".
+func TestTextNoListenersAfterNarrowing(t *testing.T) {
+	v := build(t, golden(t, "collide-meta.json"), proxyGW, nil, proxyview.Selection{Route: types.NamespacedName{Namespace: "kgwctl-proxy", Name: "nope"}})
+	out := text(t, v, render.Options{Header: "File x.json"})
+	if want := "File x.json\nno route matches HTTPRoute kgwctl-proxy/nope\n"; out != want {
+		t.Errorf("text = %q, want %q", out, want)
+	}
+}

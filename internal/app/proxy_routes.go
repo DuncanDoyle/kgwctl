@@ -1,0 +1,313 @@
+package app
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/DuncanDoyle/snellius/pkg/extension"
+	"github.com/DuncanDoyle/snellius/pkg/kinds"
+	"github.com/DuncanDoyle/xdsview/pkg/envoy/model"
+	"github.com/DuncanDoyle/xdsview/pkg/envoy/render"
+	"github.com/spf13/cobra"
+	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
+
+	"github.com/DuncanDoyle/kgwctl/internal/load"
+	"github.com/DuncanDoyle/kgwctl/internal/proxydump"
+	"github.com/DuncanDoyle/kgwctl/internal/proxyview"
+)
+
+// defaultMaxSize caps the config dump proxy routes parses (design §4.1).
+const defaultMaxSize = "64Mi"
+
+// routesOptions are proxy routes' own flags.
+type routesOptions struct {
+	file, gateway, pod, route, maxSize string
+	rule                               int
+	response                           bool
+}
+
+// newProxyRoutesCmd builds proxy routes (phase 3 design §3.1).
+func newProxyRoutesCmd(reg *extension.Registry, now func() time.Time, hooks proxyTestHooks) *cobra.Command {
+	var o routesOptions
+	cmd := &cobra.Command{
+		Use:   "routes [<gateway>]",
+		Short: "Show a Gateway's listeners, routes and the HTTP filters each route runs",
+		Long: "Show one Gateway's Envoy listeners, virtual hosts and routes, with the HTTP filters each route runs\n" +
+			"in request order and the Gateway API and kgateway objects they come from.\n\n" +
+			"Live, it reads the config dump of one replica, the oldest Ready one unless --pod names another,\n" +
+			"and the cluster's HTTPRoutes. With --file it reads a saved dump and calls no Kubernetes API.\n" +
+			"A route whose name reads as two HTTPRoutes is listed as ambiguous, never matched.",
+		Example: "  kgwctl proxy routes http -n kgateway-system\n" +
+			"  kgwctl proxy routes http -n kgateway-system --route team-a/orders --rule 0\n" +
+			"  kgwctl proxy routes --file dump.json --gateway kgateway-system/http",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 1 {
+				return usageError(cmd, "proxy routes takes at most one Gateway name, got %d", len(args))
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			f, err := FlagsFrom(cmd)
+			if err != nil {
+				return &ExitError{Code: 2, Err: err}
+			}
+			return proxyRoutes(cmd, f, reg, now, hooks, args, o)
+		},
+	}
+	fs := cmd.Flags()
+	fs.StringVar(&o.file, "file", "", "Read a saved config dump instead of a live proxy; calls no Kubernetes API")
+	fs.StringVar(&o.gateway, "gateway", "", "With --file, the Gateway `<ns>/<name>` the dump belongs to, to label listeners")
+	fs.StringVar(&o.pod, "pod", "", "Read this replica of the Gateway, Ready or not")
+	fs.StringVar(&o.route, "route", "", "Show only the routes of HTTPRoute `<ns>/<name>`; <name> alone uses -n or the context's namespace")
+	fs.IntVar(&o.rule, "rule", 0, "With --route, show only this rule `index`")
+	fs.BoolVar(&o.response, "response", false, "Also show each route's response order")
+	fs.StringVar(&o.maxSize, "max-size", defaultMaxSize, "Largest config dump to parse, as a `quantity` such as 64Mi")
+	return cmd
+}
+
+// usageError is an exit-2 error that ends with cmd's usage line.
+func usageError(cmd *cobra.Command, format string, args ...any) error {
+	return &ExitError{Code: 2, Err: fmt.Errorf(format+"\nUsage: %s", append(args, cmd.UseLine())...)}
+}
+
+// routesRequest is a validated proxy routes invocation.
+type routesRequest struct {
+	live     bool
+	gateway  *types.NamespacedName // live: the argument's namespace is resolved later
+	max      int64
+	sel      proxyview.Selection
+	routeNS  bool // --route named its namespace
+	response bool
+}
+
+// parseRoutes checks the flag combinations before any I/O.
+func parseRoutes(cmd *cobra.Command, args []string, o routesOptions) (routesRequest, error) {
+	req := routesRequest{live: o.file == "", response: o.response}
+	switch {
+	case req.live && len(args) == 0:
+		return req, usageError(cmd, "proxy routes needs a Gateway name, or --file <path>")
+	case !req.live && len(args) == 1:
+		return req, usageError(cmd, "give a Gateway name or --file, not both; with --file, --gateway <ns>/<name> names the Gateway")
+	case req.live && o.gateway != "":
+		return req, usageError(cmd, "--gateway works only with --file; live, name the Gateway as the argument")
+	case !req.live && o.pod != "":
+		return req, usageError(cmd, "--pod works only live, not with --file")
+	}
+	if o.gateway != "" {
+		gw, ok := splitRef(o.gateway)
+		if !ok || gw.Namespace == "" {
+			return req, usageError(cmd, "invalid --gateway %q: want <ns>/<name>", o.gateway)
+		}
+		req.gateway = &gw
+	}
+	q, err := resource.ParseQuantity(o.maxSize)
+	if err != nil || q.Sign() <= 0 {
+		return req, usageError(cmd, "invalid --max-size %q: want a positive quantity such as 64Mi", o.maxSize)
+	}
+	req.max = q.Value()
+	if cmd.Flags().Changed("rule") {
+		switch {
+		case o.route == "":
+			return req, usageError(cmd, "--rule needs --route")
+		case o.rule < 0:
+			return req, usageError(cmd, "invalid --rule %d: must not be negative", o.rule)
+		}
+		req.sel.Rule = &o.rule
+	}
+	if o.route != "" {
+		r, ok := splitRef(o.route)
+		if !ok {
+			return req, usageError(cmd, "invalid --route %q: want <ns>/<name> or <name>", o.route)
+		}
+		req.sel.Route, req.routeNS = r, r.Namespace != ""
+	}
+	return req, nil
+}
+
+// splitRef parses "<ns>/<name>" or "<name>".
+func splitRef(s string) (types.NamespacedName, bool) {
+	parts := strings.Split(s, "/")
+	switch {
+	case len(parts) == 1 && parts[0] != "":
+		return types.NamespacedName{Name: parts[0]}, true
+	case len(parts) == 2 && parts[0] != "" && parts[1] != "":
+		return types.NamespacedName{Namespace: parts[0], Name: parts[1]}, true
+	}
+	return types.NamespacedName{}, false
+}
+
+func proxyRoutes(cmd *cobra.Command, f *Flags, reg *extension.Registry, now func() time.Time, hooks proxyTestHooks, args []string, o routesOptions) error {
+	req, err := parseRoutes(cmd, args, o)
+	if err != nil {
+		return err
+	}
+	if !req.live {
+		return routesFromFile(cmd, f, req, o.file)
+	}
+	return routesLive(cmd, f, reg, now, hooks, req, args[0], o.pod)
+}
+
+// routeNamespace fills a --route without a namespace from ns.
+func routeNamespace(req *routesRequest, ns string) error {
+	if req.sel.Route.Name == "" || req.routeNS {
+		return nil
+	}
+	if ns == "" {
+		return &ExitError{Code: 2, Err: errors.New("--route needs <ns>/<name> with -A")}
+	}
+	req.sel.Route.Namespace = ns
+	return nil
+}
+
+// routesFromFile reads a saved dump. It reads the kubeconfig at most for a
+// --route namespace, and never calls Kubernetes (D-021).
+func routesFromFile(cmd *cobra.Command, f *Flags, req routesRequest, path string) error {
+	if req.sel.Route.Name != "" && !req.routeNS {
+		ns, err := f.ContextNamespace()
+		if err != nil {
+			return &ExitError{Code: 2, Err: err}
+		}
+		if err := routeNamespace(&req, ns); err != nil {
+			return err
+		}
+	}
+	fh, err := os.Open(path)
+	if err != nil {
+		return &ExitError{Code: 2, Err: err}
+	}
+	body, err := proxydump.ReadCapped(fh, req.max)
+	_ = fh.Close()
+	switch {
+	case errors.Is(err, proxydump.ErrTooLarge):
+		return tooLarge(path, req.max)
+	case err != nil:
+		return &ExitError{Code: 2, Err: fmt.Errorf("read %s: %w", path, err)}
+	}
+	header := "File " + path
+	if req.gateway != nil {
+		header += " · Gateway " + req.gateway.String()
+	}
+	return printRoutes(cmd, body, path, req.gateway, nil, req, header)
+}
+
+func routesLive(cmd *cobra.Command, f *Flags, reg *extension.Registry, now func() time.Time, hooks proxyTestHooks, req routesRequest, name, pod string) error {
+	rc, ns, err := f.RESTConfig()
+	if err != nil {
+		return &ExitError{Code: 2, Err: err}
+	}
+	if ns == "" {
+		return &ExitError{Code: 2, Err: errors.New("proxy routes needs a namespace: use -n, not -A")}
+	}
+	if err := routeNamespace(&req, ns); err != nil {
+		return err
+	}
+	gw := types.NamespacedName{Namespace: ns, Name: name}
+	ctx, cancel := f.Context(cmd.Context())
+	defer cancel()
+	c, err := load.NewClients(ctx, rc)
+	if err != nil {
+		return &ExitError{Code: 2, Err: err}
+	}
+	d := hooks.Dialer
+	if d == nil {
+		d = proxydump.NewPortForwarder(rc)
+	}
+
+	// As in proxyDump; reading the capped body here closes the tunnel at once.
+	done := make(chan dumpResult, 1)
+	go func() {
+		target, err := proxydump.SelectPod(ctx, c, gw, pod)
+		if err != nil {
+			done <- dumpResult{stage: stageSelect, err: err}
+			return
+		}
+		capture, err := proxydump.Fetch(ctx, d, target, now)
+		if err != nil {
+			done <- dumpResult{stage: stageFetch, target: target, err: err}
+			return
+		}
+		body, err := proxydump.ReadCapped(capture.Body, req.max)
+		_ = capture.Body.Close()
+		if err != nil && !errors.Is(err, proxydump.ErrTooLarge) {
+			err = fmt.Errorf("read config dump from %s: %w", target, err)
+		}
+		done <- dumpResult{capture: capture, body: body, stage: stageFetch, target: target, err: err}
+	}()
+	var r dumpResult
+	select {
+	case r = <-done:
+	case <-ctx.Done():
+		return dumpError(ctx, f, "proxy routes", gw, r)
+	}
+	switch {
+	case r.err != nil && ctx.Err() == nil && errors.Is(r.err, proxydump.ErrTooLarge):
+		return tooLarge("the config dump of Pod "+r.target.String(), req.max)
+	case r.err != nil:
+		return dumpError(ctx, f, "proxy routes", gw, r)
+	}
+
+	known, err := knownHTTPRoutes(ctx, c, reg, cmd.ErrOrStderr())
+	switch {
+	case err != nil && ctx.Err() != nil:
+		return dumpError(ctx, f, "proxy routes", gw, dumpResult{stage: stageFetch, target: r.target, err: err})
+	case err != nil:
+		// Without the list, origins come from the dump alone; nothing ambiguous becomes a match.
+		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not list HTTPRoutes: %v\n", err)
+	}
+	header := fmt.Sprintf("Gateway %s · pod %s · %s", gw, r.target, r.capture.CapturedAt.UTC().Format(time.RFC3339))
+	return printRoutes(cmd, r.body, "Pod "+r.target.String(), &gw, known, req, header)
+}
+
+// tooLarge reports a dump over --max-size (design §4.1).
+func tooLarge(what string, max int64) error {
+	q := resource.NewQuantity(max, resource.BinarySI)
+	return &ExitError{Code: 2, Err: fmt.Errorf("%s is larger than --max-size %s: raise --max-size to read it, or save it with kgwctl proxy dump", what, q)}
+}
+
+// knownHTTPRoutes lists the cluster's HTTPRoutes with one load (design §4.2).
+// An HTTPRoute list that is not ok is a warning: origins then come from route
+// names and metadata alone, which never turns an ambiguous route into a match.
+func knownHTTPRoutes(ctx context.Context, c load.Clients, reg *extension.Registry, stderr io.Writer) ([]model.Ref, error) {
+	var gvrs []schema.GroupVersionResource
+	pick := func(served []kinds.Served) ([]schema.GroupVersionResource, error) {
+		for _, s := range served {
+			if s.Group == "gateway.networking.k8s.io" && s.Kind == "HTTPRoute" {
+				gvrs = append(gvrs, s.GVR())
+			}
+		}
+		return gvrs, nil
+	}
+	res, err := load.Load(ctx, c, reg, load.Needs{Resolve: pick, Logger: engineLogger(stderr)})
+	if err != nil {
+		return nil, err
+	}
+	var known []model.Ref
+	for _, gvr := range gvrs {
+		if in := res.Inputs[gvr]; in.State != load.StateOK {
+			warn(stderr, in)
+		}
+		for _, u := range res.Model.Snapshot.Objects[gvr] {
+			known = append(known, proxyview.HTTPRouteRef(types.NamespacedName{Namespace: u.GetNamespace(), Name: u.GetName()}))
+		}
+	}
+	return known, nil
+}
+
+// printRoutes builds the view from body and prints the tree.
+func printRoutes(cmd *cobra.Command, body []byte, source string, gw *types.NamespacedName, known []model.Ref, req routesRequest, header string) error {
+	v, err := proxyview.Build(body, gw, known, req.sel)
+	if err != nil {
+		return &ExitError{Code: 2, Err: fmt.Errorf("parse config dump of %s: %w", source, err)}
+	}
+	if err := proxyview.Text(cmd.OutOrStdout(), v, render.Options{Header: header, ResponseOrder: req.response}); err != nil {
+		return &ExitError{Code: 2, Err: fmt.Errorf("write routes: %w", err)}
+	}
+	return nil
+}

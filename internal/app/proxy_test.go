@@ -129,8 +129,8 @@ func TestProxyUsage(t *testing.T) {
 	// No cluster is reached: parsing fails before the kubeconfig is read.
 	const kc = "unused-kubeconfig"
 	bare := runProxy(t, kc, app.ProxyTestHooks{}, "proxy")
-	if bare.code != 0 || !strings.Contains(bare.stdout, "dump") || bare.stderr != "" {
-		t.Errorf("proxy: exit %d, stdout %q, stderr %q; want 0 and help naming dump", bare.code, bare.stdout, bare.stderr)
+	if bare.code != 0 || !strings.Contains(bare.stdout, "dump") || !strings.Contains(bare.stdout, "routes") || bare.stderr != "" {
+		t.Errorf("proxy: exit %d, stdout %q, stderr %q; want 0 and help naming dump and routes", bare.code, bare.stdout, bare.stderr)
 	}
 	for _, tc := range []struct {
 		name string
