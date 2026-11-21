@@ -12,8 +12,8 @@ Status: implementation
 - [x] Q2 Phase 3 implementation plan (r4)
 - [x] Q3 Cross-model review of design + plan (5 rounds, reviews/design-codex*.md), owner go-ahead 2026-11-21
 - [x] Q4 Sub-phase 3.1 capture and `proxy dump` (phase-3.1-complete.md)
-- [ ] Q5 Sub-phase 3.2 `proxy routes` ← CURRENT
-- [ ] Q6 Sub-phase 3.3 live check and docs
+- [x] Q5 Sub-phase 3.2 `proxy routes` (phase-3.2-complete.md)
+- [ ] Q6 Sub-phase 3.3 live check and docs ← CURRENT
 - [ ] Q7 Phase review (Codex), triage
 - [ ] Q8 Phase close
 
@@ -26,10 +26,7 @@ Status: implementation
 - [ ] phase-3-complete.md written, roadmap updated, tracked items closed
 
 ## Sub-phase
-Sub-phase: 3.2 — `proxy routes` (planned)
-Base: 82a0809
-Brief: docs/phases/phase-3/phase-3.2-brief.md
-Status: implementation
+n/a (3.2 complete: docs/phases/phase-3/phase-3.2-complete.md)
 
 ## Program
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
