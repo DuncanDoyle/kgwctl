@@ -186,6 +186,12 @@ Confirmed against xdsview v0.4.0 (kgwctl#10): `parser.Parse(io.Reader) (Result, 
 - `hack/live-check.sh`: `proxy routes proxy -n kgwctl-proxy --route kgwctl-proxy/orders` as reader + Role; assert the three filters in request order, the ext_authz policy contribution, and the route's policy list (`route_source`/merge metadata). Transformation and local rate limit attribution waits on the xdsview patch. Same against a file from `proxy dump` taken with `enableRouteSourceMetadata: true`, run with `--file --gateway kgwctl-proxy/proxy`: identical output except the header. Without metadata, both the file and the live view list the colliding routes as ambiguous.
 - README walkthrough: "does my transformation run before ext_authz?" answered from the live tree.
 
+### Task 3.3.2: Adopt xdsview v0.4.2
+
+- Bump to `github.com/DuncanDoyle/xdsview@v0.4.2` (v0.4.1: attribution for transformation, `ratelimit/local`, `global_disable/*`; per-route-config parser skips; `render.Options.RouteExtra`. v0.4.2: `filter.Ambiguous` covers Known-reduced and NarrowedByKnown readings; name matching skips `<vhost>-route-<n>-`).
+- Replace the ClassRoute counter with `RouteExtra`. Remove kgwctl's own name-only ambiguity check and unresolved substring guard where xdsview now gives the same result; kgwctl's existing tests stay as the proof.
+- Regenerate goldens; README drops the attribution caveat; the live check asserts the transformation, ext_authz and local rate-limit policies; design §3.1 notes the sketch's order is illustrative (kgateway v2.5.1 runs ext_authz, local rate limit, then the transformation).
+
 ## Phase close prerequisites (not done by the implementer)
 - Phase cross-model review (`reviews/phase-codex.md`) and triage.
 - `phase-3-complete.md`, roadmap, program file (E1, E11 consumed).
