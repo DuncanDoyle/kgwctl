@@ -32,7 +32,9 @@ type result struct {
 // every collector is done, o.Deadline passes or ctx ends. The writer is then
 // sealed, collectors still running are recorded as timeout without being
 // waited for, and the archive is finalized with the collectors in
-// registration order. The returned error is the finalization error.
+// registration order. A collector is never started once collection has
+// ended. Run returns the manifest as written to manifest.json, or the
+// finalization error and the zero Manifest.
 func Run(ctx context.Context, cs []pb.Collector, env pb.Env, w *Writer, m Manifest, o RunOptions) (Manifest, error) {
 	dctx, cancel := context.WithCancel(ctx)
 	if !o.Deadline.IsZero() {
@@ -94,6 +96,9 @@ func Run(ctx context.Context, cs []pb.Collector, env pb.Env, w *Writer, m Manife
 		go func() {
 			defer wg.Done()
 			for i := range jobs {
+				if dctx.Err() != nil {
+					continue // left as timeout, never started
+				}
 				runOne(dctx, cs[i], env, w, now, func(st pb.CollectorStatus, err error, d time.Duration) { finish(i, st, err, d) })
 			}
 		}()
@@ -101,6 +106,9 @@ func Run(ctx context.Context, cs []pb.Collector, env pb.Env, w *Writer, m Manife
 	go func() {
 		defer close(jobs)
 		for _, i := range pending {
+			if dctx.Err() != nil {
+				return
+			}
 			select {
 			case jobs <- i:
 			case <-dctx.Done():
@@ -119,7 +127,6 @@ func Run(ctx context.Context, cs []pb.Collector, env pb.Env, w *Writer, m Manife
 	cancel()
 	w.Seal()
 
-	degraded := w.Degraded()
 	late := w.Late()
 	mu.Lock()
 	for i := range res {
@@ -127,17 +134,15 @@ func Run(ctx context.Context, cs []pb.Collector, env pb.Env, w *Writer, m Manife
 		if !res[i].done {
 			e.Status, e.DurationMs, res[i].done = pb.CollectorTimeout, now().Sub(start).Milliseconds(), true
 			e.Error = "collection deadline reached"
-		} else if e.Status == pb.CollectorOK && degraded[e.Name] {
-			e.Status = pb.CollectorPartial
 		}
 		e.Late = late[e.Name]
 		m.Collectors = append(m.Collectors, *e)
 	}
 	mu.Unlock()
-	m.Excluded = w.Excluded()
-	m.Items = w.Items()
-	err := w.Finalize(order, m)
-	return m, err
+	if err := w.Finalize(order, m); err != nil {
+		return Manifest{}, err
+	}
+	return w.Committed(), nil
 }
 
 // runOne runs c, turning a panic into an error, and reports the outcome.

@@ -41,6 +41,9 @@ type Options struct {
 	// ExtraHeaders are header names, from --redact-header, added to the
 	// sensitive-header list. Matching ignores case.
 	ExtraHeaders []string
+	// MaxSize, when positive, makes JSON and ConfigDump output compact when
+	// indentation would make it larger.
+	MaxSize int64
 }
 
 // recorder sums findings per rule and location, in first-seen order.

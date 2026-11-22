@@ -288,46 +288,76 @@ func TestWriterBudgetOrder(t *testing.T) {
 	}
 }
 
-// TestWriterFooterCaps runs at the real 512Mi caps; the 32Mi footer total is
-// checked on DefaultLimits in TestDefaultLimitsMinimum.
+// TestWriterFooterCaps fills every footer past its cap at the smallest
+// --max-size and checks the extracted archive.
 func TestWriterFooterCaps(t *testing.T) {
-	l := mustLimits(t, 512<<20)
+	l := mustLimits(t, MinSize)
 	h := newHarness(t, l, redact.Options{}, "")
-	s := h.w.Sink("many")
 	reason := errors.New("capture failed: " + strings.Repeat("r", 40))
-	for i := range 100_000 {
-		s.Error(pb.Path{"items", fmt.Sprintf("item-%06d.json", i)}, pb.Source{Operation: pb.OpCustom}, reason)
+	var order []string
+	for c := range 10 {
+		name := fmt.Sprintf("c%d", c)
+		order = append(order, name)
+		s := h.w.Sink(name)
+		for i := range 4200 {
+			s.Error(pb.Path{"items", fmt.Sprintf("item-%05d.json", i)}, pb.Source{Operation: pb.OpCustom}, reason)
+		}
 	}
-	for i := range 2500 {
-		h.w.Log(fmt.Sprintf("progress line %d %s", i, strings.Repeat("p", 600)))
+	// 24 documents of 2500 findings each, at distinct schema-field paths,
+	// overflow redactions.json.
+	names := strings.Fields("apiVersion kind metadata name namespace uid spec status items conditions type reason " +
+		"message replicas key operator values template containers image args command ports port protocol")
+	var doc bytes.Buffer
+	doc.WriteByte('{')
+	for i, a := range names {
+		if i > 0 {
+			doc.WriteByte(',')
+		}
+		fmt.Fprintf(&doc, "%q:{", a)
+		for j, b := range names {
+			if j > 0 {
+				doc.WriteByte(',')
+			}
+			fmt.Fprintf(&doc, `%q:{"password":"x","token":"x","apiKey":"x","secret":"x"}`, b)
+		}
+		doc.WriteByte('}')
 	}
+	doc.WriteByte('}')
+	for i := range 24 {
+		if err := h.w.Sink("c0").JSON(pb.Path{"docs", fmt.Sprintf("d-%02d.json", i)}, bytes.NewReader(doc.Bytes()), pb.Source{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// run.log is filled in TestRunLogCap: its redactor is too slow under -race here.
+	h.w.Log("progress")
 	h.w.Seal()
-	a := h.finish(t, Manifest{}, "many")
+	a := h.finish(t, Manifest{}, order...)
 
-	var env struct {
-		Item Manifest `json:"item"`
+	var total int64
+	for _, f := range h.w.footers() {
+		b, ok := a.File(f.name)
+		if !ok || int64(len(b)) > f.cap {
+			t.Errorf("%s present %v, %d bytes, cap %d", f.name, ok, len(b), f.cap)
+		}
+		total += int64(len(b))
 	}
-	mb, _ := a.File(pb.ManifestFile)
-	if err := json.Unmarshal(mb, &env); err != nil {
-		t.Fatal(err)
+	if total > MinSize/4 {
+		t.Errorf("footers total %d > %d", total, MinSize/4)
 	}
-	if int64(len(mb)) > l.Manifest || l.Manifest > 4<<20 {
-		t.Errorf("manifest.json %d bytes, cap %d", len(mb), l.Manifest)
+	if m := archiveManifest(t, a); m.ItemsOmitted < 10*(4200-4096) {
+		t.Errorf("itemsOmitted = %d", m.ItemsOmitted)
 	}
-	if env.Item.ItemsOmitted == 0 {
-		t.Error("itemsOmitted = 0")
+	if b, _ := a.File(pb.ErrorsFile); !strings.HasSuffix(string(b), "\n[kgwctl: truncated: size cap]\n") {
+		t.Error("errors.txt does not end with a truncation line")
 	}
-	eb, _ := a.File(pb.ErrorsFile)
-	if int64(len(eb)) > l.Errors || l.Errors > 1<<20 {
-		t.Errorf("errors.txt %d bytes, cap %d", len(eb), l.Errors)
+	var red struct {
+		Files []struct {
+			FindingsOmitted int `json:"findingsOmitted"`
+		} `json:"files"`
 	}
-	lines := strings.Split(strings.TrimSuffix(string(eb), "\n"), "\n")
-	if last := lines[len(lines)-1]; last != "[kgwctl: truncated: size cap]" {
-		t.Errorf("errors.txt last line %q", last)
-	}
-	rl, _ := a.File(pb.RunLogFile)
-	if int64(len(rl)) > l.RunLog || !strings.HasSuffix(string(rl), "[kgwctl: truncated: size cap]\n") {
-		t.Errorf("run.log %d bytes, cap %d, no marker", len(rl), l.RunLog)
+	rb, _ := a.File(pb.RedactionsFile)
+	if err := json.Unmarshal(rb, &red); err != nil || len(red.Files) == 0 || red.Files[len(red.Files)-1].FindingsOmitted == 0 {
+		t.Errorf("redactions.json: %v, %+v", err, red)
 	}
 	if a.TarSize > l.MaxSize {
 		t.Errorf("tar content %d > %d", a.TarSize, l.MaxSize)
@@ -407,8 +437,8 @@ func TestWriterSealTextKeepsLines(t *testing.T) {
 	if err := <-done; !errors.Is(err, pb.ErrSealed) {
 		t.Errorf("Text err = %v, want ErrSealed", err)
 	}
-	if n := h.w.Late()["logs"]; n != 0 {
-		t.Errorf("late = %d, want 0 for a kept text item", n)
+	if n := h.w.Late()["logs"]; n != 1 {
+		t.Errorf("late = %d, want 1: the call was in flight", n)
 	}
 	data, _ := a.File(p.String())
 	if want := "line one\nAuthorization: Bearer [redacted]\n[kgwctl: truncated: sealed]\n"; string(data) != want {

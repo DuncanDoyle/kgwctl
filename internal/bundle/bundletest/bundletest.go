@@ -66,7 +66,8 @@ func (c *countReader) Read(p []byte) (int, error) {
 }
 
 // Extract reads a tar.gz bundle. It fails the test on a duplicate member name
-// (ignoring case), a non-regular entry or a path outside the single root.
+// or a member that is also another member's directory (ignoring case), a
+// non-regular entry or a path outside the single root.
 func Extract(t *testing.T, r io.Reader) Archive {
 	t.Helper()
 	a, err := extract(r)
@@ -84,7 +85,7 @@ func extract(r io.Reader) (Archive, error) {
 	}
 	cr := &countReader{r: zr}
 	tr := tar.NewReader(cr)
-	seen := map[string]bool{}
+	seen, dirs := map[string]bool{}, map[string]bool{}
 	for {
 		h, err := tr.Next()
 		if err == io.EOF {
@@ -109,6 +110,17 @@ func extract(r io.Reader) (Archive, error) {
 		key := strings.ToLower(clean)
 		if seen[key] {
 			return a, fmt.Errorf("duplicate member %q", h.Name)
+		}
+		if dirs[key] {
+			return a, fmt.Errorf("member %q is also a directory", h.Name)
+		}
+		for i := range len(key) {
+			if key[i] == '/' {
+				if seen[key[:i]] {
+					return a, fmt.Errorf("member %q is under file %q", h.Name, key[:i])
+				}
+				dirs[key[:i]] = true
+			}
 		}
 		seen[key] = true
 		data, err := io.ReadAll(tr)

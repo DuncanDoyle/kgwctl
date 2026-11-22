@@ -142,10 +142,55 @@ func writeString(buf *bytes.Buffer, s string) {
 }
 
 // indented renders n with two-space indentation, like Envoy's admin output.
-func (n *node) indented() []byte {
+// When that would pass max (if positive), it renders n compact instead.
+func (n *node) indented(max int64) []byte {
 	var c, out bytes.Buffer
 	n.encode(&c)
+	if max > 0 && indentedSize(c.Bytes()) > max {
+		c.WriteByte('\n')
+		return c.Bytes()
+	}
 	_ = json.Indent(&out, c.Bytes(), "", "  ")
 	out.WriteByte('\n')
 	return out.Bytes()
+}
+
+// indentedSize is the length json.Indent with two spaces gives compact c,
+// plus a trailing newline, counted without building it.
+func indentedSize(c []byte) int64 {
+	var n, depth int64
+	inStr, esc := false, false
+	for i, b := range c {
+		n++
+		if inStr {
+			switch {
+			case esc:
+				esc = false
+			case b == '\\':
+				esc = true
+			case b == '"':
+				inStr = false
+			}
+			continue
+		}
+		switch b {
+		case '"':
+			inStr = true
+		case '{', '[':
+			depth++
+			if i+1 < len(c) && c[i+1] != '}' && c[i+1] != ']' {
+				n += 1 + 2*depth
+			}
+		case '}', ']':
+			depth--
+			if c[i-1] != '{' && c[i-1] != '[' {
+				n += 1 + 2*depth
+			}
+		case ',':
+			n += 1 + 2*depth
+		case ':':
+			n++
+		}
+	}
+	return n + 1
 }

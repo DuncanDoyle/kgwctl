@@ -259,7 +259,8 @@ func capStrings(m *Manifest) {
 }
 
 // capExcluded keeps Excluded within maxExcluded entries by summing the overflow
-// into one "other" entry per reason, so no count is lost.
+// into one "other" entry per reason, so no count is lost. The writer accepts
+// two reasons; with more reasons than entries it keeps only "other" entries.
 func capExcluded(m *Manifest) {
 	if len(m.Excluded) > 0 {
 		ex := slices.Clone(m.Excluded)
@@ -277,7 +278,7 @@ func capExcluded(m *Manifest) {
 			reasons = append(reasons, e.Reason)
 		}
 	}
-	keep := maxExcluded - len(reasons)
+	keep := max(maxExcluded-len(reasons), 0)
 	other := map[pb.ExcludeReason]int{}
 	var order []pb.ExcludeReason
 	for _, e := range m.Excluded[keep:] {

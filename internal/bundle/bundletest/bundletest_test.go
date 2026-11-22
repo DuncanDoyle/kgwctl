@@ -49,13 +49,15 @@ func archive(t *testing.T, es ...entry) []byte {
 
 func TestExtractRejects(t *testing.T) {
 	cases := map[string][]entry{
-		"duplicate":   {{"r/a.txt", tar.TypeReg, "1"}, {"r/A.TXT", tar.TypeReg, "2"}},
-		"symlink":     {{"r/a", tar.TypeSymlink, ""}},
-		"directory":   {{"r/d/", tar.TypeDir, ""}},
-		"dot-dot":     {{"r/../x.txt", tar.TypeReg, "1"}},
-		"absolute":    {{"/r/x.txt", tar.TypeReg, "1"}},
-		"no-root":     {{"x.txt", tar.TypeReg, "1"}},
-		"second-root": {{"r/a.txt", tar.TypeReg, "1"}, {"s/b.txt", tar.TypeReg, "1"}},
+		"duplicate":     {{"r/a.txt", tar.TypeReg, "1"}, {"r/A.TXT", tar.TypeReg, "2"}},
+		"symlink":       {{"r/a", tar.TypeSymlink, ""}},
+		"directory":     {{"r/d/", tar.TypeDir, ""}},
+		"dot-dot":       {{"r/../x.txt", tar.TypeReg, "1"}},
+		"absolute":      {{"/r/x.txt", tar.TypeReg, "1"}},
+		"no-root":       {{"x.txt", tar.TypeReg, "1"}},
+		"second-root":   {{"r/a.txt", tar.TypeReg, "1"}, {"s/b.txt", tar.TypeReg, "1"}},
+		"file-then-dir": {{"r/a/b", tar.TypeReg, "1"}, {"r/A/b/c.txt", tar.TypeReg, "2"}},
+		"dir-then-file": {{"r/a/b/c.txt", tar.TypeReg, "1"}, {"r/a/B", tar.TypeReg, "2"}},
 	}
 	for name, es := range cases {
 		t.Run(name, func(t *testing.T) {

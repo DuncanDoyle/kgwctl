@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/DuncanDoyle/kgwctl/internal/view"
 )
@@ -18,12 +19,8 @@ import (
 // maxErrorText is the cut for ErrorText, design §7.1.
 const maxErrorText = 512
 
-var (
-	// streamStatusRe is client-go's error for a non-2xx stream with an unparsed body.
-	streamStatusRe = regexp.MustCompile(`\b([1-5][0-9]{2}) while accessing `)
-	// reasonRe is a Kubernetes StatusReason; anything else is left out.
-	reasonRe = regexp.MustCompile(`^[A-Za-z]{1,64}$`)
-)
+// streamStatusRe is client-go's error for a non-2xx stream with an unparsed body.
+var streamStatusRe = regexp.MustCompile(`\b([1-5][0-9]{2}) while accessing `)
 
 // RemoteError renders an error from a remote endpoint as its HTTP status and
 // Kubernetes reason only, such as "403 Forbidden (Forbidden)" (design §7.1).
@@ -51,12 +48,34 @@ func RemoteError(err error) string {
 	return "request failed"
 }
 
+// reasons are the canonical Kubernetes StatusReasons; others are not shown.
+var reasons = map[metav1.StatusReason]bool{
+	metav1.StatusReasonUnauthorized: true, metav1.StatusReasonForbidden: true, metav1.StatusReasonNotFound: true,
+	metav1.StatusReasonAlreadyExists: true, metav1.StatusReasonConflict: true, metav1.StatusReasonGone: true,
+	metav1.StatusReasonInvalid: true, metav1.StatusReasonServerTimeout: true, metav1.StatusReasonStoreReadError: true,
+	metav1.StatusReasonTimeout: true, metav1.StatusReasonTooManyRequests: true, metav1.StatusReasonBadRequest: true,
+	metav1.StatusReasonMethodNotAllowed: true, metav1.StatusReasonNotAcceptable: true,
+	metav1.StatusReasonRequestEntityTooLarge: true, metav1.StatusReasonUnsupportedMediaType: true,
+	metav1.StatusReasonInternalError: true, metav1.StatusReasonExpired: true, metav1.StatusReasonServiceUnavailable: true,
+}
+
+// statusText renders a status code and reason. A reason that is not
+// canonical gives "request failed (<code>)".
 func statusText(code int, reason string) string {
+	if code < 100 || code > 599 {
+		code = 0
+	}
+	if reason != "" && !reasons[metav1.StatusReason(reason)] {
+		if code == 0 {
+			return "request failed"
+		}
+		return fmt.Sprintf("request failed (%d)", code)
+	}
 	var parts []string
 	if code != 0 {
 		parts = append(parts, strings.TrimSpace(fmt.Sprintf("%d %s", code, http.StatusText(code))))
 	}
-	if reasonRe.MatchString(reason) {
+	if reason != "" {
 		parts = append(parts, "("+reason+")")
 	}
 	if len(parts) == 0 {

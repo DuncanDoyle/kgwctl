@@ -24,5 +24,5 @@ func redactTree(body []byte, m mode, o Options) ([]byte, []Finding, error) {
 	}
 	w := &walker{mode: m, opts: o, rec: &recorder{}}
 	w.walk(t, "", "", 0)
-	return t.indented(), w.rec.findings(), nil
+	return t.indented(o.MaxSize), w.rec.findings(), nil
 }

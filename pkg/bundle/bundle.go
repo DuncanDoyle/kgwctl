@@ -118,7 +118,10 @@ type Source struct {
 }
 
 // Sink receives collector output. Every method that returns an error returns
-// ErrSealed after the collection deadline.
+// ErrSealed after the collection deadline. Paths must be built from real
+// Kubernetes names and constants (see Path); a write whose path fails
+// ValidatePath, or whose Source.Identity is not a defined CaptureIdentity,
+// returns ErrInvalidPath and is recorded as failed without the bad value.
 type Sink interface {
 	// Object writes a Kubernetes object as YAML.
 	Object(p Path, u *unstructured.Unstructured, src Source) error
@@ -134,8 +137,8 @@ type Sink interface {
 	Error(item Path, src Source, err error)
 	// Exclude counts a left-out object. It returns ErrSealed after the seal.
 	// An empty group is core and is recorded as core; a non-empty group must
-	// pass Name(Group) and the kind must always pass Name(Kind), else
-	// ErrInvalidPath.
+	// pass Name(Group), the kind must pass Name(Kind) and the reason must be
+	// ExcludeOwnership or ExcludeScope, else ErrInvalidPath.
 	Exclude(gk schema.GroupKind, reason ExcludeReason) error
 }
 

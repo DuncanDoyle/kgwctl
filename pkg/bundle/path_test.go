@@ -67,10 +67,25 @@ func TestValidatePath(t *testing.T) {
 		"slash":        {"a/b"},
 		"empty comp":   {"a", ""},
 		"long":         {strings.Repeat("a", 256)},
+		"underscore":   {"x", "arbitrary_value"},
+		"mixed":        {"x", "Foo-Bar"},
+		"cluster-like": {"x", "_cluster2"},
+		"bare-ext":     {"x", ".log"},
+		"space":        {"x", "a b.json"},
 	}
 	for name, p := range bad {
 		if err := ValidatePath(p); !errors.Is(err, ErrInvalidPath) {
 			t.Errorf("%s: ValidatePath(%v) = %v, want ErrInvalidPath", name, p, err)
+		}
+	}
+	for _, p := range []Path{
+		{ProxiesDir, "ns", "gw-0.x", ConfigDumpFile},
+		{ControllerDir, "ns", "p", LogsDir, "kgateway.previous.log"},
+		{ResourcesDir, "gateway.networking.k8s.io", "HTTPRoute", "ns", "r.yaml"},
+		{"X", "F.txt"},
+	} {
+		if err := ValidatePath(p); err != nil {
+			t.Errorf("ValidatePath(%v) = %v", p, err)
 		}
 	}
 	if err := ValidatePath(nine[:8]); err != nil {

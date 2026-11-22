@@ -75,7 +75,22 @@ const (
 // rootFooters are the reserved root names, written by the bundle itself.
 var rootFooters = []string{ManifestFile, ErrorsFile, RedactionsFile, RunLogFile}
 
-// Path is a list of components joined under the archive root.
+// constants are the fixed components a path may use besides names.
+var constants = map[string]bool{
+	Cluster: true, Core: true, ResourcesDir: true, WorkloadsDir: true, InstallDir: true,
+	ControllerDir: true, ProxiesDir: true, LogsDir: true, ClusterDir: true, CheckDir: true,
+	VersionFile: true, CheckFile: true, DeploymentsFile: true, PodsFile: true, ServicesFile: true,
+	EventsFile: true, MetricsFile: true, ConfigDumpFile: true, StatsFile: true, ServerInfoFile: true,
+	CertsFile: true, ClustersFile: true,
+}
+
+// exts are the file extensions a name may carry, longest first.
+var exts = []Ext{PreviousLog, YAML, JSON, Log, Text}
+
+// Path is a list of components joined under the archive root. Each component
+// is a constant from this package or a real Kubernetes name, optionally with
+// a file extension. Collectors pass names read from the API, never captured
+// data such as log or response content.
 type Path []string
 
 // String returns the slash-joined path.
@@ -191,9 +206,10 @@ func File(name string, ext Ext) (string, error) {
 }
 
 // ValidatePath checks a path against the archive rules: 1 to 8 components,
-// each 1 to 255 bytes of letters, digits, '.', '_' and '-', not '.' or '..'
-// and not starting with '.' or '-', with no reserved root footer name.
-// Duplicates are the writer's concern.
+// each 1 to 255 bytes and either a constant of this package or a DNS-1123
+// subdomain or kind name, optionally followed by one File extension. The
+// first component may not be a reserved root footer name. '_' appears only in
+// constants. Duplicates and conflicts are the writer's concern.
 func ValidatePath(p Path) error {
 	if len(p) == 0 || len(p) > maxDepth {
 		return fmt.Errorf("%w: %d components, want 1 to %d", ErrInvalidPath, len(p), maxDepth)
@@ -215,15 +231,18 @@ func validComponent(c string) error {
 	if c == "" || len(c) > maxComponent {
 		return fmt.Errorf("%w: component length %d, want 1 to %d", ErrInvalidPath, len(c), maxComponent)
 	}
-	if c == "." || c == ".." || c[0] == '.' || c[0] == '-' {
-		return fmt.Errorf("%w: component %q", ErrInvalidPath, c)
+	if constants[c] || isName(c) {
+		return nil
 	}
-	for i := 0; i < len(c); i++ {
-		b := c[i]
-		ok := b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' || b == '.' || b == '_' || b == '-'
-		if !ok {
-			return fmt.Errorf("%w: component %q has an invalid character", ErrInvalidPath, c)
+	for _, e := range exts {
+		if base, ok := strings.CutSuffix(c, string(e)); ok && base != "" && isName(base) {
+			return nil
 		}
 	}
-	return nil
+	return fmt.Errorf("%w: component %q is not a name or constant", ErrInvalidPath, c)
+}
+
+// isName reports whether s is a DNS-1123 subdomain (labels included) or a kind.
+func isName(s string) bool {
+	return len(validation.IsDNS1123Subdomain(s)) == 0 || len(validateKind(s)) == 0
 }

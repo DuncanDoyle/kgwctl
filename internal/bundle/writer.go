@@ -46,12 +46,25 @@ const (
 	ReasonInvalidJSON   = "invalid JSON"
 	ReasonNotPrometheus = "not Prometheus text"
 	ReasonSealed        = "sealed"
+	ReasonInvalidSource = "invalid source"
+	ReasonInvalidExcl   = "invalid exclusion"
+	ReasonPathConflict  = "path conflict"
 )
 
 const (
 	// markerReserve keeps room under a text cap for the truncation line.
 	markerReserve = 64
 	invalidPart   = "[invalid]"
+	// maxFailRecords caps the records that are not ok, per collector.
+	maxFailRecords = 4096
+)
+
+// identities and excludeReasons are the values the Sink accepts.
+var (
+	identities = map[pb.CaptureIdentity]bool{
+		"": true, pb.IdentityVerified: true, pb.IdentityChanged: true, pb.IdentityGone: true, pb.IdentityRereadFailed: true,
+	}
+	excludeReasons = map[pb.ExcludeReason]bool{pb.ExcludeOwnership: true, pb.ExcludeScope: true}
 )
 
 // truncation is the writer's marker line for a cut text item or footer.
@@ -72,21 +85,25 @@ type Writer struct {
 	server string
 	now    func() time.Time
 
-	mu        sync.Mutex
-	sealed    bool
-	sealedAt  time.Time
-	finalized bool
-	order     []string
-	seq       int
-	records   []*record
-	keys      map[string]map[string]bool // collector -> lower-cased staged paths
-	calls     map[*call]struct{}
-	late      map[string]int
-	excl      map[Exclusion]int // Count is zero in keys
-	frozen    []Exclusion
-	runLog    []string
-	runLogN   int64
-	runLogCut bool
+	mu          sync.Mutex
+	sealed      bool
+	sealedAt    time.Time
+	finalized   bool
+	order       []string
+	seq         int
+	records     []*record
+	keys        map[string]map[string]bool // collector -> staged paths
+	failN       map[string]int             // records that are not ok, per collector
+	failOmit    map[string]int             // such records past maxFailRecords
+	committed   Manifest
+	placeholder bool // manifest.json is the placeholder
+	calls       map[*call]struct{}
+	late        map[string]int
+	excl        map[Exclusion]int // Count is zero in keys
+	frozen      []Exclusion
+	runLog      []string
+	runLogN     int64
+	runLogCut   bool
 
 	// errCache holds error text already redacted, as collectors repeat errors.
 	errMu    sync.Mutex
@@ -126,7 +143,7 @@ func NewWriter(d Dest, sp *Spool, root string, l Limits, ro redact.Options, serv
 	return &Writer{
 		dest: d, sp: sp, root: root, lim: l, ro: ro, server: server, now: now,
 		keys: map[string]map[string]bool{}, calls: map[*call]struct{}{},
-		late: map[string]int{}, excl: map[Exclusion]int{},
+		late: map[string]int{}, excl: map[Exclusion]int{}, failN: map[string]int{}, failOmit: map[string]int{},
 	}
 }
 
@@ -208,8 +225,16 @@ func safePath(p pb.Path) string {
 	return strings.Join(parts, "/")
 }
 
-// addRecord appends an item outcome; the caller holds w.mu.
+// addRecord appends an item outcome; the caller holds w.mu. Past
+// maxFailRecords for a collector, a record that is not ok is only counted.
 func (w *Writer) addRecord(collector string, it Item, fs []redact.Finding, e *entry) *record {
+	if it.Status != pb.ItemOK {
+		if w.failN[collector] >= maxFailRecords {
+			w.failOmit[collector]++
+			return nil
+		}
+		w.failN[collector]++
+	}
 	w.seq++
 	for _, f := range fs {
 		it.Redactions += f.Count
@@ -229,8 +254,8 @@ func (c *call) item(w *Writer) Item {
 // uidRe is a Kubernetes UID: hex digits and dashes.
 var uidRe = regexp.MustCompile(`^[0-9a-fA-F-]{1,64}$`)
 
-// safeSource replaces every Source name that fails validation, so no
-// unvalidated value reaches the manifest.
+// safeSource replaces every Source name that fails validation and clears an
+// unknown identity, so no unvalidated value reaches the manifest.
 func safeSource(s pb.Source) pb.Source {
 	check := func(v *string, k pb.NameKind) {
 		if *v != "" {
@@ -245,11 +270,15 @@ func safeSource(s pb.Source) pb.Source {
 	if s.UID != "" && !uidRe.MatchString(string(s.UID)) {
 		s.UID = invalidPart
 	}
+	if !identities[s.Identity] {
+		s.Identity = ""
+	}
 	return s
 }
 
-// begin registers a Sink write after checking the seal, the path and
-// duplicates within the collector.
+// begin registers a Sink write after checking the seal, the path, the source
+// identity and exact duplicates within the collector. Case variants and
+// path conflicts are resolved at commit.
 func (w *Writer) begin(collector string, p pb.Path, ctype string, src pb.Source, text bool) (*call, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -264,9 +293,18 @@ func (w *Writer) begin(collector string, p pb.Path, ctype string, src pb.Source,
 		// ValidatePath's error quotes the bad component, so it is not returned.
 		return nil, fmt.Errorf("%w: %s", pb.ErrInvalidPath, safePath(p))
 	}
-	c.key = strings.ToLower(p.String())
+	if !identities[src.Identity] {
+		it := c.item(w)
+		it.Status, it.Reason = pb.ItemFailed, ReasonInvalidSource
+		w.addRecord(collector, it, nil, nil)
+		return nil, fmt.Errorf("%w: source identity", pb.ErrInvalidPath)
+	}
+	c.key = p.String()
 	if w.keys[collector][c.key] {
 		return nil, w.duplicate(c)
+	}
+	if text {
+		c.e.reserve = markerReserve
 	}
 	w.calls[c] = struct{}{}
 	return c, nil
@@ -344,7 +382,9 @@ func (w *Writer) structured(c *call, r io.Reader, limit int64, fn func([]byte, r
 	if int64(len(body)) > limit {
 		return w.finish(c, outcome{status: pb.ItemDropped, reason: ReasonSizeCap, err: fmt.Errorf("%w: %s", pb.ErrBudget, ReasonSizeCap)})
 	}
-	out, fs, err := fn(body, w.ro)
+	ro := w.ro
+	ro.MaxSize = limit
+	out, fs, err := fn(body, ro)
 	switch {
 	case errors.Is(err, redact.ErrInvalidJSON):
 		return w.finish(c, outcome{status: pb.ItemFailed, reason: ReasonInvalidJSON, err: err})
@@ -426,9 +466,9 @@ func (w *Writer) finishText(c *call, res redact.TextResult) error {
 	return err
 }
 
-// Seal freezes staged state at the collection deadline. A text item with
-// staged lines is kept with a truncation line; every other call in flight is
-// counted as late for its collector and its result is not written. Exclude
+// Seal freezes staged state at the collection deadline. Every call in flight
+// is counted as late for its collector. A text item with staged lines keeps
+// them with a truncation line; any other late result is not written. Exclude
 // counts are frozen. Later Sink calls return ErrSealed.
 func (w *Writer) Seal() {
 	w.mu.Lock()
@@ -439,13 +479,13 @@ func (w *Writer) Seal() {
 	w.sealed = true
 	w.sealedAt = w.now()
 	for c := range w.calls {
+		w.late[c.collector]++
 		if c.text && c.lines > 0 && c.dropErr == nil && w.sp.add(&c.e, []byte(truncation(ReasonSealed)+"\n"), true) == nil {
 			c.kept, _ = w.stage(c, c.findings, "truncated: "+ReasonSealed)
 			c.late = c.kept == nil // a duplicate, already recorded by stage
 			continue
 		}
 		c.late = true
-		w.late[c.collector]++
 	}
 	w.frozen = w.exclusions()
 }
@@ -525,8 +565,9 @@ func (w *Writer) sortRecords() {
 
 // Finalize seals if needed, then commits staged items in order then path
 // within the size budget, writes the footers within their caps and closes
-// the destination. It always removes the spool; on error it aborts the
-// destination. It has no timer: it writes at most MaxSize of tar content.
+// the destination. It always removes the spool. On error, including a
+// footer encoding error or a panic, which it returns as an error, it aborts
+// the destination. It has no timer: it writes at most MaxSize of tar content.
 func (w *Writer) Finalize(order []string, m Manifest) (err error) {
 	w.Seal()
 	w.mu.Lock()
@@ -537,10 +578,28 @@ func (w *Writer) Finalize(order []string, m Manifest) (err error) {
 	}
 	w.finalized = true
 	w.order = slices.Clone(order)
-	if err := w.commit(m); err != nil {
+	if err := w.safeCommit(m); err != nil {
 		return errors.Join(err, w.dest.Abort())
 	}
 	return nil
+}
+
+// Committed returns the manifest as written to manifest.json, after a
+// successful Finalize; before that it is the zero Manifest.
+func (w *Writer) Committed() Manifest {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.committed
+}
+
+// safeCommit runs commit, turning a panic into an error.
+func (w *Writer) safeCommit(m Manifest) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("bundle: finalize panicked: %s", redact.ErrorText(fmt.Errorf("%v", r), w.server))
+		}
+	}()
+	return w.commit(m)
 }
 
 // footer names in archive order, with their caps.
@@ -572,29 +631,16 @@ func headerCost(h *tar.Header) int64 {
 
 func pad(n int64) int64 { return (n + 511) &^ 511 }
 
-// countTo counts bytes written through to w.
-type countTo struct {
-	w io.Writer
-	n int64
-}
-
-func (c *countTo) Write(p []byte) (int, error) {
-	n, err := c.w.Write(p)
-	c.n += int64(n)
-	return n, err
-}
-
-// commit writes the archive; the caller holds w.mu.
-func (w *Writer) commit(m Manifest) error {
-	w.sortRecords()
-	end := w.now()
-
+// place decides, in commit order, which staged items commit. An item whose
+// path equals a committed one ignoring case, or is a file or directory prefix
+// of one, or that passes the budget, is dropped and claims no path.
+func (w *Writer) place(end time.Time) {
 	// The footer reserve and the two end-of-archive blocks come off MaxSize first.
 	budget := w.lim.MaxSize - 1024
 	for _, f := range w.footers() {
 		budget -= headerCost(w.header(f.name, f.cap, end)) + pad(f.cap)
 	}
-	seen := map[string]bool{}
+	files, dirs := map[string]bool{}, map[string]bool{}
 	var used int64
 	for _, r := range w.records {
 		if r.e == nil {
@@ -602,17 +648,61 @@ func (w *Writer) commit(m Manifest) error {
 		}
 		key := strings.ToLower(r.item.Path)
 		reason := ""
-		if seen[key] {
+		switch {
+		case files[key]:
 			reason = ReasonDuplicate
-		} else if cost := headerCost(w.header(r.item.Path, r.e.size, r.item.CapturedAt)) + pad(r.e.size); used+cost > budget {
-			reason = ReasonSizeBudget
-		} else {
+		case dirs[key] || hasFileParent(key, files):
+			reason = ReasonPathConflict
+		default:
+			cost := headerCost(w.header(r.item.Path, r.e.size, r.item.CapturedAt)) + pad(r.e.size)
+			if used+cost > budget {
+				reason = ReasonSizeBudget
+				break
+			}
 			used += cost
+			files[key] = true
+			for i := range len(key) {
+				if key[i] == '/' {
+					dirs[key[:i]] = true
+				}
+			}
 		}
-		seen[key] = true
 		if reason != "" {
 			r.item.Status, r.item.Reason = pb.ItemDropped, reason
 			r.e, r.findings = nil, nil
+		}
+	}
+}
+
+func hasFileParent(key string, files map[string]bool) bool {
+	for i := range len(key) {
+		if key[i] == '/' && files[key[:i]] {
+			return true
+		}
+	}
+	return false
+}
+
+// commit writes the archive; the caller holds w.mu.
+func (w *Writer) commit(m Manifest) error {
+	w.sortRecords()
+	end := w.now()
+	w.place(end)
+
+	m = w.prepare(m, end)
+	m, mb, err := w.manifestFooter(m)
+	if err != nil {
+		return err
+	}
+	files := map[string][]byte{
+		pb.ManifestFile:   mb,
+		pb.ErrorsFile:     w.errorsFooter(m),
+		pb.RedactionsFile: w.redactionsFooter(),
+		pb.RunLogFile:     textFooter(w.runLog, w.runLogCut, w.lim.RunLog),
+	}
+	for _, f := range w.footers() {
+		if int64(len(files[f.name])) > f.cap {
+			return fmt.Errorf("bundle: %s over its cap", f.name)
 		}
 	}
 
@@ -629,13 +719,6 @@ func (w *Writer) commit(m Manifest) error {
 			return err
 		}
 	}
-
-	files := map[string][]byte{
-		pb.ErrorsFile:     w.errorsFooter(&m),
-		pb.RedactionsFile: w.redactionsFooter(),
-		pb.RunLogFile:     textFooter(w.runLog, w.runLogCut, w.lim.RunLog),
-	}
-	files[pb.ManifestFile] = w.manifestFooter(m, end)
 	for _, f := range w.footers() {
 		b := files[f.name]
 		if err := tw.WriteHeader(w.header(f.name, int64(len(b)), end)); err != nil {
@@ -651,11 +734,16 @@ func (w *Writer) commit(m Manifest) error {
 	if err := gz.Close(); err != nil {
 		return err
 	}
-	return w.dest.Close()
+	if err := w.dest.Close(); err != nil {
+		return err
+	}
+	w.committed = m
+	return nil
 }
 
-// manifestFooter fills the writer's fields of m and encodes it within its cap.
-func (w *Writer) manifestFooter(m Manifest, end time.Time) []byte {
+// prepare fills the writer's fields of m, the exclusions included, redacts its free text and marks a
+// collector partial when one of its items did not commit.
+func (w *Writer) prepare(m Manifest, end time.Time) Manifest {
 	if m.Context != "" {
 		m.Context = redact.ErrorText(errors.New(m.Context), w.server)
 	}
@@ -671,63 +759,126 @@ func (w *Writer) manifestFooter(m Manifest, end time.Time) []byte {
 	if m.Finalization == "" {
 		m.Finalization = "complete"
 	}
-	// Items past the cap by their compact size alone can never fit, so they
-	// are cut before Bound's search.
-	var n int64
-	m.Items = make([]Item, 0, len(w.records))
-	for _, r := range w.records {
-		b, _ := json.Marshal(r.item)
-		if n += int64(len(b)) + 1; n > w.lim.Manifest {
-			m.ItemsOmitted += len(w.records) - len(m.Items)
-			break
-		}
-		m.Items = append(m.Items, r.item)
-	}
-	Bound(&m, w.lim.Manifest)
-	var b bytes.Buffer
-	_ = WriteManifest(&b, m)
-	return b.Bytes()
-}
-
-// errorsFooter is one line per failed collector, then per item that is not
-// ok or skipped. It also redacts the collector errors in m.
-func (w *Writer) errorsFooter(m *Manifest) []byte {
-	var lines []string
+	m.Excluded = slices.Clone(w.frozen)
+	deg := w.degraded()
 	m.Collectors = slices.Clone(m.Collectors)
 	for i := range m.Collectors {
 		c := &m.Collectors[i]
 		if c.Error != "" {
 			c.Error = redact.ErrorText(errors.New(c.Error), w.server)
 		}
-		if c.Status == pb.CollectorFailed || c.Status == pb.CollectorTimeout {
-			lines = append(lines, fmt.Sprintf("%s: %s: %s", c.Name, c.Status, c.Error))
+		if c.Status == pb.CollectorOK && deg[c.Name] {
+			c.Status = pb.CollectorPartial
 		}
+	}
+	return m
+}
+
+// manifestFooter adds the items to m and encodes it within its cap. When even
+// the bounded manifest passes the cap, it writes a fixed placeholder.
+func (w *Writer) manifestFooter(m Manifest) (Manifest, []byte, error) {
+	// Items past the cap by their compact size alone can never fit, so they
+	// are cut before Bound's search.
+	var n int64
+	m.Items = make([]Item, 0, min(len(w.records), 4096))
+	for i, r := range w.records {
+		b, err := json.Marshal(r.item)
+		if err != nil {
+			return m, nil, err
+		}
+		if n += int64(len(b)) + 1; n > w.lim.Manifest {
+			m.ItemsOmitted += len(w.records) - i
+			break
+		}
+		m.Items = append(m.Items, r.item)
+	}
+	for _, k := range w.failOmit {
+		m.ItemsOmitted += k
+	}
+	Bound(&m, w.lim.Manifest)
+	var b bytes.Buffer
+	if err := WriteManifest(&b, m); err != nil {
+		return m, nil, err
+	}
+	if int64(b.Len()) <= w.lim.Manifest {
+		return m, b.Bytes(), nil
+	}
+	w.placeholder = true
+	m = Manifest{Start: m.Start, Sealed: m.Sealed, End: m.End, Finalization: cut(m.Finalization, 64), Truncated: true}
+	b.Reset()
+	err := WriteManifest(&b, m)
+	return m, b.Bytes(), err
+}
+
+// lineBuf joins lines within a limit; once a line does not fit, it takes no
+// more and ends with a truncation line.
+type lineBuf struct {
+	b    bytes.Buffer
+	room int64
+	cut  bool
+}
+
+func newLineBuf(limit int64) *lineBuf { return &lineBuf{room: limit - markerReserve} }
+
+func (l *lineBuf) add(s string) bool {
+	if l.cut || int64(l.b.Len()+len(s)+1) > l.room {
+		l.cut = true
+		return false
+	}
+	l.b.WriteString(s)
+	l.b.WriteByte('\n')
+	return true
+}
+
+func (l *lineBuf) bytes() []byte {
+	if l.cut {
+		l.b.WriteString(truncation(ReasonSizeCap) + "\n")
+	}
+	return l.b.Bytes()
+}
+
+// errorsFooter is one line for a placeholder manifest, per failed collector,
+// per collector with uncounted items, then per item that is not ok or
+// skipped, built within the cap.
+func (w *Writer) errorsFooter(m Manifest) []byte {
+	lb := newLineBuf(w.lim.Errors)
+	if w.placeholder {
+		lb.add("bundle: " + pb.ManifestFile + ": placeholder: " + ReasonSizeCap)
+	}
+	for _, c := range m.Collectors {
+		if c.Status == pb.CollectorFailed || c.Status == pb.CollectorTimeout {
+			lb.add(fmt.Sprintf("%s: %s: %s", c.Name, c.Status, c.Error))
+		}
+	}
+	names := make([]string, 0, len(w.failOmit))
+	for c := range w.failOmit {
+		names = append(names, c)
+	}
+	slices.Sort(names)
+	for _, c := range names {
+		lb.add(fmt.Sprintf("%s: %d more items not listed", c, w.failOmit[c]))
 	}
 	for _, r := range w.records {
 		if s := r.item.Status; s != pb.ItemOK && s != pb.ItemSkipped {
-			lines = append(lines, fmt.Sprintf("%s: %s: %s: %s", r.collector, r.item.Path, s, r.item.Reason))
+			if !lb.add(fmt.Sprintf("%s: %s: %s: %s", r.collector, r.item.Path, s, r.item.Reason)) {
+				break
+			}
 		}
 	}
-	return textFooter(lines, false, w.lim.Errors)
+	return lb.bytes()
 }
 
 // textFooter joins lines within limit, ending with a truncation line when
 // lines were cut.
 func textFooter(lines []string, cut bool, limit int64) []byte {
-	var b bytes.Buffer
-	room := limit - markerReserve
+	lb := newLineBuf(limit)
 	for _, l := range lines {
-		if int64(b.Len()+len(l)+1) > room {
-			cut = true
+		if !lb.add(l) {
 			break
 		}
-		b.WriteString(l)
-		b.WriteByte('\n')
 	}
-	if cut {
-		b.WriteString(truncation(ReasonSizeCap) + "\n")
-	}
-	return b.Bytes()
+	lb.cut = lb.cut || cut
+	return lb.bytes()
 }
 
 // redactedFile is one file's entry in redactions.json.
@@ -737,36 +888,37 @@ type redactedFile struct {
 	FindingsOmitted int              `json:"findingsOmitted,omitempty"`
 }
 
-// redactionsFooter lists per committed file its findings, within the cap;
-// files and findings past it are counted as omitted.
+// redactionsFooter lists per committed file its findings, built within the
+// cap; files and findings past it are counted as omitted.
 func (w *Writer) redactionsFooter() []byte {
-	var files []redactedFile
-	for _, r := range w.records {
-		if r.e != nil && len(r.findings) > 0 {
-			files = append(files, redactedFile{Path: r.item.Path, Findings: r.findings})
-		}
-	}
 	var b bytes.Buffer
 	b.WriteString("{\"files\": [")
 	room := w.lim.Redactions - 128 // closing text and the omitted count
 	fits := func(enc []byte) bool { return int64(b.Len()+len(enc)) <= room }
-	omitted := 0
-	for i, f := range files {
-		if enc := encodeFile(f, i > 0); fits(enc) {
+	omitted, first, full := 0, true, false
+	for _, r := range w.records {
+		if r.e == nil || len(r.findings) == 0 {
+			continue
+		}
+		if full {
+			omitted++
+			continue
+		}
+		if enc := encodeFile(redactedFile{Path: r.item.Path, Findings: r.findings}, !first); fits(enc) {
 			b.Write(enc)
+			first = false
 			continue
 		}
 		// Keep the longest prefix of this file's findings that fits, then stop.
+		full = true
 		part := func(k int) []byte {
-			return encodeFile(redactedFile{Path: f.Path, Findings: f.Findings[:k], FindingsOmitted: len(f.Findings) - k}, i > 0)
+			return encodeFile(redactedFile{Path: r.item.Path, Findings: r.findings[:k], FindingsOmitted: len(r.findings) - k}, !first)
 		}
-		k := sort.Search(len(f.Findings)+1, func(k int) bool { return !fits(part(k)) }) - 1
-		if k > 0 {
+		if k := sort.Search(len(r.findings)+1, func(k int) bool { return !fits(part(k)) }) - 1; k > 0 {
 			b.Write(part(k))
-			i++
+		} else {
+			omitted++
 		}
-		omitted = len(files) - i
-		break
 	}
 	fmt.Fprintf(&b, "\n], \"filesOmitted\": %d}\n", omitted)
 	return b.Bytes()
@@ -799,6 +951,9 @@ func (s *sink) Object(p pb.Path, u *unstructured.Unstructured, src pb.Source) er
 	}
 	if err != nil {
 		return s.w.finish(c, outcome{status: pb.ItemFailed, reason: s.w.errorText(err), err: err})
+	}
+	if indentCost(obj.Object, 0, s.w.lim.Other) > s.w.lim.Other {
+		return s.w.finish(c, outcome{status: pb.ItemDropped, reason: ReasonSizeCap, err: fmt.Errorf("%w: %s", pb.ErrBudget, ReasonSizeCap)})
 	}
 	body, err := yaml.Marshal(obj.Object)
 	if err != nil {
@@ -872,28 +1027,51 @@ func (s *sink) Exclude(gk schema.GroupKind, reason pb.ExcludeReason) error {
 	}
 	group := pb.Core
 	if gk.Group != "" {
-		if _, err := pb.Name(pb.Group, gk.Group); err != nil {
-			return err
-		}
 		group = gk.Group
 	}
-	if _, err := pb.Name(pb.Kind, gk.Kind); err != nil {
-		return err
+	_, gerr := pb.Name(pb.Group, group)
+	_, kerr := pb.Name(pb.Kind, gk.Kind)
+	if gerr != nil || kerr != nil || !excludeReasons[reason] {
+		// The rejected values are left out of the record and the error.
+		s.w.addRecord(s.name, Item{Path: invalidPart, CapturedAt: s.w.now(), Status: pb.ItemFailed, Reason: ReasonInvalidExcl}, nil, nil)
+		return fmt.Errorf("%w: exclusion", pb.ErrInvalidPath)
 	}
 	s.w.excl[Exclusion{Kind: group + "/" + gk.Kind, Reason: reason}]++
 	return nil
 }
 
-// Degraded returns the collectors with at least one staged item that is
-// neither ok nor skipped.
-func (w *Writer) Degraded() map[string]bool {
-	w.mu.Lock()
-	defer w.mu.Unlock()
+// degraded returns the collectors with at least one item that is neither ok
+// nor skipped; the caller holds w.mu.
+func (w *Writer) degraded() map[string]bool {
 	out := map[string]bool{}
+	for c := range w.failOmit {
+		out[c] = true
+	}
 	for _, r := range w.records {
 		if s := r.item.Status; s != pb.ItemOK && s != pb.ItemSkipped {
 			out[r.collector] = true
 		}
 	}
 	return out
+}
+
+// indentCost is a lower bound on the indentation YAML gives v: two bytes per
+// map nesting level on every nested map entry. It stops past limit.
+func indentCost(v any, depth, limit int64) int64 {
+	var n int64
+	switch v := v.(type) {
+	case map[string]any:
+		for _, e := range v {
+			if n += 2*depth + indentCost(e, depth+1, limit-n); n > limit {
+				return n
+			}
+		}
+	case []any:
+		for _, e := range v {
+			if n += indentCost(e, depth, limit-n); n > limit {
+				return n
+			}
+		}
+	}
+	return n
 }

@@ -62,6 +62,7 @@ type Spool struct {
 	ramUsed  int64
 	fileSize int64
 	items    int64
+	reserved int64 // held for forced truncation lines
 	f        *os.File
 	removed  bool
 }
@@ -102,14 +103,18 @@ type entry struct {
 	size int64
 	// open means the entry holds an index slot.
 	open bool
+	// reserve is held from the first add for one forced line; held is what
+	// is still held.
+	reserve, held int64
 }
 
 type fileSeg struct{ off, n int64 }
 
-func (s *Spool) used() int64 { return s.ramUsed + s.fileSize + s.items*indexCost }
+func (s *Spool) used() int64 { return s.ramUsed + s.fileSize + s.items*indexCost + s.reserved }
 
 // add appends b to e. It fails with errSpoolFull when that would pass the
-// bound, unless force is set (for a short truncation line).
+// bound. With force (for a truncation line no longer than e.reserve) an open
+// entry skips the check and uses its reserved room instead.
 func (s *Spool) add(e *entry, b []byte, force bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -118,14 +123,20 @@ func (s *Spool) add(e *entry, b []byte, force bool) error {
 	}
 	need := int64(len(b))
 	if !e.open {
-		need += indexCost
+		need += indexCost + e.reserve
 	}
-	if !force && s.used()+need > s.max {
+	if (!force || !e.open) && s.used()+need > s.max {
 		return errSpoolFull
 	}
 	if !e.open {
 		e.open = true
 		s.items++
+		e.held = e.reserve
+		s.reserved += e.held
+	}
+	if force {
+		s.reserved -= e.held
+		e.held = 0
 	}
 	e.size += int64(len(b))
 	if len(e.segs) == 0 && s.ramUsed+int64(len(b)) <= s.ram {
@@ -160,6 +171,7 @@ func (s *Spool) release(e *entry) {
 	if e.open {
 		s.items--
 	}
+	s.reserved -= e.held
 	s.ramUsed -= int64(len(e.mem))
 	*e = entry{}
 }
