@@ -70,9 +70,13 @@ One command that collects what support asks for, so nobody hand-collects it (D-0
 ### Phase 6 — Topology and policies
 **Status:** Not started
 **Docs:** `docs/phases/phase-6/`
-**Waits on:** kgateway-ui Phase 5 (direct, inherited and effective policy) — new program edge E7
+**Waits on:** none for the evidence views. An effective-policy view waits on controller-provided evidence (D-024). E7 is to be redefined as policy relations only (owner to approve).
 
-- `describe` shows attached and effective policies with provenance.
+The controller owns policy semantics; kgwctl shows evidence and never re-derives precedence, inheritance or merging (D-024).
+- `describe` shows declared policies that target the object, with their `targetRefs`/selectors as written.
+- The controller's status conditions on those policies and their targets, as the authoritative verdict.
+- What Envoy runs for the route or listener (xdsview), linked from `describe` and back.
+- Each link marked verified (status, route metadata, `route_source`) or inferred (names, selectors).
 - `get -o graph`: Gateway → route → backend topology as DOT or Mermaid text, written without a graphics library.
 - Envoy-side mapping back to Gateway API refs in `proxy routes` (program edge E5).
 
@@ -85,7 +89,7 @@ One command that collects what support asks for, so nobody hand-collects it (D-0
 
 ## Deferred / out of roadmap
 - `kgwctl mcp` and traffic debugging: downstream builds on `pkg/cli` (D-023), not this repo.
-- `proxy diff` (intended vs accepted config) — waits for krp Phase 6; add as a phase when it lands.
+- Data-plane convergence (D-024): per-replica config versions, NACKs, stale config and listener lifecycle states, as far as the controller and Envoy expose them. It replaces a generic intended-versus-accepted `proxy diff`, which is no longer planned. A candidate phase after Phase 4; the support bundle captures the raw inputs.
 - Thin-client mode against the kgateway-ui API — only useful once the UI has per-user auth (its Phase 10).
 - Interactive TUI — krp's TUI covers this for now.
 - Vendor policy plugins — the build-time hook is D-009 (Phase 1); the plugins live outside this repo (program P-002).

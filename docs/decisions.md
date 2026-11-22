@@ -151,3 +151,27 @@ Append-only. Newest at the bottom. Supersede, don't edit.
 **Decision:** kgwctl does not ship `mcp` or debug commands. A downstream build adds them through `pkg/cli` (`WithCommands`, `WithRegistry`; D-009), as `examples/downstream` shows. `-o agent` stays here: it is output, not a server.
 **Alternatives:** An MCP command in kgwctl over a shared tool set — ties kgwctl to that tool set's license and roadmap.
 **Consequences:** `pkg/cli` is a contract for downstream builds: breaking changes need a version bump and the downstream example as the test. E10's consumer is a downstream build, not kgwctl.
+
+## D-024 — The controller owns policy semantics; Phase 6 shows evidence, not an effective-policy model (2026-11-22, phase 4)
+**Context:** kgateway's controller owns policy resolution, precedence, inheritance, merging and translation. Phase 6 assumed a library (E7) would give `describe` the attached and effective policies. A library outside the controller can only approximate those rules, and an approximation that disagrees with the controller misleads more than no answer.
+**Decision:** kgwctl does not compute or promise effective policy. Phase 6 shows four kinds of evidence and links them:
+1. declared policies and their `targetRefs`/selectors, as written;
+2. the controller's status conditions on those policies and targets (authoritative);
+3. what Envoy runs for a route or listener, from xdsview (authoritative for the data plane);
+4. links between them, each marked verified (route metadata, a policy's own status, `route_source`) or inferred (names, selectors).
+
+An effective-policy view ships only when the controller exposes the evidence itself, such as per-target policy status or route source metadata.
+**Alternatives:** Snellius's policy model as the effective view (E7 as written): rejected as authoritative, because it re-derives controller rules. It is still usable as an inferred link if marked so.
+**Consequences:** Narrows D-003: libraries may provide relations and naming, never semantics. E7 is redefined in the program file (owner to approve). The deferred `proxy diff` (generic intended-versus-accepted) is dropped from the roadmap. Replica convergence, NACKs, stale config and listener lifecycle states take its place as a candidate, subject to what the controller and Envoy expose.
+
+## D-025 — Envoy admin reads are an allowlist of read-only GETs (2026-11-22, phase 4) — proposed, pending owner approval
+**Context:** D-021 limits port-forward to one `GET /config_dump`. The support bundle also needs Envoy `/stats` (text readouts such as `version_text`), `/server_info`, `/certs` and `/clusters`, and optionally the controller's `/snapshots/krt`.
+**Decision:** `proxydump` sends only GETs on a fixed allowlist: Envoy `/config_dump`, `/stats`, `/server_info`, `/certs`, `/clusters`; controller `/snapshots/krt`. Any other path is refused before a stream opens. The controller's `/snapshots/xds` is never on the list: it holds TLS keys and inline credentials in clear (kgateway v2.5.1, read from source).
+**Alternatives:** One path per command, as D-021 has it — the bundle would need its own transport. Any GET — opens Envoy admin endpoints whose output nobody reviewed.
+**Consequences:** The `pods/portforward` grant and its warning are unchanged. A new path needs a decision entry.
+
+## D-026 — Redaction is a mandatory stage of the bundle writer (2026-11-22, phase 4) — proposed, pending owner approval
+**Context:** A bundle leaves the customer's trust boundary. Envoy redacts only fields it marks sensitive; header values, `initial_metadata`, Lua code, transformation templates and `last-applied-configuration` carry secrets past it.
+**Decision:** Collectors hand typed content to the writer, which runs the redactor for that type and refuses undeclared types. Structured rules for objects and JSON, a pattern pass for text, the marker `[redacted]`, and a `redactions.json` report without values. No Secret or ConfigMap is read in Phase 4.
+**Alternatives:** Redaction per collector — a vendor collector could skip it. Hashing values — low-entropy secrets can be guessed offline.
+**Consequences:** Redaction is tested with a canary corpus per artifact class. Its limits are documented in docs/bundle-threat-model.md and the README.

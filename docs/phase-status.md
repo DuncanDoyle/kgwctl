@@ -2,14 +2,15 @@
 
 ## Phase
 Phase: 4 — Support bundle
-Base: tbd (main HEAD after the Phase 3 merge)
+Base: 38acaa0
 Docs: docs/phases/phase-4/
-Status: not started
+Status: design
 
 ### Queue
-- [ ] Q1 Phase 4 design (`design.md`)
-- [ ] Q2 Phase 4 implementation plan
-- [ ] Q3 Cross-model review of design + plan, triage; owner go-ahead
+- [x] Q1 Phase 4 design (`design.md`) r1, with research notes (prior art, reuse, threats) — not committed, in .agents-tmp/
+- [x] Q1b Roadmap: Phase 6 shows evidence, not effective policy; `proxy diff` replaced by a convergence candidate (D-024)
+- [x] Q2 Phase 4 implementation plan (4 planned sub-phases)
+- [ ] Q3 Cross-model review of design + plan, triage; owner go-ahead ← CURRENT
 
 ### Exit gates
 - [ ] tests/vet pass
@@ -24,7 +25,7 @@ n/a
 
 ## Program
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
-- Read 2026-11-21 at kgateway-tooling `7288049`.
+- Read 2026-11-22 at kgateway-tooling `43b6b53`. Phase 4 waits on no edge. The program session is redefining E7 (policy semantics stay with the controller) and asked the bundle to capture per-replica convergence inputs (§5 of the design).
 - Consumed: E1 and E11 — xdsview `v0.4.3` (kgwctl#1, kgwctl#10).
 - Waiting on: E7 (Phase 6). E6 (xdsview#32) before Phase 7.
 - Consumers: none
