@@ -160,7 +160,7 @@ func (w *walker) object(n *node, at, key string, z zone) {
 		case keptNumber(m, z):
 			// a token-bucket number outside any credential zone stays
 		case wrapper && m.key == "value" && m.val.kind == kindString:
-			w.stringValue(m.val, loc)
+			w.stringValue(m.val, loc, cz)
 		case m.val.kind == kindString:
 			w.str(m.val, loc, m.key, cz|z&zHeaderMap, pairValue, env && m.key == "value")
 		case pairValue:
@@ -187,10 +187,10 @@ func (w *walker) dropped(key, loc string) bool {
 		return false
 	}
 	switch {
-	case key == "managedFields" && w.tail("metadata"):
+	case key == "managedFields" && w.rel("metadata"):
 		w.rec.add(RuleManagedFields, loc, 1)
 		return true
-	case key == lastApplied && w.tail("metadata", "annotations"):
+	case key == lastApplied && w.rel("metadata", "annotations"):
 		w.rec.add(RuleLastApplied, loc, 1)
 		return true
 	}
@@ -297,14 +297,14 @@ func (w *walker) basicAuth(n *node, at string) {
 
 // stringValue applies the json rules inside a JSON StringValue, such as the
 // dynamic-module transformation config; other text gets the pattern pass.
-func (w *walker) stringValue(n *node, at string) {
+func (w *walker) stringValue(n *node, at string, z zone) {
 	t, err := parseTree([]byte(n.str))
 	if err != nil || (t.kind != kindObject && t.kind != kindArray) {
-		w.str(n, at, "value", 0, false, false)
+		w.str(n, at, "value", z&(zMapAll|zKeyName), false, false)
 		return
 	}
 	sub := &walker{mode: modeJSON, opts: w.opts, rec: w.rec}
-	sub.walk(t, at, "", 0)
+	sub.walk(t, at, "", z&(zMapAll|zKeyName))
 	var b bytes.Buffer
 	t.encode(&b)
 	n.str = b.String()

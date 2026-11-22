@@ -58,3 +58,49 @@ func TestErrorTextTooLong(t *testing.T) {
 		t.Errorf("ErrorText = %.60q", got)
 	}
 }
+
+func TestEmbeddedJSONInMetadataMasked(t *testing.T) {
+	dump := `{"configs":[{"bootstrap":{"node":{"metadata":{"outer":{"@type":"type.googleapis.com/google.protobuf.StringValue",` +
+		`"value":"{\"name\":\"Bearer dummy-token\"}"}}}}}]}`
+	_, fs, err := redact.ConfigDump([]byte(dump), redact.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fs) == 0 {
+		t.Fatal("no finding")
+	}
+	for _, f := range fs {
+		if strings.Contains(f.Location, ".name") {
+			t.Errorf("location %q shows a key of the embedded JSON", f.Location)
+		}
+	}
+}
+
+func TestManagedFieldsAnchored(t *testing.T) {
+	u := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "example.com/v1", "kind": "Widget",
+		"metadata": map[string]any{"name": "w", "managedFields": []any{map[string]any{"manager": "m"}},
+			"annotations": map[string]any{"kubectl.kubernetes.io/last-applied-configuration": "{}"}},
+		"spec": map[string]any{"data": map[string]any{"metadata": map[string]any{
+			"managedFields": "application-setting",
+			"annotations":   map[string]any{"kubectl.kubernetes.io/last-applied-configuration": "app-value"},
+		}}},
+	}}
+	if _, err := redact.Object(u, redact.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	md := u.Object["metadata"].(map[string]any)
+	if _, ok := md["managedFields"]; ok {
+		t.Error("root managedFields kept")
+	}
+	if _, ok := md["annotations"].(map[string]any)["kubectl.kubernetes.io/last-applied-configuration"]; ok {
+		t.Error("root last-applied kept")
+	}
+	inner := u.Object["spec"].(map[string]any)["data"].(map[string]any)["metadata"].(map[string]any)
+	if inner["managedFields"] != "application-setting" {
+		t.Errorf("spec.data.metadata.managedFields = %v", inner["managedFields"])
+	}
+	if _, ok := inner["annotations"].(map[string]any)["kubectl.kubernetes.io/last-applied-configuration"]; !ok {
+		t.Error("spec.data.metadata last-applied removed")
+	}
+}
