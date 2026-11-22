@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/yaml"
@@ -218,14 +220,22 @@ type stagedItem struct {
 	body      []byte
 }
 
+// smallLimits are DefaultLimits scaled down to a 1 MiB bundle, so budget tests
+// stage kilobytes instead of tens of megabytes.
+func smallLimits() Limits {
+	return Limits{MaxSize: 1 << 20, RAM: 64 << 20, Log: 256 << 10, ConfigDump: 256 << 10, Metrics: 256 << 10, Other: 256 << 10,
+		Manifest: 64 << 10, Redactions: 64 << 10, Errors: 16 << 10, RunLog: 16 << 10}
+}
+
+// budgetItems total about 0.95 MiB: under the spool bound, over the item budget.
 func budgetItems() []stagedItem {
 	var out []stagedItem
-	for i := range 20 {
+	for i := range 24 {
 		c := "a"
 		if i%2 == 1 {
 			c = "b"
 		}
-		out = append(out, stagedItem{c, pb.Path{"logs", fmt.Sprintf("item-%02d.log", i)}, textBody(fmt.Sprint(i), (i%5+1)*450)})
+		out = append(out, stagedItem{c, pb.Path{"logs", fmt.Sprintf("item-%02d.log", i)}, textBody(fmt.Sprint(i), (i%5+1)*14)})
 	}
 	return out
 }
@@ -240,7 +250,7 @@ func stageAll(t *testing.T, w *Writer, items []stagedItem) {
 }
 
 func TestWriterBudgetOrder(t *testing.T) {
-	l := mustLimits(t, 32<<20)
+	l := smallLimits()
 	items := budgetItems()
 	reversed := slices.Clone(items)
 	slices.Reverse(reversed)
@@ -278,73 +288,55 @@ func TestWriterBudgetOrder(t *testing.T) {
 	}
 }
 
-func footerSizes(a bundletest.Archive) map[string]int {
-	out := map[string]int{}
-	for _, f := range []string{pb.ManifestFile, pb.ErrorsFile, pb.RedactionsFile, pb.RunLogFile} {
-		d, _ := a.File(f)
-		out[f] = len(d)
-	}
-	return out
-}
-
+// TestWriterFooterCaps runs at the real 512Mi caps; the 32Mi footer total is
+// checked on DefaultLimits in TestDefaultLimitsMinimum.
 func TestWriterFooterCaps(t *testing.T) {
-	for _, max := range []int64{512 << 20, 32 << 20} {
-		t.Run(fmt.Sprint(max>>20, "Mi"), func(t *testing.T) {
-			l := mustLimits(t, max)
-			h := newHarness(t, l, redact.Options{}, "")
-			s := h.w.Sink("many")
-			reason := errors.New("capture failed: " + strings.Repeat("r", 40))
-			for i := range 100_000 {
-				s.Error(pb.Path{"items", fmt.Sprintf("item-%06d.json", i)}, pb.Source{Operation: pb.OpCustom}, reason)
-			}
-			for i := range 2500 {
-				h.w.Log(fmt.Sprintf("progress line %d %s", i, strings.Repeat("p", 600)))
-			}
-			h.w.Seal()
-			a := h.finish(t, Manifest{}, "many")
-			sz := footerSizes(a)
+	l := mustLimits(t, 512<<20)
+	h := newHarness(t, l, redact.Options{}, "")
+	s := h.w.Sink("many")
+	reason := errors.New("capture failed: " + strings.Repeat("r", 40))
+	for i := range 100_000 {
+		s.Error(pb.Path{"items", fmt.Sprintf("item-%06d.json", i)}, pb.Source{Operation: pb.OpCustom}, reason)
+	}
+	for i := range 2500 {
+		h.w.Log(fmt.Sprintf("progress line %d %s", i, strings.Repeat("p", 600)))
+	}
+	h.w.Seal()
+	a := h.finish(t, Manifest{}, "many")
 
-			var env struct {
-				Item Manifest `json:"item"`
-			}
-			mb, _ := a.File(pb.ManifestFile)
-			if err := json.Unmarshal(mb, &env); err != nil {
-				t.Fatal(err)
-			}
-			if int64(sz[pb.ManifestFile]) > l.Manifest || l.Manifest > 4<<20 {
-				t.Errorf("manifest.json %d bytes, cap %d", sz[pb.ManifestFile], l.Manifest)
-			}
-			if env.Item.ItemsOmitted == 0 {
-				t.Error("itemsOmitted = 0")
-			}
-			eb, _ := a.File(pb.ErrorsFile)
-			if int64(len(eb)) > l.Errors || l.Errors > 1<<20 {
-				t.Errorf("errors.txt %d bytes, cap %d", len(eb), l.Errors)
-			}
-			lines := strings.Split(strings.TrimSuffix(string(eb), "\n"), "\n")
-			if last := lines[len(lines)-1]; last != "[kgwctl: truncated: size cap]" {
-				t.Errorf("errors.txt last line %q", last)
-			}
-			rl, _ := a.File(pb.RunLogFile)
-			if int64(len(rl)) > l.RunLog || !strings.HasSuffix(string(rl), "[kgwctl: truncated: size cap]\n") {
-				t.Errorf("run.log %d bytes, cap %d, no marker", len(rl), l.RunLog)
-			}
-			var total int
-			for _, n := range sz {
-				total += n
-			}
-			if max == 32<<20 && total > 8<<20 {
-				t.Errorf("footers total %d > 8 MiB", total)
-			}
-			if a.TarSize > l.MaxSize {
-				t.Errorf("tar content %d > %d", a.TarSize, l.MaxSize)
-			}
-		})
+	var env struct {
+		Item Manifest `json:"item"`
+	}
+	mb, _ := a.File(pb.ManifestFile)
+	if err := json.Unmarshal(mb, &env); err != nil {
+		t.Fatal(err)
+	}
+	if int64(len(mb)) > l.Manifest || l.Manifest > 4<<20 {
+		t.Errorf("manifest.json %d bytes, cap %d", len(mb), l.Manifest)
+	}
+	if env.Item.ItemsOmitted == 0 {
+		t.Error("itemsOmitted = 0")
+	}
+	eb, _ := a.File(pb.ErrorsFile)
+	if int64(len(eb)) > l.Errors || l.Errors > 1<<20 {
+		t.Errorf("errors.txt %d bytes, cap %d", len(eb), l.Errors)
+	}
+	lines := strings.Split(strings.TrimSuffix(string(eb), "\n"), "\n")
+	if last := lines[len(lines)-1]; last != "[kgwctl: truncated: size cap]" {
+		t.Errorf("errors.txt last line %q", last)
+	}
+	rl, _ := a.File(pb.RunLogFile)
+	if int64(len(rl)) > l.RunLog || !strings.HasSuffix(string(rl), "[kgwctl: truncated: size cap]\n") {
+		t.Errorf("run.log %d bytes, cap %d, no marker", len(rl), l.RunLog)
+	}
+	if a.TarSize > l.MaxSize {
+		t.Errorf("tar content %d > %d", a.TarSize, l.MaxSize)
 	}
 }
 
 func TestWriterItemCaps(t *testing.T) {
 	l := mustLimits(t, 512<<20)
+	l.Log = 1 << 20 // the 10 MiB log cap, scaled down to keep -race fast
 	h := newHarness(t, l, redact.Options{}, "")
 	s := h.w.Sink("c")
 
@@ -354,7 +346,7 @@ func TestWriterItemCaps(t *testing.T) {
 		t.Fatalf("70 MiB config dump: err = %v, want ErrBudget", err)
 	}
 	log := pb.Path{"controller", "ns", "pod", "logs", "c.log"}
-	if err := s.Text(log, bytes.NewReader(textBody("big", 11*1024)), pb.Source{}); err != nil {
+	if err := s.Text(log, bytes.NewReader(textBody("big", 1100)), pb.Source{}); err != nil {
 		t.Fatal(err)
 	}
 	h.w.Seal()
@@ -385,10 +377,12 @@ func TestWriterItemCaps(t *testing.T) {
 type repeatReader byte
 
 func (r repeatReader) Read(p []byte) (int, error) {
-	for i := range p {
-		p[i] = byte(r)
+	chunk := bytes.Repeat([]byte{byte(r)}, 64<<10)
+	n := 0
+	for n < len(p) {
+		n += copy(p[n:], chunk)
 	}
-	return len(p), nil
+	return n, nil
 }
 
 func TestWriterSealTextKeepsLines(t *testing.T) {
@@ -398,7 +392,7 @@ func TestWriterSealTextKeepsLines(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- h.w.Sink("logs").Text(p, pr, pb.Source{}) }()
 
-	if _, err := pw.Write([]byte("line one\nline two\n")); err != nil {
+	if _, err := pw.Write([]byte("line one\nAuthorization: Bearer abc.def-ghi\n")); err != nil {
 		t.Fatal(err)
 	}
 	// Text handles both lines before it reads again, so this write returning
@@ -406,7 +400,9 @@ func TestWriterSealTextKeepsLines(t *testing.T) {
 	if _, err := pw.Write([]byte("partial")); err != nil {
 		t.Fatal(err)
 	}
+	// The runner seals and finalizes while the stream is still open.
 	h.w.Seal()
+	a := h.finish(t, Manifest{}, "logs")
 	pw.CloseWithError(errors.New("canceled"))
 	if err := <-done; !errors.Is(err, pb.ErrSealed) {
 		t.Errorf("Text err = %v, want ErrSealed", err)
@@ -414,10 +410,16 @@ func TestWriterSealTextKeepsLines(t *testing.T) {
 	if n := h.w.Late()["logs"]; n != 0 {
 		t.Errorf("late = %d, want 0 for a kept text item", n)
 	}
-	a := h.finish(t, Manifest{}, "logs")
 	data, _ := a.File(p.String())
-	if want := "line one\nline two\n[kgwctl: truncated: sealed]\n"; string(data) != want {
+	if want := "line one\nAuthorization: Bearer [redacted]\n[kgwctl: truncated: sealed]\n"; string(data) != want {
 		t.Errorf("log = %q, want %q", data, want)
+	}
+	if it := itemByPath(h.w.Items(), p.String()); len(it) != 1 || it[0].Redactions != 1 {
+		t.Errorf("item %+v, want 1 redaction", it)
+	}
+	rb, _ := a.File(pb.RedactionsFile)
+	if !strings.Contains(string(rb), `"path":"`+p.String()+`"`) || !strings.Contains(string(rb), `"location":"line:2"`) {
+		t.Errorf("redactions.json lacks the sealed item's finding:\n%s", rb)
 	}
 }
 
@@ -495,8 +497,8 @@ func TestWriterDuplicates(t *testing.T) {
 			if err := h.w.Sink("a").Text(pb.Path{pb.ErrorsFile}, strings.NewReader("x\n"), pb.Source{}); !errors.Is(err, pb.ErrInvalidPath) {
 				t.Errorf("errors.txt: err = %v", err)
 			}
-			if err := h.w.Sink("a").JSON(pb.Path{"bad", "a:b.json"}, strings.NewReader("{}"), pb.Source{}); !errors.Is(err, pb.ErrInvalidPath) {
-				t.Errorf("bad name: err = %v", err)
+			if err := h.w.Sink("a").JSON(pb.Path{"bad", "a:b.json"}, strings.NewReader("{}"), pb.Source{}); !errors.Is(err, pb.ErrInvalidPath) || strings.Contains(err.Error(), "a:b") {
+				t.Errorf("bad name: err = %v, want ErrInvalidPath without the value", err)
 			}
 			h.w.Seal()
 			a := h.finish(t, Manifest{}, "a", "b")
@@ -601,20 +603,65 @@ func TestWriterExclude(t *testing.T) {
 }
 
 func TestFinalizeBoundedBySize(t *testing.T) {
-	l := mustLimits(t, 32<<20)
+	l := smallLimits()
 	h := newHarness(t, l, redact.Options{}, "")
 	for i := range 12 {
 		p := pb.Path{"logs", fmt.Sprintf("big-%02d.log", i)}
-		if err := h.w.Sink("c").Text(p, bytes.NewReader(textBody(fmt.Sprint(i), 5*1024)), pb.Source{}); err != nil && !errors.Is(err, pb.ErrBudget) {
+		if err := h.w.Sink("c").Text(p, bytes.NewReader(textBody(fmt.Sprint(i), 100)), pb.Source{}); err != nil && !errors.Is(err, pb.ErrBudget) {
 			t.Fatal(err)
 		}
 	}
-	for i := range 20_000 {
+	for i := range 2000 {
 		h.w.Sink("c").Error(pb.Path{"e", fmt.Sprintf("e-%05d.json", i)}, pb.Source{}, errors.New(strings.Repeat("e", 200)))
 	}
 	h.w.Seal()
 	a := h.finish(t, Manifest{}, "c")
 	if a.TarSize > l.MaxSize {
 		t.Errorf("tar content %d > MaxSize %d", a.TarSize, l.MaxSize)
+	}
+	var kept, budget int
+	for _, it := range h.w.Items() {
+		switch {
+		case it.Status == pb.ItemOK:
+			kept++
+		case it.Status == pb.ItemDropped && it.Reason == ReasonSizeBudget:
+			budget++
+		}
+	}
+	if kept == 0 || budget == 0 {
+		t.Errorf("kept %d, dropped by budget %d: want both", kept, budget)
+	}
+}
+
+func TestWriterRemoteErrorStatusOnly(t *testing.T) {
+	h := newHarness(t, mustLimits(t, 32<<20), redact.Options{}, "")
+	// A Status with no code and no reason still never shows its message.
+	err := &apierrors.StatusError{ErrStatus: metav1.Status{Message: `{"clientSecret":"x"} kgwctl-canary-i1-body`}}
+	h.w.Sink("c").Error(pb.Path{"x", "f.json"}, pb.Source{}, fmt.Errorf("list: %w", err))
+	h.w.Seal()
+	a := h.finish(t, Manifest{}, "c")
+	bundletest.AssertNoCanary(t, a, nil)
+	if it := itemByPath(h.w.Items(), "x/f.json"); len(it) != 1 || it[0].Reason != "request failed" {
+		t.Errorf("item %+v", it)
+	}
+}
+
+func TestWriterSourceValidated(t *testing.T) {
+	h := newHarness(t, mustLimits(t, 32<<20), redact.Options{}, "")
+	bad := pb.Source{Namespace: "ns kgwctl-canary-p2-ns", Pod: "Bearer:kgwctl-canary-p2-pod", Container: "C/kgwctl-canary-p2-c", UID: "kgwctl-canary-p2-uid zz"}
+	good := pb.Source{Namespace: "team-a", Pod: "gw-0.x", Container: "envoy", UID: "0b8a3c1e-5f1d-4b7a-9c2e-1d2f3a4b5c6d"}
+	s := h.w.Sink("c")
+	if err := s.JSON(pb.Path{"x", "bad.json"}, strings.NewReader(`{}`), bad); err != nil {
+		t.Fatal(err)
+	}
+	s.Error(pb.Path{"x", "err.json"}, bad, errors.New("boom"))
+	if err := s.JSON(pb.Path{"x", "good.json"}, strings.NewReader(`{}`), good); err != nil {
+		t.Fatal(err)
+	}
+	h.w.Seal()
+	a := h.finish(t, Manifest{}, "c")
+	bundletest.AssertNoCanary(t, a, nil)
+	if it := itemByPath(h.w.Items(), "x/good.json"); len(it) != 1 || it[0].Source != good {
+		t.Errorf("valid source changed: %+v", it)
 	}
 }

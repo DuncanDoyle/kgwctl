@@ -84,3 +84,9 @@ func ErrorText(err error, server string) string {
 	}
 	return s[:i]
 }
+
+// IsRemote reports whether err came from a remote endpoint.
+func IsRemote(err error) bool {
+	var st apierrors.APIStatus
+	return err != nil && (errors.As(err, &st) || streamStatusRe.MatchString(err.Error()))
+}

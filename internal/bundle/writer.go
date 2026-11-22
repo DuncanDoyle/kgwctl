@@ -9,9 +9,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"slices"
 	"sort"
-	"strconv"
+
 	"strings"
 	"sync"
 	"time"
@@ -86,6 +87,10 @@ type Writer struct {
 	runLog    []string
 	runLogN   int64
 	runLogCut bool
+
+	// errCache holds error text already redacted, as collectors repeat errors.
+	errMu    sync.Mutex
+	errCache map[string]string
 }
 
 // record is one item outcome; e holds the staged body of an ok item.
@@ -107,6 +112,8 @@ type call struct {
 	text      bool
 	e         entry
 	lines     int
+	findings  []redact.Finding // of the staged lines
+	fidx      map[redact.Finding]int
 	late      bool    // in flight at Seal; the result is discarded
 	kept      *record // a text item kept at Seal
 	dropErr   error   // staging failed mid-stream
@@ -143,13 +150,32 @@ func (w *Writer) Log(line string) {
 	w.runLogN += int64(len(s)) + 1
 }
 
+// maxErrCache bounds the error text cache.
+const maxErrCache = 4096
+
 // errorText renders err for the manifest and errors.txt: a remote error as
 // its status only, anything else through the error text redactor.
 func (w *Writer) errorText(err error) string {
-	if s := redact.RemoteError(err); s != "request failed" {
+	if redact.IsRemote(err) {
+		return redact.RemoteError(err)
+	}
+	msg := err.Error()
+	w.errMu.Lock()
+	s, ok := w.errCache[msg]
+	w.errMu.Unlock()
+	if ok {
 		return s
 	}
-	return redact.ErrorText(err, w.server)
+	s = redact.ErrorText(err, w.server)
+	w.errMu.Lock()
+	if w.errCache == nil {
+		w.errCache = map[string]string{}
+	}
+	if len(w.errCache) < maxErrCache {
+		w.errCache[msg] = s
+	}
+	w.errMu.Unlock()
+	return s
 }
 
 func itemStatus(err error) pb.ItemStatus {
@@ -197,7 +223,29 @@ func (w *Writer) addRecord(collector string, it Item, fs []redact.Finding, e *en
 }
 
 func (c *call) item(w *Writer) Item {
-	return Item{Path: c.path.String(), ContentType: c.ctype, CapturedAt: w.now(), Source: c.src}
+	return Item{Path: c.path.String(), ContentType: c.ctype, CapturedAt: w.now(), Source: safeSource(c.src)}
+}
+
+// uidRe is a Kubernetes UID: hex digits and dashes.
+var uidRe = regexp.MustCompile(`^[0-9a-fA-F-]{1,64}$`)
+
+// safeSource replaces every Source name that fails validation, so no
+// unvalidated value reaches the manifest.
+func safeSource(s pb.Source) pb.Source {
+	check := func(v *string, k pb.NameKind) {
+		if *v != "" {
+			if _, err := pb.Name(k, *v); err != nil {
+				*v = invalidPart
+			}
+		}
+	}
+	check(&s.Namespace, pb.Namespace)
+	check(&s.Pod, pb.Object)
+	check(&s.Container, pb.ContainerName)
+	if s.UID != "" && !uidRe.MatchString(string(s.UID)) {
+		s.UID = invalidPart
+	}
+	return s
 }
 
 // begin registers a Sink write after checking the seal, the path and
@@ -209,11 +257,12 @@ func (w *Writer) begin(collector string, p pb.Path, ctype string, src pb.Source,
 		return nil, pb.ErrSealed
 	}
 	c := &call{collector: collector, path: p, ctype: ctype, src: src, text: text}
-	if err := pb.ValidatePath(p); err != nil {
+	if pb.ValidatePath(p) != nil {
 		it := c.item(w)
 		it.Path, it.Status, it.Reason = safePath(p), pb.ItemFailed, ReasonInvalidPath
 		w.addRecord(collector, it, nil, nil)
-		return nil, err
+		// ValidatePath's error quotes the bad component, so it is not returned.
+		return nil, fmt.Errorf("%w: %s", pb.ErrInvalidPath, safePath(p))
 	}
 	c.key = strings.ToLower(p.String())
 	if w.keys[collector][c.key] {
@@ -315,7 +364,7 @@ type lineSink struct {
 	c *call
 }
 
-func (l lineSink) WriteLine(b []byte) error {
+func (l lineSink) WriteLine(b []byte, fs []redact.Finding) error {
 	w, c := l.w, l.c
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -329,7 +378,24 @@ func (l lineSink) WriteLine(b []byte) error {
 		return errStop
 	}
 	c.lines++
+	c.addFindings(fs)
 	return nil
+}
+
+// addFindings sums fs into c.findings per rule and location.
+func (c *call) addFindings(fs []redact.Finding) {
+	for _, f := range fs {
+		k := redact.Finding{Rule: f.Rule, Location: f.Location}
+		if i, ok := c.fidx[k]; ok {
+			c.findings[i].Count += f.Count
+			continue
+		}
+		if c.fidx == nil {
+			c.fidx = map[redact.Finding]int{}
+		}
+		c.fidx[k] = len(c.findings)
+		c.findings = append(c.findings, f)
+	}
 }
 
 // finishText closes a text write: it appends a truncation line when the
@@ -343,13 +409,6 @@ func (w *Writer) finishText(c *call, res redact.TextResult) error {
 		w.sp.release(&c.e)
 		return pb.ErrSealed
 	case c.kept != nil:
-		if !w.finalized {
-			c.kept.findings = findingsUpTo(res.Findings, c.lines)
-			c.kept.item.Redactions = 0
-			for _, f := range c.kept.findings {
-				c.kept.item.Redactions += f.Count
-			}
-		}
 		return pb.ErrSealed
 	case errors.Is(c.dropErr, errSpoolFull):
 		return w.fail(c, pb.ItemDropped, ReasonStaging, fmt.Errorf("%w: %s", pb.ErrBudget, ReasonStaging))
@@ -367,17 +426,6 @@ func (w *Writer) finishText(c *call, res redact.TextResult) error {
 	return err
 }
 
-// findingsUpTo keeps the findings on the first n lines.
-func findingsUpTo(fs []redact.Finding, n int) []redact.Finding {
-	var out []redact.Finding
-	for _, f := range fs {
-		if l, err := strconv.Atoi(strings.TrimPrefix(f.Location, "line:")); err == nil && l <= n {
-			out = append(out, f)
-		}
-	}
-	return out
-}
-
 // Seal freezes staged state at the collection deadline. A text item with
 // staged lines is kept with a truncation line; every other call in flight is
 // counted as late for its collector and its result is not written. Exclude
@@ -392,7 +440,7 @@ func (w *Writer) Seal() {
 	w.sealedAt = w.now()
 	for c := range w.calls {
 		if c.text && c.lines > 0 && c.dropErr == nil && w.sp.add(&c.e, []byte(truncation(ReasonSealed)+"\n"), true) == nil {
-			c.kept, _ = w.stage(c, nil, "truncated: "+ReasonSealed)
+			c.kept, _ = w.stage(c, c.findings, "truncated: "+ReasonSealed)
 			c.late = c.kept == nil // a duplicate, already recorded by stage
 			continue
 		}
@@ -623,9 +671,17 @@ func (w *Writer) manifestFooter(m Manifest, end time.Time) []byte {
 	if m.Finalization == "" {
 		m.Finalization = "complete"
 	}
-	m.Items = make([]Item, len(w.records))
-	for i, r := range w.records {
-		m.Items[i] = r.item
+	// Items past the cap by their compact size alone can never fit, so they
+	// are cut before Bound's search.
+	var n int64
+	m.Items = make([]Item, 0, len(w.records))
+	for _, r := range w.records {
+		b, _ := json.Marshal(r.item)
+		if n += int64(len(b)) + 1; n > w.lim.Manifest {
+			m.ItemsOmitted += len(w.records) - len(m.Items)
+			break
+		}
+		m.Items = append(m.Items, r.item)
 	}
 	Bound(&m, w.lim.Manifest)
 	var b bytes.Buffer
@@ -805,7 +861,7 @@ func (s *sink) Error(p pb.Path, src pb.Source, err error) {
 	if s.w.sealed {
 		return
 	}
-	s.w.addRecord(s.name, Item{Path: path, CapturedAt: s.w.now(), Source: src, Status: itemStatus(err), Reason: text}, nil, nil)
+	s.w.addRecord(s.name, Item{Path: path, CapturedAt: s.w.now(), Source: safeSource(src), Status: itemStatus(err), Reason: text}, nil, nil)
 }
 
 func (s *sink) Exclude(gk schema.GroupKind, reason pb.ExcludeReason) error {

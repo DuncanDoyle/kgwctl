@@ -64,14 +64,14 @@ func TestSpool(t *testing.T) {
 
 	t.Run("spill", func(t *testing.T) {
 		l := mustLimits(t, 32<<20)
-		l.RAM = 1 << 20 // the 64 MiB budget, scaled down
+		l.RAM = 64 << 10 // the 64 MiB budget, scaled down
 		h := newHarness(t, l, redact.Options{}, "")
 		dir := spoolDir(t, h.dir)
 		if st, err := os.Stat(dir); err != nil || st.Mode().Perm() != 0o700 {
 			t.Fatalf("spool dir mode %v, err %v", st.Mode().Perm(), err)
 		}
 		for i := range 3 {
-			if err := h.w.Sink("c").Text(pb.Path{"logs", fmt.Sprintf("s%d.log", i)}, bytes.NewReader(secretLog(1024)), pb.Source{}); err != nil {
+			if err := h.w.Sink("c").Text(pb.Path{"logs", fmt.Sprintf("s%d.log", i)}, bytes.NewReader(secretLog(100)), pb.Source{}); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -81,7 +81,7 @@ func TestSpool(t *testing.T) {
 		}
 		f := filepath.Join(dir, files[0].Name())
 		st, _ := os.Stat(f)
-		if st.Mode().Perm() != 0o600 || st.Size() < 1<<20 {
+		if st.Mode().Perm() != 0o600 || st.Size() < 64<<10 {
 			t.Fatalf("spool file mode %v size %d", st.Mode().Perm(), st.Size())
 		}
 		b, _ := os.ReadFile(f)
@@ -90,7 +90,7 @@ func TestSpool(t *testing.T) {
 		}
 		h.w.Seal()
 		a := h.finish(t, Manifest{}, "c")
-		if d, _ := a.File("logs/s2.log"); !bytes.Contains(d, []byte("001023 Authorization: Bearer [redacted]")) {
+		if d, _ := a.File("logs/s2.log"); !bytes.Contains(d, []byte("000099 Authorization: Bearer [redacted]")) {
 			t.Error("spilled item not read back")
 		}
 		if spoolDir(t, h.dir) != "" {
@@ -101,15 +101,15 @@ func TestSpool(t *testing.T) {
 	t.Run("staging-bound", func(t *testing.T) {
 		l := mustLimits(t, 32<<20)
 		parent := t.TempDir()
-		sp, err := NewSpool(parent, 1<<20, 4<<20)
+		sp, err := NewSpool(parent, 64<<10, 512<<10)
 		if err != nil {
 			t.Fatal(err)
 		}
 		var buf bytes.Buffer
 		w := NewWriter(Stdout(&buf), sp, "root", l, redact.Options{}, "", fixedNow)
 		var dropped int
-		for i := range 6 {
-			err := w.Sink("c").Text(pb.Path{"logs", fmt.Sprintf("s%d.log", i)}, bytes.NewReader(textBody("x", 1000)), pb.Source{})
+		for i := range 8 {
+			err := w.Sink("c").Text(pb.Path{"logs", fmt.Sprintf("s%d.log", i)}, bytes.NewReader(textBody("x", 100)), pb.Source{})
 			if errors.Is(err, pb.ErrBudget) {
 				dropped++
 			} else if err != nil {
@@ -142,14 +142,14 @@ func TestSpool(t *testing.T) {
 
 	t.Run("failed-finalize", func(t *testing.T) {
 		l := mustLimits(t, 32<<20)
-		l.RAM = 1 << 20
+		l.RAM = 64 << 10
 		parent := t.TempDir()
 		sp, err := NewSpool(parent, l.RAM, l.MaxSize)
 		if err != nil {
 			t.Fatal(err)
 		}
 		w := NewWriter(Stdout(failWriter{}), sp, "root", l, redact.Options{}, "", fixedNow)
-		if err := w.Sink("c").Text(pb.Path{"logs", "s.log"}, bytes.NewReader(textBody("x", 2000)), pb.Source{}); err != nil {
+		if err := w.Sink("c").Text(pb.Path{"logs", "s.log"}, bytes.NewReader(textBody("x", 300)), pb.Source{}); err != nil {
 			t.Fatal(err)
 		}
 		w.Seal()

@@ -69,13 +69,21 @@ func (c *countReader) Read(p []byte) (int, error) {
 // (ignoring case), a non-regular entry or a path outside the single root.
 func Extract(t *testing.T, r io.Reader) Archive {
 	t.Helper()
+	a, err := extract(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return a
+}
+
+func extract(r io.Reader) (Archive, error) {
+	var a Archive
 	zr, err := gzip.NewReader(r)
 	if err != nil {
-		t.Fatalf("gzip: %v", err)
+		return a, fmt.Errorf("gzip: %w", err)
 	}
 	cr := &countReader{r: zr}
 	tr := tar.NewReader(cr)
-	var a Archive
 	seen := map[string]bool{}
 	for {
 		h, err := tr.Next()
@@ -83,60 +91,67 @@ func Extract(t *testing.T, r io.Reader) Archive {
 			break
 		}
 		if err != nil {
-			t.Fatalf("tar: %v", err)
+			return a, fmt.Errorf("tar: %w", err)
 		}
 		if h.Typeflag != tar.TypeReg {
-			t.Fatalf("member %q: type %q, want regular", h.Name, h.Typeflag)
+			return a, fmt.Errorf("member %q: type %q, want regular", h.Name, h.Typeflag)
 		}
 		clean := path.Clean(h.Name)
 		root, rest, ok := strings.Cut(clean, "/")
 		if !ok || clean != h.Name || path.IsAbs(h.Name) || root == ".." || rest == "" || strings.HasPrefix(rest, "../") {
-			t.Fatalf("member %q is outside a root", h.Name)
+			return a, fmt.Errorf("member %q is outside a root", h.Name)
 		}
 		if a.Root == "" {
 			a.Root = root
 		} else if root != a.Root {
-			t.Fatalf("member %q is outside root %q", h.Name, a.Root)
+			return a, fmt.Errorf("member %q is outside root %q", h.Name, a.Root)
 		}
 		key := strings.ToLower(clean)
 		if seen[key] {
-			t.Fatalf("duplicate member %q", h.Name)
+			return a, fmt.Errorf("duplicate member %q", h.Name)
 		}
 		seen[key] = true
 		data, err := io.ReadAll(tr)
 		if err != nil {
-			t.Fatalf("member %q: %v", h.Name, err)
+			return a, fmt.Errorf("member %q: %w", h.Name, err)
 		}
 		a.Members = append(a.Members, Member{Name: rest, Header: *h, Data: data})
 	}
 	if _, err := io.Copy(io.Discard, cr); err != nil {
-		t.Fatalf("tar tail: %v", err)
+		return a, fmt.Errorf("tar tail: %w", err)
 	}
 	a.TarSize = cr.n
-	return a
+	return a, nil
 }
 
-// AssertNoCanary fails the test when a canary, or any CanaryPrefix value,
-// appears in a member name or member data: raw, in a decoded base64 run, or
-// inside a nested gzip member.
+// AssertNoCanary fails the test for every hit Scan reports.
 func AssertNoCanary(t *testing.T, a Archive, canaries []string) {
 	t.Helper()
+	for _, h := range Scan(a, canaries) {
+		t.Error(h)
+	}
+}
+
+// Scan reports where a canary, or any CanaryPrefix value, appears in the
+// root, a member name or member data: raw, in a decoded base64 run, or inside
+// a nested gzip member.
+func Scan(a Archive, canaries []string) []string {
 	needles := append([]string{CanaryPrefix}, canaries...)
+	var hits []string
 	check := func(where, s string) {
 		for _, n := range needles {
 			if n != "" && strings.Contains(s, n) {
-				t.Errorf("%s holds %q", where, n)
+				hits = append(hits, fmt.Sprintf("%s holds %q", where, n))
 			}
 		}
 	}
-	if a.Root != "" {
-		check("root", a.Root)
-	}
+	check("root", a.Root)
 	for _, m := range a.Members {
 		check("member name "+m.Name, m.Name)
 		check("member name "+m.Name+" (base64)", DecodeBase64Runs(m.Name))
 		scanData(m.Name, m.Data, check, 0)
 	}
+	return hits
 }
 
 func scanData(where string, b []byte, check func(where, s string), depth int) {
@@ -152,21 +167,27 @@ func scanData(where string, b []byte, check func(where, s string), depth int) {
 	}
 }
 
-// base64Run is a run that may be base64, in either alphabet, padded or not.
-var base64Run = regexp.MustCompile(`[A-Za-z0-9+/_-]{16,}={0,2}`)
+// Base64 runs, one regexp per alphabet so a run mixing both still decodes.
+var (
+	stdRun = regexp.MustCompile(`[A-Za-z0-9+/]{16,}={0,2}`)
+	urlRun = regexp.MustCompile(`[A-Za-z0-9_-]{16,}={0,2}`)
+)
 
 // DecodeBase64Runs decodes every base64-looking run of s at each of the four
-// alignments, in both alphabets, and returns the decoded bytes joined.
+// alignments, in its alphabet, and returns the decoded bytes joined.
 func DecodeBase64Runs(s string) string {
 	var b strings.Builder
-	for _, run := range base64Run.FindAllString(s, -1) {
-		run = strings.TrimRight(run, "=")
-		for off := 0; off < 4 && off < len(run); off++ {
-			r := run[off:]
-			// Whole quanta always decode; the full run also covers a partial tail.
-			for _, in := range []string{r[:len(r)-len(r)%4], r} {
-				for _, e := range []*base64.Encoding{base64.RawStdEncoding, base64.RawURLEncoding} {
-					if d, err := e.DecodeString(in); err == nil {
+	for _, a := range []struct {
+		re  *regexp.Regexp
+		enc *base64.Encoding
+	}{{stdRun, base64.RawStdEncoding}, {urlRun, base64.RawURLEncoding}} {
+		for _, run := range a.re.FindAllString(s, -1) {
+			run = strings.TrimRight(run, "=")
+			for off := 0; off < 4 && off < len(run); off++ {
+				r := run[off:]
+				// Whole quanta always decode; the full run also covers a partial tail.
+				for _, in := range []string{r[:len(r)-len(r)%4], r} {
+					if d, err := a.enc.DecodeString(in); err == nil {
 						b.Write(d)
 						b.WriteByte('\n')
 					}

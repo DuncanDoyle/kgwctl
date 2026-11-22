@@ -327,10 +327,14 @@ type failReader struct{}
 func (failReader) Read([]byte) (int, error) { return 0, errors.New("stream reset") }
 
 // lines is a LineWriter that keeps every line.
-type lines struct{ l []string }
+type lines struct {
+	l  []string
+	fs [][]redact.Finding // per line
+}
 
-func (w *lines) WriteLine(b []byte) error {
+func (w *lines) WriteLine(b []byte, fs []redact.Finding) error {
 	w.l = append(w.l, string(b))
+	w.fs = append(w.fs, fs)
 	return nil
 }
 

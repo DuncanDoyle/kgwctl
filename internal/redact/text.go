@@ -9,9 +9,10 @@ import (
 	"strings"
 )
 
-// LineWriter receives redacted lines, without their line terminator.
+// LineWriter receives redacted lines, without their line terminator, with the
+// findings made while redacting each one.
 type LineWriter interface {
-	WriteLine(line []byte) error
+	WriteLine(line []byte, fs []Finding) error
 }
 
 // TextResult reports what Text did. The writer, not Text, appends the
@@ -39,14 +40,15 @@ var errLineTooLong = errors.New("line over the cap")
 
 // Text redacts r line by line into w (design §7): PEM private-key blocks, the
 // debug header-line rule, then the pattern pass. Each complete line is
-// written as soon as it is read. A partial last line before a read error is
-// dropped; a clean EOF keeps it. An open PEM block is redacted to the end.
-// max caps the bytes written, one newline per line included; the text is cut
-// before the first line that would pass it. max <= 0 means no cap. The error
-// is the reader's or the writer's.
+// written as soon as it is read, with its findings. A partial last line before
+// a read error is dropped; a clean EOF keeps it. An open PEM block is redacted
+// to the end. max caps the bytes written, one newline per line included; the
+// text is cut before the first line that would pass it. max <= 0 means no cap.
+// Findings cover written lines only. The error is the reader's or the writer's.
 func Text(r io.Reader, w LineWriter, max int64, o Options) (TextResult, error) {
 	br := bufio.NewReaderSize(r, 64<<10)
-	t := &textState{rec: &recorder{}, opts: o}
+	all := &recorder{}
+	t := &textState{opts: o}
 	var res TextResult
 	var written int64
 	var err error
@@ -65,15 +67,19 @@ func Text(r io.Reader, w LineWriter, max int64, o Options) (TextResult, error) {
 		if rerr == io.EOF && len(line) == 0 {
 			break
 		}
+		t.rec = &recorder{}
 		out := t.line(string(line), n)
 		if max > 0 && written+int64(len(out))+1 > max {
 			res.Truncated = true
 			res.Reason = ReasonSizeCap
 			break
 		}
-		if werr := w.WriteLine([]byte(out)); werr != nil {
+		if werr := w.WriteLine([]byte(out), t.rec.findings()); werr != nil {
 			err = werr
 			break
+		}
+		for _, f := range t.rec.findings() {
+			all.add(f.Rule, f.Location, f.Count)
 		}
 		written += int64(len(out)) + 1
 		if rerr == io.EOF {
@@ -81,9 +87,9 @@ func Text(r io.Reader, w LineWriter, max int64, o Options) (TextResult, error) {
 		}
 	}
 	if t.pemStart > 0 {
-		t.rec.add(RulePEMTail, lineLoc(t.pemStart), 1)
+		all.add(RulePEMTail, lineLoc(t.pemStart), 1)
 	}
-	res.Findings = t.rec.findings()
+	res.Findings = all.findings()
 	return res, err
 }
 

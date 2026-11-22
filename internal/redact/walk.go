@@ -44,7 +44,7 @@ const (
 // it, such as secret.secretName; it stays under zKeyName.
 func refKey(key string) bool {
 	switch key {
-	case "name", "namespace", "kind", "group", "apiVersion", "key", "path", "type", "@type":
+	case "name", "namespace", "kind", "group", "apiVersion", "path", "type", "@type":
 		return true
 	}
 	return strings.HasSuffix(key, "Name") || strings.HasSuffix(key, "_name") || strings.HasSuffix(key, "Namespace")

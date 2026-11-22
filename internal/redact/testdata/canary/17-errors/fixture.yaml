@@ -41,6 +41,15 @@ cases:
     canaries:
       - {value: kgwctl-canary-17-pf}
     keep: ["403 Forbidden (Forbidden)"]
+  - name: status-without-code
+    type: remote-error
+    error:
+      kind: status
+      code: 0
+      message: 'upstream said kgwctl-canary-17-nocode and nothing else'
+    canaries:
+      - {value: kgwctl-canary-17-nocode}
+    keep: ["request failed"]
 deferred:
   - part: a denied list seen by the bundle check path
     task: "4.2.5"
