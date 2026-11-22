@@ -16,6 +16,17 @@ func Prometheus(body []byte, o Options) ([]byte, []Finding, error) {
 	if !parsesAsPrometheus(body) {
 		return nil, nil, ErrNotPrometheus
 	}
+	out, fs := promRewrite(body)
+	if !parsesAsPrometheus(out) {
+		return nil, nil, ErrNotPrometheus
+	}
+	return out, fs, nil
+}
+
+// promRewrite is the line rewrite; a variable so a test can break it.
+var promRewrite = rewritePrometheus
+
+func rewritePrometheus(body []byte) ([]byte, []Finding) {
 	rec := &recorder{}
 	lines := strings.Split(string(body), "\n")
 	for i, l := range lines {
@@ -27,11 +38,7 @@ func Prometheus(body []byte, o Options) ([]byte, []Finding, error) {
 		}
 		rec.add(RulePattern, lineLoc(i+1), hits)
 	}
-	out := []byte(strings.Join(lines, "\n"))
-	if !parsesAsPrometheus(out) {
-		return nil, nil, ErrNotPrometheus
-	}
-	return out, rec.findings(), nil
+	return []byte(strings.Join(lines, "\n")), rec.findings()
 }
 
 func parsesAsPrometheus(b []byte) bool {

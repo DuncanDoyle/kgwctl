@@ -40,6 +40,10 @@ const (
 // after lowercasing and dropping '_', '-' and '.'.
 var sensitiveKeyRe = regexp.MustCompile(`(password|passwd|secret|token|apikey|credential|privatekey|accesskey|secretkey|signature|licensekey)s?$`)
 
+// keptKeyNames are rate-limit token-bucket settings, normalized like
+// sensitiveKey's input; they name no credential.
+var keptKeyNames = map[string]bool{"maxtokens": true, "tokensperfill": true, "fillinterval": true}
+
 // sensitiveKey reports whether a key or name falls under the key-name rule.
 func sensitiveKey(k string) bool {
 	k = strings.Map(func(r rune) rune {
@@ -48,7 +52,7 @@ func sensitiveKey(k string) bool {
 		}
 		return r
 	}, strings.ToLower(k))
-	return sensitiveKeyRe.MatchString(k)
+	return !keptKeyNames[k] && sensitiveKeyRe.MatchString(k)
 }
 
 // sensitiveHeaders is the header-pair rule's list, design §7.

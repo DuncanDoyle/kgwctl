@@ -5,3 +5,5 @@ AoIBAQC7kgwctl-canary-16-pem2Vb8nUiw
 -----END PRIVATE KEY----- done
 {"level":"error","ts":"2026-11-22T10:00:01Z","msg":"upstream call failed","apiKey":"sk-kgwctl-canary-16-skkey0000"}
 {"level":"error","ts":"2026-11-22T10:00:02Z","error":"token exchange failed: {\"access_token\":\"kgwctl-canary-16-escaped\"}"}
+{"level":"error","ts":"2026-11-22T10:00:03Z","error":"exchange failed: {\"access_token\":\"kgwctl-canary-16-nest\\\"kgwctl-canary-16-nesttail two words\"}"}
+{"level":"error","ts":"2026-11-22T10:00:04Z","error":"exchange failed: {\"client_secret\":\"kgwctl-canary-16-bs\\\\q\\\"kgwctl-canary-16-bstail\"}"}

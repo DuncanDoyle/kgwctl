@@ -422,6 +422,22 @@ spec:
 			}
 		}
 	})
+	t.Run("token bucket", func(t *testing.T) {
+		in := `{"configs":[{"dynamic_listeners":[{"active_state":{"listener":{"filter_chains":[{"filters":[{"typed_config":{"http_filters":[{"name":"envoy.filters.http.local_ratelimit","typed_config":{
+			"stat_prefix":"http_local_rate_limiter","token_bucket":{"max_tokens":1000,"tokens_per_fill":100,"fill_interval":"1s"}}}]}}]}]}}}]}]}`
+		out, fs, err := redact.ConfigDump([]byte(in), redact.Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(fs) != 0 {
+			t.Errorf("findings %+v", fs)
+		}
+		for _, k := range []string{`"max_tokens": 1000`, `"tokens_per_fill": 100`, `"fill_interval": "1s"`} {
+			if !strings.Contains(string(out), k) {
+				t.Errorf("%q lost:\n%s", k, out)
+			}
+		}
+	})
 	t.Run("certs json", func(t *testing.T) {
 		in := `{"certificates":[{"ca_cert":[{"path":"/etc/envoy/ca.crt","serial_number":"0a1b","subject_alt_names":[{"dns":"api.example.com"},{"uri":"spiffe://cluster.local/ns/team-a/sa/web"}],"days_until_expiration":"30","valid_from":"2026-01-01T00:00:00Z","expiration_time":"2026-12-22T00:00:00Z"}]}]}`
 		out, fs, err := redact.JSON([]byte(in), redact.Options{})

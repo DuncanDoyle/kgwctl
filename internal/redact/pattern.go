@@ -32,7 +32,9 @@ var patterns = []patternRule{
 	// password='a b' and the escaped JSON form \"access_token\":\"a b\".
 	{re: regexp.MustCompile(`(?i)(` + credAssign + `")((?:[^"\\\n]|\\.)*)(")`), keep: 1, tail: 3, skip: emptyOrMarker},
 	{re: regexp.MustCompile(`(?i)(` + credAssign + `')([^'\n]*)(')`), keep: 1, tail: 3, skip: emptyOrMarker},
-	{re: regexp.MustCompile(`(?i)(` + credAssign + `\\")((?:[^"\\\n]|\\[^"\n])*)(\\")`), keep: 1, tail: 3, skip: emptyOrMarker},
+	// In the escaped form a nested quote is \\\" and a nested backslash \\\\;
+	// a backslash run is read greedily, so nothing after a nested quote leaks.
+	{re: regexp.MustCompile(`(?i)(` + credAssign + `\\")((?:[^"\\\n]|\\\\\\"|\\\\|\\[^"\\\n])*)(\\")`), keep: 1, tail: 3, skip: emptyOrMarker},
 	// Unquoted credential assignments in free text: password=..., token: ...
 	{re: regexp.MustCompile(`(?i)(` + credAssign + `(?:\\?["'])?)[^\s"'&,;<>{}\[\]\\]+`), keep: 1},
 	// Authorization credentials.

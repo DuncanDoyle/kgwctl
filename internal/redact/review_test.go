@@ -93,6 +93,10 @@ func TestQuotedAssignment(t *testing.T) {
 		`{"apiKey":"a\"b c","x":1}`:                           `{"apiKey":"[redacted]","x":1}`,
 		`err: {\"access_token\":\"dummy two words\",\"x\":1}`: `err: {\"access_token\":\"[redacted]\",\"x\":1}`,
 		`token: "dummy two words"`:                            `token: "[redacted]"`,
+		// An escaped quote inside an escaped JSON value, and a pattern-free variant
+		// with an escaped backslash and \n before it.
+		`err: {\"access_token\":\"dummy\\\"two words\",\"x\":1}`: `err: {\"access_token\":\"[redacted]\",\"x\":1}`,
+		`err: {\"client_secret\":\"p\\\\q\\nr\\\"plain tail\"}`:  `err: {\"client_secret\":\"[redacted]\"}`,
 	}
 	for in, want := range cases {
 		var w lines
