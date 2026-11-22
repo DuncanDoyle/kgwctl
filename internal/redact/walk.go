@@ -2,6 +2,7 @@ package redact
 
 import (
 	"bytes"
+	"slices"
 	"strings"
 )
 
@@ -59,7 +60,7 @@ var pairValueKeys = map[string]bool{
 }
 
 // objectMapFields are Kubernetes map fields whose keys are user data; every
-// child key shows as [key], even one that equals a schema field name.
+// key below them shows as [key], even one that equals a schema field name.
 var objectMapFields = map[string]bool{
 	"selector": true, "labels": true, "annotations": true, "matchLabels": true, "nodeSelector": true, "extraLabels": true,
 	"extraAnnotations": true, "data": true, "stringData": true, "binaryData": true,
@@ -67,11 +68,26 @@ var objectMapFields = map[string]bool{
 
 type walker struct {
 	mode mode
-	// kind is the kind of the Kubernetes object being walked; base is that
-	// object's location prefix, "" or "items[]." for a List member.
-	kind, base string
-	opts       Options
-	rec        *recorder
+	// kind is the kind of the Kubernetes object being walked.
+	kind string
+	// trail holds the real keys down to the current node, "[]" per array
+	// element; rules match on it, never on the capped display location.
+	// base is the trail length at the current object's root.
+	trail []string
+	base  int
+	opts  Options
+	rec   *recorder
+}
+
+func (w *walker) push(k string) { w.trail = append(w.trail, k) }
+func (w *walker) pop()          { w.trail = w.trail[:len(w.trail)-1] }
+
+// rel reports whether the keys from the current object's root are keys.
+func (w *walker) rel(keys ...string) bool { return slices.Equal(w.trail[w.base:], keys) }
+
+// tail reports whether the trail ends with keys.
+func (w *walker) tail(keys ...string) bool {
+	return len(w.trail) >= len(keys) && slices.Equal(w.trail[len(w.trail)-len(keys):], keys)
 }
 
 // walk redacts n in place; key is the member key that holds n.
@@ -80,21 +96,22 @@ func (w *walker) walk(n *node, at, key string, z zone) {
 	case kindObject:
 		w.object(n, at, key, z)
 	case kindArray:
-		list := w.mode == modeObject && key == "items" && at == w.base+"items"
+		list := w.mode == modeObject && w.rel("items")
 		el := capLoc(at + "[]")
 		for _, e := range n.elems {
-			if e.kind == kindString {
+			w.push("[]")
+			switch k, _ := e.get("kind"); {
+			case e.kind == kindString:
 				w.str(e, el, key, z, false, false)
-				continue
-			}
-			if k, _ := e.get("kind"); list && k != "" {
+			case list && k != "":
 				// A List member gets its own kind's rules.
 				sub := *w
-				sub.kind, sub.base = k, el+"."
+				sub.kind, sub.base = k, len(w.trail)
 				sub.walk(e, el, key, z&^(zMapKeys|zHeaderMap))
-				continue
+			default:
+				w.walk(e, el, key, z&^(zMapKeys|zHeaderMap))
 			}
-			w.walk(e, el, key, z&^(zMapKeys|zHeaderMap))
+			w.pop()
 		}
 	case kindString:
 		w.str(n, at, key, z, false, false)
@@ -113,8 +130,6 @@ func (w *walker) literal(n *node, at, key string, z zone) {
 	case z&zPair != 0:
 		n.kind = kindString
 		w.set(n, RuleHeaderPair, at)
-	case keptLiteralKey(key) && string(n.lit) != "true" && string(n.lit) != "false":
-		// a token-bucket number stays
 	case sensitiveKey(key), z&zKeyName != 0 && !refKey(key):
 		n.kind = kindString
 		w.set(n, RuleKeyName, at)
@@ -134,13 +149,16 @@ func (w *walker) object(n *node, at, key string, z zone) {
 	kept := n.members[:0]
 	for _, m := range n.members {
 		loc := w.loc(at, m.key, z)
-		if w.dropped(at, m.key, loc) {
+		if w.dropped(m.key, loc) {
 			continue
 		}
 		kept = append(kept, m)
+		w.push(m.key)
 		cz := w.childZone(z, key, m.key)
 		pairValue := pair && pairValueKeys[m.key]
 		switch {
+		case keptNumber(m, z):
+			// a token-bucket number outside any credential zone stays
 		case wrapper && m.key == "value" && m.val.kind == kindString:
 			w.stringValue(m.val, loc)
 		case m.val.kind == kindString:
@@ -150,6 +168,7 @@ func (w *walker) object(n *node, at, key string, z zone) {
 		default:
 			w.walk(m.val, loc, m.key, cz)
 		}
+		w.pop()
 	}
 	n.members = kept
 }
@@ -163,15 +182,15 @@ func (w *walker) loc(at, key string, z zone) string {
 }
 
 // dropped applies the managed-fields and last-applied rules.
-func (w *walker) dropped(at, key, loc string) bool {
+func (w *walker) dropped(key, loc string) bool {
 	if w.mode != modeObject {
 		return false
 	}
 	switch {
-	case key == "managedFields" && (at == "metadata" || strings.HasSuffix(at, ".metadata")):
+	case key == "managedFields" && w.tail("metadata"):
 		w.rec.add(RuleManagedFields, loc, 1)
 		return true
-	case key == lastApplied && strings.HasSuffix(at, "metadata.annotations"):
+	case key == lastApplied && w.tail("metadata", "annotations"):
 		w.rec.add(RuleLastApplied, loc, 1)
 		return true
 	}
@@ -200,7 +219,7 @@ func (w *walker) childZone(z zone, parent, key string) zone {
 			z |= zMapAll
 		case "metadata":
 			if parent == "node" {
-				z |= zMapKeys
+				z |= zMapAll
 			}
 		case "typed_filter_metadata", "typed_per_filter_config", "providers",
 			"typed_extension_protocol_options", "requirement_map":
@@ -220,7 +239,7 @@ func (w *walker) childZone(z zone, parent, key string) zone {
 		case key == "basicAuth":
 			z |= zBasicAuth
 		case objectMapFields[key]:
-			z |= zMapKeys
+			z |= zMapAll
 		}
 	}
 	return z
@@ -248,9 +267,9 @@ func (w *walker) str(n *node, at, key string, z zone, pairValue, envValue bool) 
 		w.set(n, RuleHeaderPair, at)
 	case z&zBasicAuth != 0 && key == "users":
 		w.basicAuth(n, at)
-	case w.mode == modeObject && w.kind == "DirectResponse" && at == w.base+"spec.body":
+	case w.mode == modeObject && w.kind == "DirectResponse" && w.rel("spec", "body"):
 		w.set(n, RuleField, at)
-	case w.mode == modeObject && key == "inline" && strings.HasSuffix(at, "jwks.local.inline"):
+	case w.mode == modeObject && key == "inline" && w.tail("jwks", "local", "inline"):
 		w.jwks(n, at, false)
 	case sensitiveKey(key), z&zKeyName != 0 && !refKey(key):
 		w.set(n, RuleKeyName, at)
@@ -289,4 +308,12 @@ func (w *walker) stringValue(n *node, at string) {
 	var b bytes.Buffer
 	t.encode(&b)
 	n.str = b.String()
+}
+
+// keptNumber reports whether m is a token-bucket number whose object, held
+// in zone z, is under no credential key.
+func keptNumber(m member, z zone) bool {
+	v := m.val
+	return v.kind == kindLiteral && keptLiteralKey(m.key) && z&(zKeyName|zPair) == 0 &&
+		string(v.lit) != "null" && string(v.lit) != "true" && string(v.lit) != "false"
 }

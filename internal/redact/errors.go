@@ -19,6 +19,12 @@ import (
 // maxErrorText is the cut for ErrorText, design §7.1.
 const maxErrorText = 512
 
+// maxErrorInput is the longest error text ErrorText redacts.
+const maxErrorInput = 64 << 10
+
+// TooLong replaces error text over maxErrorInput.
+const TooLong = "[error text too long]"
+
 // streamStatusRe is client-go's error for a non-2xx stream with an unparsed body.
 var streamStatusRe = regexp.MustCompile(`\b([1-5][0-9]{2}) while accessing `)
 
@@ -86,12 +92,17 @@ func statusText(code int, reason string) string {
 
 // ErrorText renders any other error, a panic value included, for the
 // manifest, errors.txt, run.log and stderr (design §7.1): view.Redactor for
-// server, the pattern pass, one line, cut at 512 bytes.
+// server, the pattern pass, one line, cut at 512 bytes. The whole text is
+// redacted before the cut; text over 64 KiB is replaced by TooLong.
 func ErrorText(err error, server string) string {
 	if err == nil {
 		return ""
 	}
-	s := view.NewRedactor(server).Redact(err.Error())
+	msg := err.Error()
+	if len(msg) > maxErrorInput {
+		return TooLong
+	}
+	s := view.NewRedactor(server).Redact(msg)
 	s, _ = patternPass(s)
 	s = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ").Replace(s)
 	if len(s) <= maxErrorText {
