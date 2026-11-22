@@ -12,8 +12,8 @@ Status: design
 - [x] Q2 Phase 4 implementation plan (4 planned sub-phases)
 - [x] Q3 Cross-model review of design + plan: 5 rounds (reviews/design-codex.md, -r2 to -r4 + triage); r5 at f4d2102
 - [x] Q4 Owner go-ahead on design r5 and §12 items 1–6 (2026-11-22); D-025, D-026 accepted
-- [ ] Q5 Design r6 (owner additions: ownership and discovery-scope filters, `--skip logs`): scoped Codex review + triage ← CURRENT
-- [ ] Q6 Sub-phase 4.1 (contract, redaction, writer, runner, threat model)
+- [x] Q5 Design r6 (owner additions: ownership and discovery-scope filters, `--skip logs`): Codex reviews r5–r9 + triage (reviews/design-codex-r5.md … -r9.md); no open P1/P2
+- [ ] Q6 Sub-phase 4.1 (contract, redaction, writer, runner, threat model) ← CURRENT
 
 ### Exit gates
 - [ ] tests/vet pass
