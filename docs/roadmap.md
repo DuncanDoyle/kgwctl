@@ -1,6 +1,6 @@
 # kgwctl — Roadmap
 
-**Last updated:** 2026-11-21
+**Last updated:** 2026-11-22
 **Program:** [kgateway-tooling `program.md`](https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md) (local checkout: `../kgateway-tooling-claude`)
 
 ## Goal
@@ -53,12 +53,13 @@ A support engineer's first command on a cluster they troubleshoot: what is wrong
 **Waits on:** none — Phase 3 delivered proxy access (`internal/proxydump` `Fetch`/`FetchGateway`: pod identity, per-capture errors, deadline; D-021)
 
 One command that collects what support asks for, so nobody hand-collects it (D-010).
-- Gateway API and kgateway resources, Helm values, controller and proxy logs (including previous containers), proxy config dumps and stats, controller snapshots and metrics from every replica, `version` and `check` output.
+- Gateway API and kgateway resources, workloads, install metadata, controller and proxy logs (including previous containers), controller metrics, and per-replica proxy config dumps, stats and metrics; `version` and `check` output.
 - One `tar.gz`; namespace, install and time-window filters.
-- Secrets redacted by default, with an explicit opt-in. Redaction is its own tested component.
-- Bundle collectors are a registry extension point for vendor builds (D-009).
+- No API request for Secrets or ConfigMaps, so no Helm values. No controller admin snapshots: `/snapshots/xds` holds private keys, `/snapshots/krt` can return raw ConfigMaps (D-025).
+- Mandatory redaction in the archive writer, tested on the extracted archive (D-026).
+- Bundle collectors are an extension point for downstream builds (D-009).
 - Prior art: `agctl bug-report` ([agentgateway#3991](https://github.com/agentgateway/agentgateway/pull/3991)). Borrow kind discovery by CRD category (`kgateway`), partial results with an `errors.txt` under a global `--timeout`, and previous-container logs only after a restart (D-019).
-- Open design point: agctl captures ConfigMaps and redacted Secrets. kgwctl's RBAC reads neither, and the bundle needs `pods/log`.
+- Needs `pods/log` in a new optional Role.
 
 ### Phase 5 — Full analysis
 **Status:** Not started
@@ -74,9 +75,9 @@ One command that collects what support asks for, so nobody hand-collects it (D-0
 
 The controller owns policy semantics; kgwctl shows evidence and never re-derives precedence, inheritance or merging (D-024).
 - `describe` shows declared policies that target the object, with their `targetRefs`/selectors as written.
-- The controller's status conditions on those policies and their targets, as the authoritative verdict.
-- What Envoy runs for the route or listener (xdsview), linked from `describe` and back.
-- Each link marked verified (status, route metadata, `route_source`) or inferred (names, selectors).
+- The controller's status conditions on those policies and their targets: its result for the target, controller and generation each condition names.
+- What Envoy runs for the route or listener (xdsview): one replica at capture time, linked from `describe` and back.
+- Each link marked verified, inferred (names, selectors) or unknown (no, stale or ambiguous evidence). `route_source` verifies the originating route and rule, not which policy won or merged.
 - `get -o graph`: Gateway → route → backend topology as DOT or Mermaid text, written without a graphics library.
 - Envoy-side mapping back to Gateway API refs in `proxy routes` (program edge E5).
 
@@ -89,7 +90,7 @@ The controller owns policy semantics; kgwctl shows evidence and never re-derives
 
 ## Deferred / out of roadmap
 - `kgwctl mcp` and traffic debugging: downstream builds on `pkg/cli` (D-023), not this repo.
-- Data-plane convergence (D-024): per-replica config versions, NACKs, stale config and listener lifecycle states, as far as the controller and Envoy expose them. It replaces a generic intended-versus-accepted `proxy diff`, which is no longer planned. A candidate phase after Phase 4; the support bundle captures the raw inputs.
+- Data-plane convergence (D-024): a candidate phase after Phase 4. It replaces a generic intended-versus-accepted `proxy diff`, which is no longer planned. The support bundle keeps the raw evidence per replica: pod identity, restart count, capture time, `version_text`, listener states (warming, draining) and rejection details where Envoy reports them. These show what each replica held at capture time. They do not show when a NACK happened. A stale-config verdict needs comparable controller evidence per replica; kgateway v2.5.1's snapshot metrics are per Gateway, not per pod.
 - Thin-client mode against the kgateway-ui API — only useful once the UI has per-user auth (its Phase 10).
 - Interactive TUI — krp's TUI covers this for now.
 - Vendor policy plugins — the build-time hook is D-009 (Phase 1); the plugins live outside this repo (program P-002).

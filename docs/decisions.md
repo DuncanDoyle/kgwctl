@@ -156,22 +156,49 @@ Append-only. Newest at the bottom. Supersede, don't edit.
 **Context:** kgateway's controller owns policy resolution, precedence, inheritance, merging and translation. Phase 6 assumed a library (E7) would give `describe` the attached and effective policies. A library outside the controller can only approximate those rules, and an approximation that disagrees with the controller misleads more than no answer.
 **Decision:** kgwctl does not compute or promise effective policy. Phase 6 shows four kinds of evidence and links them:
 1. declared policies and their `targetRefs`/selectors, as written;
-2. the controller's status conditions on those policies and targets (authoritative);
-3. what Envoy runs for a route or listener, from xdsview (authoritative for the data plane);
-4. links between them, each marked verified (route metadata, a policy's own status, `route_source`) or inferred (names, selectors).
+2. the controller's status conditions on those policies and targets;
+3. what Envoy runs for a route or listener, from xdsview;
+4. links between them, each marked verified, inferred or unknown.
 
-An effective-policy view ships only when the controller exposes the evidence itself, such as per-target policy status or route source metadata.
+Each source verifies only its own claim:
+
+| Source | Verifies | Does not verify |
+|---|---|---|
+| `route_source` route metadata | the originating route, rule and match of an Envoy route | which policy won, merged or produced a filter |
+| A policy's status condition | the controller's result for the target, controller and generation the condition names | targets, controllers or generations it does not name |
+| Envoy config dump | what one replica ran at capture time | other replicas, or later times |
+
+A link is `verified` only when one of these sources states it for the objects shown. It is `inferred` when it comes from names or selectors. It is `unknown` when evidence is absent, stale (another generation) or ambiguous. An effective-policy view ships only when the controller exposes the evidence itself, such as per-target policy status.
 **Alternatives:** Snellius's policy model as the effective view (E7 as written): rejected as authoritative, because it re-derives controller rules. It is still usable as an inferred link if marked so.
-**Consequences:** Narrows D-003: libraries may provide relations and naming, never semantics. E7 is redefined in the program file (owner to approve). The deferred `proxy diff` (generic intended-versus-accepted) is dropped from the roadmap. Replica convergence, NACKs, stale config and listener lifecycle states take its place as a candidate, subject to what the controller and Envoy expose.
+**Consequences:** Narrows D-003: libraries may provide relations and naming, never semantics. E7 is redefined in the program file; that edit, including the E7 row that promises attached and effective policy, is the program session's (owner to approve). The deferred `proxy diff` (generic intended-versus-accepted) is dropped from the roadmap. A data-plane convergence candidate takes its place: it reads the raw per-replica evidence the support bundle keeps, and gives a stale-config verdict only with comparable controller evidence.
 
-## D-025 — Envoy admin reads are an allowlist of read-only GETs (2026-11-22, phase 4) — proposed, pending owner approval
-**Context:** D-021 limits port-forward to one `GET /config_dump`. The support bundle also needs Envoy `/stats` (text readouts such as `version_text`), `/server_info`, `/certs` and `/clusters`, and optionally the controller's `/snapshots/krt`.
-**Decision:** `proxydump` sends only GETs on a fixed allowlist: Envoy `/config_dump`, `/stats`, `/server_info`, `/certs`, `/clusters`; controller `/snapshots/krt`. Any other path is refused before a stream opens. The controller's `/snapshots/xds` is never on the list: it holds TLS keys and inline credentials in clear (kgateway v2.5.1, read from source).
-**Alternatives:** One path per command, as D-021 has it — the bundle would need its own transport. Any GET — opens Envoy admin endpoints whose output nobody reviewed.
-**Consequences:** The `pods/portforward` grant and its warning are unchanged. A new path needs a decision entry.
+## D-025 — Envoy admin reads are an allowlist of operations (2026-11-22, phase 4) — proposed, pending owner approval
+**Context:** D-021 limits port-forward to one `GET /config_dump`. The support bundle also needs the config dump with endpoints, `/stats` (text readouts such as `version_text`), `/server_info`, `/certs` and `/clusters`.
+**Decision:** `proxydump` sends only fixed operations. Each binds port, method, path and exact query; callers pick one by constant, and no API takes a path:
+
+| Operation | Request |
+|---|---|
+| `config-dump` | `GET :19000 /config_dump` |
+| `config-dump-eds` | `GET :19000 /config_dump?include_eds` |
+| `stats` | `GET :19000 /stats` |
+| `server-info` | `GET :19000 /server_info` |
+| `certs` | `GET :19000 /certs` |
+| `clusters` | `GET :19000 /clusters` |
+
+An unknown operation fails before a stream opens, and redirects are refused. `proxy dump` and `proxy routes` keep `config-dump`. The bundle uses `config-dump-eds` by default; `--no-endpoints` uses `config-dump` and skips `clusters`. No controller admin path is on the list: `/snapshots/xds` holds TLS keys and inline credentials in clear, and `/snapshots/krt` can return raw snapshots and ConfigMaps (kgateway v2.5.1, read from source).
+**Alternatives:** One path per command, as D-021 has it — the bundle would need its own transport. A path allowlist without the query — cannot express `include_eds`. Any GET — opens admin endpoints whose output nobody reviewed.
+**Consequences:** The `pods/portforward` grant and its warning are unchanged. A new operation needs a decision entry.
 
 ## D-026 — Redaction is a mandatory stage of the bundle writer (2026-11-22, phase 4) — proposed, pending owner approval
-**Context:** A bundle leaves the customer's trust boundary. Envoy redacts only fields it marks sensitive; header values, `initial_metadata`, Lua code, transformation templates and `last-applied-configuration` carry secrets past it.
-**Decision:** Collectors hand typed content to the writer, which runs the redactor for that type and refuses undeclared types. Structured rules for objects and JSON, a pattern pass for text, the marker `[redacted]`, and a `redactions.json` report without values. No Secret or ConfigMap is read in Phase 4.
-**Alternatives:** Redaction per collector — a vendor collector could skip it. Hashing values — low-entropy secrets can be guessed offline.
-**Consequences:** Redaction is tested with a canary corpus per artifact class. Its limits are documented in docs/bundle-threat-model.md and the README.
+**Context:** A bundle leaves the customer's trust boundary. Envoy redacts only fields it marks sensitive. Header values (including values kgateway resolves from a Secret), `initial_metadata`, inline JWKS, Lua code, transformation templates and `last-applied-configuration` carry secrets past it.
+**Decision:** Collectors hand typed content to the writer, which runs the redactor for that type and refuses undeclared types.
+- Every header value in header-mutation structures and header modifiers is redacted, whatever the header's name. Names are kept.
+- Inline JWKS keep only public members (`kty`, `kid`, `alg`, `use`, `key_ops`, `n`, `e`, `crv`, `x`, `y`, `x5c`, `x5t`). Every other member is redacted; an unparseable value is redacted whole.
+- Prometheus content must parse as text exposition, or it is dropped with an error. Label values and comments get the pattern pass.
+- Every error string, including panic values, is redacted before it reaches the archive or stderr. The manifest records flag values only for flags without free text.
+- Structured rules for objects and JSON, a pattern pass for text, the marker `[redacted]`, and a `redactions.json` report without values.
+- kgwctl makes no API request for Secrets or ConfigMaps in Phase 4. Derived artifacts can still carry values the controller resolved from Secrets; the redaction above covers known structures and patterns.
+
+Downstream collectors are trusted in-process code. The Sink protects against their mistakes, not against malice.
+**Alternatives:** Redaction per collector — a downstream collector could skip it. Header redaction by name — misses a Secret-backed custom header. Hashing values — low-entropy secrets can be guessed offline.
+**Consequences:** Redaction is tested on the extracted archive with a canary corpus per artifact class. Its limits are documented in docs/bundle-threat-model.md and the README.
