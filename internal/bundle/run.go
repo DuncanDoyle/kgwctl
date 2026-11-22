@@ -44,6 +44,7 @@ func Run(ctx context.Context, cs []pb.Collector, env pb.Env, w *Writer, m Manife
 	now := env.Now
 	if now == nil {
 		now = time.Now
+		env.Now = now
 	}
 	order := make([]string, len(cs))
 	res := make([]result, len(cs))
@@ -71,6 +72,8 @@ func Run(ctx context.Context, cs []pb.Collector, env pb.Env, w *Writer, m Manife
 		e.Status, e.DurationMs, res[i].done = status, d.Milliseconds(), true
 		if err != nil {
 			e.Error = w.errorText(err)
+		} else if status == pb.CollectorTimeout {
+			e.Error = "collection deadline reached"
 		}
 		line := fmt.Sprintf("collector %s %s in %dms", e.Name, status, e.DurationMs)
 		if e.Error != "" {
@@ -151,10 +154,12 @@ func runOne(ctx context.Context, c pb.Collector, env pb.Env, w *Writer, now func
 	}()
 	d := now().Sub(t0)
 	switch {
-	case err == nil:
-		report(pb.CollectorOK, nil, d)
+	// A collector that returns once collection has ended, with or without an
+	// error, may have lost writes to the seal.
 	case ctx.Err() != nil:
 		report(pb.CollectorTimeout, err, d)
+	case err == nil:
+		report(pb.CollectorOK, nil, d)
 	default:
 		report(pb.CollectorFailed, err, d)
 	}

@@ -6,12 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/spf13/pflag"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/DuncanDoyle/kgwctl/internal/bundle/bundletest"
 	"github.com/DuncanDoyle/kgwctl/internal/redact"
@@ -22,11 +24,15 @@ type fakeCollector struct {
 	name    string
 	collect func(ctx context.Context, s pb.Sink) error
 	called  atomic.Bool
+	env     *func() time.Time // receives Env.Now when set
 }
 
 func (f *fakeCollector) Name() string { return f.name }
-func (f *fakeCollector) Collect(ctx context.Context, _ pb.Env, s pb.Sink) error {
+func (f *fakeCollector) Collect(ctx context.Context, env pb.Env, s pb.Sink) error {
 	f.called.Store(true)
+	if f.env != nil {
+		*f.env = env.Now
+	}
 	return f.collect(ctx, s)
 }
 
@@ -60,15 +66,12 @@ func (failDest) Write([]byte) (int, error) { return 0, errors.New("disk full") }
 func TestRunDeadline(t *testing.T) {
 	h := newHarness(t, mustLimits(t, MinSize), redact.Options{}, "")
 	release := make(chan struct{})
-	done := fake("fast", text("a.log", "hello\n"))
 	hung := fake("hung", func(context.Context, pb.Sink) error { <-release; return nil })
-	m, err := Run(context.Background(), []pb.Collector{done, hung}, runEnv(), h.w, Manifest{}, RunOptions{Deadline: time.Now().Add(300 * time.Millisecond)})
+	// A deadline in the past ends collection at once.
+	m, err := Run(context.Background(), []pb.Collector{hung}, runEnv(), h.w, Manifest{}, RunOptions{Deadline: time.Now().Add(-time.Second)})
 	close(release)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if got := statusOf(t, m, "fast").Status; got != pb.CollectorOK {
-		t.Errorf("fast = %s", got)
 	}
 	if got := statusOf(t, m, "hung").Status; got != pb.CollectorTimeout {
 		t.Errorf("hung = %s", got)
@@ -76,6 +79,77 @@ func TestRunDeadline(t *testing.T) {
 	a := bundletest.Extract(t, bytes.NewReader(h.buf.Bytes()))
 	if _, ok := a.File("manifest.json"); !ok {
 		t.Error("manifest.json missing")
+	}
+}
+
+func TestRunDeadlineKeepsFinished(t *testing.T) {
+	h := newHarness(t, mustLimits(t, MinSize), redact.Options{}, "")
+	ctx, cancel := context.WithCancel(context.Background())
+	release := make(chan struct{})
+	finished := make(chan struct{})
+	// The second collector is only started once the first has finished and returned.
+	fast := fake("fast", func(ctx context.Context, s pb.Sink) error {
+		err := text("a.log", "hello\n")(ctx, s)
+		close(finished)
+		return err
+	})
+	hung := fake("hung", func(context.Context, pb.Sink) error {
+		<-finished
+		cancel()
+		<-release
+		return nil
+	})
+	m, err := Run(ctx, []pb.Collector{fast, hung}, runEnv(), h.w, Manifest{}, RunOptions{Workers: 2})
+	close(release)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := statusOf(t, m, "hung").Status; got != pb.CollectorTimeout {
+		t.Errorf("hung = %s", got)
+	}
+	if got := statusOf(t, m, "fast").Status; got != pb.CollectorOK {
+		t.Errorf("fast = %s", got)
+	}
+}
+
+func TestRunReturnAfterSealIsTimeout(t *testing.T) {
+	h := newHarness(t, mustLimits(t, MinSize), redact.Options{}, "")
+	ctx, cancel := context.WithCancel(context.Background())
+	c := fake("swallows", func(ctx context.Context, s pb.Sink) error {
+		cancel()
+		<-ctx.Done()
+		// Wait for the seal, then ignore the error and report success.
+		for s.Exclude(schema.GroupKind{Kind: "ConfigMap"}, pb.ExcludeScope) == nil {
+			runtime.Gosched()
+		}
+		return nil
+	})
+	m, err := Run(ctx, []pb.Collector{c}, runEnv(), h.w, Manifest{}, RunOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := statusOf(t, m, "swallows").Status; got != pb.CollectorTimeout {
+		t.Errorf("status = %s, want timeout", got)
+	}
+}
+
+func TestRunFillsEnvNow(t *testing.T) {
+	h := newHarness(t, mustLimits(t, MinSize), redact.Options{}, "")
+	c := fake("clock", func(ctx context.Context, s pb.Sink) error {
+		return text("a.log", "t\n")(ctx, s)
+	})
+	var got func() time.Time
+	c.env = &got
+	m, err := Run(context.Background(), []pb.Collector{c}, pb.Env{}, h.w, Manifest{}, RunOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil {
+		t.Fatal("Env.Now not set for the collector")
+	}
+	got()
+	if s := statusOf(t, m, "clock").Status; s != pb.CollectorOK {
+		t.Errorf("status = %s", s)
 	}
 }
 
@@ -110,6 +184,9 @@ func TestRunPanic(t *testing.T) {
 	if e.Status != pb.CollectorFailed {
 		t.Errorf("status = %s", e.Status)
 	}
+	if !strings.HasPrefix(e.Error, "panic") {
+		t.Errorf("Error = %q, want a panic message", e.Error)
+	}
 	bundletest.AssertNoCanary(t, bundletest.Extract(t, bytes.NewReader(h.buf.Bytes())), []string{"kgwctl-canary-panic-token"})
 }
 
@@ -117,7 +194,8 @@ func TestRunSkip(t *testing.T) {
 	h := newHarness(t, mustLimits(t, MinSize), redact.Options{}, "")
 	logs := fake("logs", text("a.log", "x\n"))
 	other := fake("other", text("b.log", "y\n"))
-	m, err := Run(context.Background(), []pb.Collector{logs, other}, runEnv(), h.w, Manifest{}, RunOptions{Skip: map[string]bool{"logs": true}})
+	bad := fake("bad", func(context.Context, pb.Sink) error { return errors.New("broke") })
+	m, err := Run(context.Background(), []pb.Collector{logs, other, bad}, runEnv(), h.w, Manifest{}, RunOptions{Skip: map[string]bool{"logs": true}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,8 +207,15 @@ func TestRunSkip(t *testing.T) {
 		t.Error("Collect called for skipped collector")
 	}
 	a := bundletest.Extract(t, bytes.NewReader(h.buf.Bytes()))
-	if b, ok := a.File("errors.txt"); ok && strings.Contains(string(b), "logs") {
+	b, ok := a.File("errors.txt")
+	if !ok || !strings.Contains(string(b), "bad: failed") {
+		t.Fatalf("errors.txt = %q, ok %v", b, ok)
+	}
+	if strings.Contains(string(b), "logs") {
 		t.Errorf("errors.txt names the skipped collector: %q", b)
+	}
+	if rl, _ := a.File("run.log"); !strings.Contains(string(rl), "collector logs skipped: flag") {
+		t.Errorf("run.log = %q", rl)
 	}
 }
 
