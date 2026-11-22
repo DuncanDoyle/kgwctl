@@ -83,7 +83,7 @@ Each task builds and passes on its own; no task consumes a type a later task int
 - `type Op int` (codes for `Source.Operation`: `OpList`, `OpLog`, `OpPreviousLog`, `OpMetrics`, `OpConfigDump`, `OpConfigDumpEDS`, `OpStats`, `OpServerInfo`, `OpCerts`, `OpClusters`, `OpCheck`, `OpCustom`); `func (o Op) String() string`
 - `type CaptureIdentity string` (`""` for non-Pod items, `IdentityVerified`, `IdentityChanged`, `IdentityGone`, `IdentityRereadFailed`)
 - `type Source struct{ Namespace, Pod string; UID types.UID; Container string; Operation Op; Identity CaptureIdentity }` (every Sink method, `Error` included, takes a `Source`)
-- `type Sink interface { Object(p Path, u *unstructured.Unstructured, src Source) error; ConfigDump(p Path, r io.Reader, src Source) error; JSON(p Path, r io.Reader, src Source) error; Prometheus(p Path, r io.Reader, src Source) error; Text(p Path, r io.Reader, src Source) error; Error(item Path, src Source, err error); Exclude(gk schema.GroupKind, reason ExcludeReason) }` (`Exclude` counts a left-out object; calls after the seal are `late`)
+- `type Sink interface { Object(p Path, u *unstructured.Unstructured, src Source) error; ConfigDump(p Path, r io.Reader, src Source) error; JSON(p Path, r io.Reader, src Source) error; Prometheus(p Path, r io.Reader, src Source) error; Text(p Path, r io.Reader, src Source) error; Error(item Path, src Source, err error); Exclude(gk schema.GroupKind, reason ExcludeReason) error }` (`Exclude` counts a left-out object; like every Sink method it returns `ErrSealed` after the seal; `gk` must be a valid group and kind (`Name(Group)`, `Name(Kind)`) or it returns `ErrInvalidPath`)
 - `type Collector interface { Name() string; Collect(ctx context.Context, env Env, s Sink) error }`
 - `type Env struct{ Kube kubernetes.Interface; Dynamic dynamic.Interface; Discovery discovery.DiscoveryInterface; Scope Scope; Window Window; Replicas []Replica; Now func() time.Time; RequestTimeout time.Duration; Keep func(obj *unstructured.Unstructured) ExcludeReason }` (clients are guarded; `Keep` is the §3.2 ownership and scope filter, `ExcludeNone` to keep; always `ExcludeNone` with `AllControllers`)
 - `type Scope struct{ Namespace string /* "": all */; Installs []Install; AllControllers bool; WorkloadNamespaces []string /* nil: all */ }`; `func (s Scope) Namespaces() []string` (nil for all; else the namespace plus install namespaces)
@@ -106,7 +106,7 @@ Each task builds and passes on its own; no task consumes a type a later task int
 **Interfaces (produces):**
 - `type Manifest struct{ Build BuildInfo; Context, Server string; Flags []FlagValue; Scope bundle.Scope; Window bundle.Window; Start, Sealed, End time.Time; Finalization string; Replicas []bundle.Replica; Collectors []CollectorEntry; Items []Item; Excluded []Exclusion; ReplicasOmitted, CollectorsOmitted, ItemsOmitted int }`
 - JSON fields (camelCase, omit-empty, RFC3339): `build`, `context`, `server`, `flags`, `scope`, `window`, `start`, `sealed`, `end`, `finalization`, `replicas`, `collectors`, `items`, `excluded`, `replicasOmitted`, `collectorsOmitted`, `itemsOmitted`.
-- `func Bound(m *Manifest, max int64)` (drops list tails until the encoded manifest fits, counting each list's omissions)
+- `func Bound(m *Manifest, max int64)` (drops list tails until the encoded manifest fits, counting each list's omissions; order: items, replicas, unwatched names, selectors, installs. Each selector string is cut at 256 bytes. `Excluded` holds at most 1024 entries; further kinds are summed into one `other` entry, so it is never cut.)
 - `type BuildInfo struct{ Version, Commit, Date string }` (filled from `view.BuildInfo` by the caller; `bundle` does not import `view`)
 - `type FlagValue struct{ Name string; Value *string }` (`name`, `value`; nil value for name-only flags)
 - `type CollectorEntry struct{ Name string; Status bundle.CollectorStatus; Reason string /* e.g. "flag", "no install" */; DurationMs int64; Error string; Late int }`
@@ -155,7 +155,7 @@ Each task builds and passes on its own; no task consumes a type a later task int
 - `func DefaultName(t time.Time) string` (`kgwctl-bundle-<YYYYMMDDTHHMMSSZ>`)
 - `func NewWriter(d Dest, sp *Spool, root string, l Limits, ro redact.Options, server string, now func() time.Time) *Writer`
 - `func (w *Writer) Sink(collector string) bundle.Sink`
-- `func (w *Writer) Seal()` (freezes staged state, appends truncation markers to open text items, samples in-flight calls per collector as late; later calls return `ErrSealed`)
+- `func (w *Writer) Seal()` (freezes staged state, appends truncation markers to open text items, samples in-flight calls per collector as late; freezes the `Exclude` counts, which the runner copies into `Manifest.Excluded` at finalization; later calls return `ErrSealed`)
 - `func (w *Writer) Finalize(order []string, m Manifest) error` (commits in `order` then path, applies the budget, writes footers within their caps, closes, removes the spool; on error `Abort`; no timer)
 - `func (w *Writer) Items() []Item`; `func (w *Writer) Late() map[string]int`
 - [ ] `TestWriterCorpusReplay` (archive boundary): every `bundletest.Corpus` row that is a Sink input, through the matching Sink method or `Error`; `Extract` + `AssertNoCanary` over all members and names, footers included. Flag recording, registry resolution and transport denials are gated in Tasks 4.2.5 and 4.3.x.
@@ -214,7 +214,7 @@ Each task builds and passes on its own; no task consumes a type a later task int
 **Files:** create `internal/bundle/{guard.go,inventory.go}`, `internal/app/bundle_scope.go`, tests.
 **Interfaces (produces):**
 - `func Guard(cfg *rest.Config) *rest.Config` (copy with a `WrapTransport` that refuses core `secrets`/`configmaps` with `ErrForbiddenKind`, unsent; for a pods/proxy 502/503 it first reads at most 4 KiB of the body for `connect: connection refused` and records the `kgwctl.kgateway.dev/ConnectionRefused` cause; then it replaces each non-2xx body with a canonical `metav1.Status` holding only code, reason and that cause; the body is never stored)
-- `type GatewaySet map[types.NamespacedName]string` (kept Gateway → owning install ID; the inventory takes proxies only of these)
+- `type GatewaySet map[types.NamespacedName]string` (kept Gateway → owning install ID, `""` when ambiguous or unowned; the inventory captures proxies of every key)
 - `func resolveScope(f *Flags, explicitNamespace bool, res *load.Result) (bundle.Scope, GatewaySet, func(*unstructured.Unstructured) bundle.ExcludeReason, []string /* warnings */, error)`
 - The keep function resolves each object's `kinds.Served` from `res.Served` by GVK, and calls `view.Filter.Visible` with a `view.Scope{AllNamespaces: true, Install: f.Install}`, so the filter checks ownership only; the bundle bounds namespaces. Scope comes from `res.Model.Installs[i].Resolved.Scope`; no `install.Resolve` call. A namespaced object passes scope when any selected install's `Scope.Contains` accepts its namespace (design §3.2); `view.Filter` is used unchanged.
 - `type ControllerSelector struct{ Install bundle.Install; Selector labels.Selector }`
