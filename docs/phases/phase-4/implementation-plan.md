@@ -195,6 +195,7 @@ Each task builds and passes on its own; no task consumes a type a later task int
 ## Sub-phase 4.2 — Command, scope, transport, cluster state
 
 ### Task 4.2.1: Command, flags, destination, exit codes
+- [ ] (review 4.1 P4-1) Pass the fixed `<apiserver>` placeholder as the manifest server; never the real host.
 **Files:** create `internal/app/bundle.go`, `internal/app/bundle_test.go`; modify `internal/app/root.go`, `internal/app/export_test.go`.
 **Interfaces (produces):**
 - `type bundleTestHooks struct{ Now func() time.Time; Check checkTestHooks }` (later tasks add fields)
@@ -252,6 +253,7 @@ Each task builds and passes on its own; no task consumes a type a later task int
 - [ ] Commit `feat(proxydump): allowlisted admin operations`.
 
 ### Task 4.2.4: Resources, workloads, install
+- [ ] (review 4.1 P4-1) An object name up to 253 bytes plus `.yaml` exceeds the 255-byte component limit: settle a bounded, collision-safe file name (e.g. truncated name plus a short hash of the full name) before wiring this collector.
 **Files:** create `internal/bundle/collect/{resources.go,workloads.go,install.go}`, tests.
 **Interfaces (produces):** `func Resources(reg *extension.Registry) bundle.Collector`; `func Workloads() bundle.Collector`; `func Install() bundle.Collector`.
 - [ ] `resources`: Gateway API kinds, every served kind with category `kgateway`, registry kinds; per scope namespace or cluster-wide; only objects `Env.Keep` accepts; each left-out object goes to `Sink.Exclude`; `Path{"resources", group|Core, kind, ns|Cluster, File(name, YAML)}`.
@@ -281,6 +283,8 @@ Each task builds and passes on its own; no task consumes a type a later task int
 ## Sub-phase 4.3 — Logs, metrics, Envoy
 
 ### Task 4.3.1: Logs
+- [ ] (review 4.1 P4-2, settle before this task) `Sink.Text` must attach the post-capture identity (`changed`, `gone`, `reread-failed`) to the item it wrote, and the Sink must express intentional outcomes (`skipped: not running`, `disabled`) without a failure. Decide the contract change (e.g. a returned item handle or an outcome method) and record it in decisions.md first.
+- [ ] (review 4.1 P3-3) `pem-tail` finding only when its opening line was kept; a block open at the seal still reports it.
 **Files:** create `internal/bundle/collect/logs.go`, tests; modify `internal/app/bundle.go` (hooks gain `Logs collect.LogSource`).
 **Interfaces (produces):**
 - `type LogSource interface{ Stream(ctx context.Context, pod types.NamespacedName, opts *corev1.PodLogOptions) (io.ReadCloser, error) }`
