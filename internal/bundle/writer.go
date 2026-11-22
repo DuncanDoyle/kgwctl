@@ -883,3 +883,17 @@ func (s *sink) Exclude(gk schema.GroupKind, reason pb.ExcludeReason) error {
 	s.w.excl[Exclusion{Kind: group + "/" + gk.Kind, Reason: reason}]++
 	return nil
 }
+
+// Degraded returns the collectors with at least one staged item that is
+// neither ok nor skipped.
+func (w *Writer) Degraded() map[string]bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	out := map[string]bool{}
+	for _, r := range w.records {
+		if s := r.item.Status; s != pb.ItemOK && s != pb.ItemSkipped {
+			out[r.collector] = true
+		}
+	}
+	return out
+}
