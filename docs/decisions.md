@@ -174,7 +174,7 @@ A link is `verified` only when one of these sources states it for the objects sh
 **Alternatives:** Snellius's policy model as the effective view (E7 as written): rejected as authoritative, because it re-derives controller rules. It is still usable as an inferred link if marked so.
 **Consequences:** Supersedes D-003's "effective policy from the shared libraries": libraries may provide relations and naming, never semantics. E7 is redefined in the program file (P-008): declared policies, controller-reported attachment, and a route's `merge.*` policy IDs, from the Snellius Phase 8 declared-policy model and xdsview `origin.Policies` (E5, E13). Listener, RouteConfiguration and virtual-host metadata have no provider yet. Anything beyond controller-reported evidence stays out of scope. The deferred `proxy diff` (generic intended-versus-accepted) is dropped from the roadmap. A data-plane convergence candidate takes its place: it reads the raw per-replica evidence the support bundle keeps, and gives a stale-config verdict only with comparable controller evidence.
 
-## D-025 — Envoy admin reads are an allowlist of operations (2026-11-22, phase 4) — proposed, pending owner approval
+## D-025 — Envoy admin reads are an allowlist of operations (2026-11-22, phase 4) — accepted by the owner 2026-11-22
 **Context:** D-021 limits port-forward to one `GET /config_dump`. The support bundle also needs the config dump with endpoints, `/stats` (text readouts such as `version_text`), `/server_info`, `/certs` and `/clusters`.
 **Decision:** `proxydump` sends only fixed operations. Each binds port, method, path and exact query; callers pick one by constant, and no API takes a path:
 
@@ -191,7 +191,7 @@ An unknown operation fails before a stream opens, and redirects are refused. `pr
 **Alternatives:** One path per command, as D-021 has it — the bundle would need its own transport. A path allowlist without the query — cannot express `include_eds`. Any GET — opens admin endpoints whose output nobody reviewed.
 **Consequences:** The `pods/portforward` grant and its warning are unchanged. A new operation needs a decision entry.
 
-## D-026 — Redaction is a mandatory stage of the bundle writer (2026-11-22, phase 4) — proposed, pending owner approval
+## D-026 — Redaction is a mandatory stage of the bundle writer (2026-11-22, phase 4) — accepted by the owner 2026-11-22
 **Context:** A bundle leaves the customer's trust boundary. Envoy redacts only fields it marks sensitive. Header values (including values kgateway resolves from a Secret), ext-auth `headers_to_add`, `initial_metadata`, inline JWKS, Lua code, transformation templates and `last-applied-configuration` carry secrets past it.
 **Decision:** Collectors hand typed content to the writer, which runs the redactor for that type and refuses undeclared types.
 - Every header value in header-mutation structures, header modifiers, ext-auth `headersToAdd`, tunnel headers and `initialMetadata` is redacted, whatever the header's name. Names are kept.

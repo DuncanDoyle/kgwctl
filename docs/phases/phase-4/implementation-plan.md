@@ -8,7 +8,7 @@
 
 **Tech Stack:** Go 1.26, cobra, client-go v0.36.x, `archive/tar`, `compress/gzip`, `prometheus/common/expfmt` (already in the graph), Snellius v0.8.2, xdsview v0.4.3. No new modules.
 
-**Spec:** [`design.md`](design.md) (r5). Read it first. §n refers to it.
+**Spec:** [`design.md`](design.md) (r6). Read it first. §n refers to it.
 
 ## Global Constraints
 
@@ -24,6 +24,7 @@
 - Output `kgwctl-bundle-<UTC ts>.tar.gz`: `O_CREATE|O_EXCL`, `0600`, removed on fatal failure; regular entries only, `0644` inside. No context name in any file or member name.
 - Deadlines: `--timeout` (default `5m`) for collection; `--request-timeout` (default 30s) per item; Ctrl-C acts as the deadline.
 - Scope: default all namespaces; `-n` narrows resources, workloads, Events, logs and proxies (§3.2).
+- Ownership and discovery scope on by default (§3.2): `view.Filter` plus each install's Snellius `install.Scope`; routes owned through spec `parentRefs`; `ScopeUnknown` filters nothing and is recorded `unknown`; cluster-scoped kinds never scope-filtered; `--all-controllers` turns both off. No second implementation of the ownership rules.
 - Logs: one `T0`; `SinceTime`, `Timestamps: true`, `TailLines`, `LimitBytes` = cap + 64 KiB; local cap; `.previous` only when `restartCount > 0`; init containers included.
 - Workers: 8. Commit order: collector registration order, then path.
 - Exit codes: 0 when a bundle is written (also partial), 2 when none is (§3.1).
@@ -41,6 +42,7 @@
 5. **A Gateway with a 63+ character name and 3 replicas, one CrashLooping, one replaced mid-run.** Expects attribution by annotation, one replica with `.previous` logs and `failed` admin items, and `identity: changed` on the replaced one. Tasks 4.2.2, 4.3.3.
 6. **`-n team-a`.** Expects the exact §3.2 request set, with bootstrap's cluster-wide lists and watches allowed; no `team-b` resource or workload member. Tasks 4.2.4, 4.3.4.
 7. **The output exists, or the destination fails mid-write.** Expects exit 2; an existing file untouched; a failed file removed. Tasks 4.1.4, 4.2.1.
+8. **A second Gateway API controller, and a discovery selector that excludes `team-b`.** Expects no foreign GatewayClass, Gateway, route or workload member; `team-b` named in the manifest with its route to a kgateway Gateway listed as unwatched; all present with `--all-controllers`. Tasks 4.2.2, 4.2.4.
 
 ## Test harness
 
@@ -83,9 +85,10 @@ Each task builds and passes on its own; no task consumes a type a later task int
 - `type Source struct{ Namespace, Pod string; UID types.UID; Container string; Operation Op; Identity CaptureIdentity }` (every Sink method, `Error` included, takes a `Source`)
 - `type Sink interface { Object(p Path, u *unstructured.Unstructured, src Source) error; ConfigDump(p Path, r io.Reader, src Source) error; JSON(p Path, r io.Reader, src Source) error; Prometheus(p Path, r io.Reader, src Source) error; Text(p Path, r io.Reader, src Source) error; Error(item Path, src Source, err error) }`
 - `type Collector interface { Name() string; Collect(ctx context.Context, env Env, s Sink) error }`
-- `type Env struct{ Kube kubernetes.Interface; Dynamic dynamic.Interface; Discovery discovery.DiscoveryInterface; Scope Scope; Window Window; Replicas []Replica; Now func() time.Time; RequestTimeout time.Duration }` (clients are guarded)
-- `type Scope struct{ Namespace string /* "": all */; Installs []Install; AllControllers bool }`; `func (s Scope) Namespaces() []string` (nil for all; else the namespace plus install namespaces)
-- `type Install struct{ Namespace, Deployment, Chosen string /* "flag"|"detected" */; MetricsPort int32 }`
+- `type Env struct{ Kube kubernetes.Interface; Dynamic dynamic.Interface; Discovery discovery.DiscoveryInterface; Scope Scope; Window Window; Replicas []Replica; Now func() time.Time; RequestTimeout time.Duration; Keep func(obj *unstructured.Unstructured) bool }` (clients are guarded; `Keep` is the §3.2 ownership and scope filter, always true with `AllControllers`)
+- `type Scope struct{ Namespace string /* "": all */; Installs []Install; AllControllers bool; WorkloadNamespaces []string /* nil: all */ }`; `func (s Scope) Namespaces() []string` (nil for all; else the namespace plus install namespaces)
+- `type Install struct{ Namespace, Deployment, Chosen string /* "flag"|"detected" */; MetricsPort int32; Discovery DiscoveryScope }`
+- `type DiscoveryScope struct{ Mode string /* "all"|"selectors"|"unknown" */; Selectors []string /* as read */; Source, Reason string; Unwatched []string /* namespace names */; UnwatchedRoutes []string /* "<ns>/<name>" */ }`
 - `type Window struct{ Start, Since time.Time; Tail int64 }`
 - `type Role string` (`RoleController`, `RoleProxy`); `type Identity string` (`IdentityAnnotation`, `IdentitySelector`, `IdentityUnverified`); `type Container struct{ Name string; Init bool; Restarts int32 }`
 - `type Replica struct{ Namespace, Pod string; UID types.UID; Role Role; Owner string; Identity Identity; Ready, Terminating bool; Phase corev1.PodPhase; Containers []Container; StartTime time.Time; MetricsPort int32; MetricsPortDeclared bool }`
@@ -217,6 +220,7 @@ Each task builds and passes on its own; no task consumes a type a later task int
 - [ ] `TestGuardRefuses` (HTTP boundary): list, get and watch on `secrets` and `configmaps`, namespaced and cluster-wide → error, zero requests at the server; `pods` passes.
 - [ ] `TestGuardSanitizesBodies` (HTTP boundary): a 403 and a 500 with pattern-free canary bodies → client-go errors carry code and reason, no canary; a pods/proxy 503 whose body says `connection refused` keeps the refused cause and loses the body; a 5 KiB body with the phrase past 4 KiB is not marked.
 - [ ] `TestResolveScope`: no `-n` → all; `-A` → all; `-n team-a` → `team-a` plus install namespaces; two installs → both `detected`, one warning; unknown ownership with installs → all, warning; `--install x/y` undetected → exit 2; none → controller collectors `skipped: no install`.
+- [ ] `TestResolveDiscoveryScope`: `resolveScope` also returns `keep func(*unstructured.Unstructured) bool`, built from `view.NewFilter` (same `view.Scope` as `get`) and each install's scope from the Snellius engine model, or `install.Resolve(insts, kgateway.Scope())` where the model lacks it. Selector `[{matchLabels: {team: a}}]` → mode `selectors`, `team-b` in `Unwatched`, a `team-b` HTTPRoute parented to a kept Gateway in `UnwatchedRoutes`, `keep` false for `team-b` objects and true for GatewayClasses; empty value → `all`; an `envFrom`-only controller → `unknown` with a reason, `keep` true for every namespace; another controller's GatewayClass and Gateway → `keep` false; `AllControllers` → `keep` always true, scope still recorded. `WorkloadNamespaces` = install, replica, kept-resource and kept-route `backendRefs` namespaces.
 - [ ] `TestInventoryFullName`: a 70-character Gateway with three Pods (shortened label, full-name annotation) → three replicas, `IdentityAnnotation`; a Pod with the same label and another annotation excluded.
 - [ ] `TestInventoryUnverified`: a Pod with the gateway label and no annotation → `IdentityUnverified`, an error line, and no `replicasets` request in `Proxy.Requests()`.
 - [ ] `TestInventoryStates`: not-ready, terminating, Pending and restarted Pods kept with state and per-container restarts, init included.
@@ -244,11 +248,12 @@ Each task builds and passes on its own; no task consumes a type a later task int
 ### Task 4.2.4: Resources, workloads, install
 **Files:** create `internal/bundle/collect/{resources.go,workloads.go,install.go}`, tests.
 **Interfaces (produces):** `func Resources(reg *extension.Registry) bundle.Collector`; `func Workloads() bundle.Collector`; `func Install() bundle.Collector`.
-- [ ] `resources`: Gateway API kinds, every served kind with category `kgateway`, registry kinds; per scope namespace or cluster-wide; `Path{"resources", group|Core, kind, ns|Cluster, File(name, YAML)}`.
-- [ ] `workloads`: Deployments, Pods, Services in scope; Events after `Window.Since` by the latest of `lastTimestamp`, `eventTime`, `series.lastObservedTime`.
+- [ ] `resources`: Gateway API kinds, every served kind with category `kgateway`, registry kinds; per scope namespace or cluster-wide; only objects `Env.Keep` accepts; per-kind counts of left-out objects go to the manifest; `Path{"resources", group|Core, kind, ns|Cluster, File(name, YAML)}`.
+- [ ] `workloads`: Deployments, Pods, Services in `Scope.WorkloadNamespaces` (all with `--all-controllers`); Events after `Window.Since` by the latest of `lastTimestamp`, `eventTime`, `series.lastObservedTime`.
 - [ ] `install`: each install's controller Deployment; GatewayClasses.
 - [ ] `TestClusterStateArchive` (envtest, archive boundary): canaries in `last-applied-configuration`, a TrafficPolicy `x-tenant-key` modifier, a GatewayExtension `headersToAdd` and an Event message; extracted paths as design §4; `AssertNoCanary`.
 - [ ] `TestClusterStateScope`: `-n team-a` → no `team-b` member; GatewayClass under `_cluster`.
+- [ ] `TestClusterStateOwnership` (envtest, archive boundary): a second controller's GatewayClass (`example.com/other`), its Gateway, HTTPRoute and that namespace's Deployment are absent; a selector excluding `team-b` leaves out `team-b` resources, and the manifest names `team-b` and its unwatched route; `check/check.json` has KGWUI-004 for that route; with `--all-controllers` all are present.
 - [ ] `TestEventsWindow`: an Event with an old `lastTimestamp` and a recent `series.lastObservedTime` is kept; one older on all three is left out.
 - [ ] Commit `feat(bundle): resource, workload and install collectors`.
 
@@ -277,6 +282,7 @@ Each task builds and passes on its own; no task consumes a type a later task int
 - [ ] `TestKubeLogSourceErrorBody` (HTTP boundary): a 500 with a canary body → the error has the status, not the canary.
 - [ ] `TestLogsReread`: a stream from a Pod that stays → no identity error line; a Pod deleted after its stream → an error line whose `Source.Identity` is `gone` (design §12, call 13).
 - [ ] `TestLogsPerReplica`: every inventory container incl. init; `.previous.log` only when `Restarts > 0`.
+- [ ] `TestBundleSkipLogs` (command): `--skip logs` → no `logs/` member, collector `skipped` with reason `flag`, no `errors.txt` line, no `pods/log` request in `Proxy.Requests()`.
 - [ ] `TestLogsCancelMidStream` (archive boundary): a stream cut by the seal keeps complete lines and a truncation line, an open PEM block redacted; collector `timeout`.
 - [ ] Commit `feat(bundle): log collector`.
 
