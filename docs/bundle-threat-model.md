@@ -58,10 +58,10 @@ Each Sink method takes one content type, and the writer runs that type's redacto
 
 | Content type | Used for | Rules, in order |
 |---|---|---|
-| `object` | resources, workloads, Events, install | Refuse Secret and ConfigMap. Drop `metadata.managedFields` and the `last-applied-configuration` annotation. Header-value rule, JWKS rule, per-kind field rules, key-name rule, header-pair rule, then the pattern pass on every other string. |
+| `object` | resources, workloads, Events, install | Refuse Secret and ConfigMap. Each member of a List gets its own kind's rules. Drop `metadata.managedFields` and the `last-applied-configuration` annotation. Header-value rule, JWKS rule, per-kind field rules, key-name rule, header-pair rule, then the pattern pass on every other string. |
 | `config-dump` | Envoy `/config_dump` | Keep Envoy's own `[redacted]`. Header-value rule. Lua `inline_code` and `source_codes` redacted. JWKS rule under `local_jwks`. Every other `inline_string` and `inline_bytes` redacted. A JSON `StringValue`, such as dynamic-module config, is parsed and redacted inside. Then key-name rule, header-pair rule and pattern pass. |
 | `json` | `version.json`, `check.json`, `server_info.json`, `certs.json` | Key-name rule, header-pair rule, pattern pass. Invalid JSON is dropped with an error. |
-| `prometheus` | metrics | Must parse as Prometheus text exposition, or it is dropped with an error. Pattern pass on label values, `HELP` text and comments. Metric names, label names and samples stay. |
+| `prometheus` | metrics | Must parse as Prometheus text exposition, or it is dropped with an error. Pattern pass on label values, `HELP` text and comments, read with the parser's grammar (leading blanks and tabs included). Metric names, label names and samples stay. The output is parsed again; if that fails, it is dropped. |
 | `text` | logs, `stats.txt`, `clusters.txt` | Open PEM private-key blocks, the debug header-line rule, then the pattern pass, line by line. A kubelet timestamp prefix is kept. |
 
 The rules:
@@ -70,24 +70,24 @@ The rules:
   - Envoy: `value` and `raw_value` under `request_headers_to_add`, `response_headers_to_add`, `headers_to_add` (including ext_authz `authorization_request`), `mutations`, `request_mutations`, `response_mutations` and `initial_metadata`.
   - Objects: values under any `*HeaderModifier` field and `headerModifiers` (HTTPRoute, GRPCRoute, TrafficPolicy), `initialMetadata`, `headers` under `tunnel` (BackendConfigPolicy) and in ListenerPolicy, and every value of an ext-auth `headersToAdd` map (GatewayExtension).
 - **Debug header-line rule.** In Envoy's `'<name>', '<value>'` debug lines, every value is redacted except for `:authority`, `:method`, `:scheme`, `:status`, `:path`, `content-type`, `content-length`, `user-agent`, `x-request-id` and `x-envoy-*`. Kept values still get the pattern pass. A `--redact-header` name is redacted even when it is on that list.
-- **JWKS rule.** Applies to Envoy `local_jwks` inline sources (`inline_bytes` is base64-decoded first) and GatewayExtension `jwks.local.inline`. The value is rebuilt as `{"keys":[...]}` from a public projection per `kty`: RSA `n`, `e`; EC `crv`, `x`, `y`; OKP `crv`, `x`; plus `kid`, `alg`, `use`, `key_ops`, `x5c`, `x5t`, `x5t#S256`. Any other shape, member type or `kty` redacts the whole value.
+- **JWKS rule.** Applies to Envoy `local_jwks` inline sources (`inline_bytes` is base64-decoded first) and GatewayExtension `jwks.local.inline`. The value is rebuilt as `{"keys":[...]}` from a public projection per `kty`: RSA `n`, `e`; EC `crv`, `x`, `y`; OKP `crv`, `x`; plus `kid`, `alg`, `use`, `key_ops`, `x5c`, `x5t`, `x5t#S256`. Any other shape, member type (`null` included) or `kty` redacts the whole value.
 - **Per-kind field rules.** `basicAuth.users` keeps each user name and redacts the hash. `env[].value` is redacted unless the name starts with `KGW_` or is a fixed runtime name such as `LOG_LEVEL`, `POD_NAME` or `GOMAXPROCS`. A DirectResponse `spec.body` is redacted.
-- **Key-name rule.** A value is redacted when its key ends in a credential word after lowercasing and dropping `_`, `-` and `.`: `password`, `passwd`, `secret`, `token`, `apikey`, `credential`, `privatekey`, `accesskey`, `secretkey`, `signature`, `licensekey`, or a plural. Every scalar below such a key is redacted too, except reference members such as `name`, `namespace`, `kind` and `*Name`.
+- **Key-name rule.** A value is redacted when its key ends in a credential word after lowercasing and dropping `_`, `-` and `.`: `password`, `passwd`, `secret`, `token`, `apikey`, `credential`, `privatekey`, `accesskey`, `secretkey`, `signature`, `licensekey`, or a plural. Every string, number and boolean below such a key is redacted too, except reference members such as `name`, `namespace`, `kind` and `*Name`. Token-bucket fields (`max_tokens`, `tokens_per_fill`, `fill_interval`) are kept.
 - **Header-pair rule.** In a `{name|key, value}` object, the value is redacted when the name is `authorization`, `proxy-authorization`, `cookie`, `set-cookie`, `x-api-key`, `api-key`, `x-auth-token`, `x-amz-security-token`, a key-name match, or a `--redact-header` name. Envoy header matcher values (`exact_match`, `prefix_match`, `string_match` and others) count as values.
 - **Pattern pass.** `Bearer` and `Basic` credentials, JWTs, PEM private-key blocks (also unterminated), AWS access key IDs, credential query values (`?access_token=`, `X-Amz-Signature=`, `?code=`), credential assignments in free text (`password=…`, `"apiKey":"…"`), and known key prefixes such as `sk-`, `ghp_` and `glpat-`.
 
 **Marker.** A redacted value becomes `[redacted]`. It stays a string, so a redacted file parses with the same keys. A pattern match keeps its prefix, as in `Bearer [redacted]`. There are no hashes or lengths, since low-entropy secrets could be guessed offline.
 
-**Report.** `redactions.json` lists, per file, each rule, location and count. A location is a field path with array elements as `[]`, or `line:<n>` for text. It never holds a redacted value. Keys of known map fields (`labels`, `annotations`, `data`, `headersToAdd`, `filter_metadata` and others) are shown as `[key]` (see the limits below for other maps).
+**Report.** `redactions.json` lists, per file, each rule, location and count. A location is a field path with array elements as `[]`, or `line:<n>` for text. Only a fixed set of schema field names (Kubernetes, Gateway API, kgateway and Envoy) appears literally. Every other key is shown as `[key]`, so a location never holds a map key or a redacted value.
 
 ## Errors and metadata
 
-- **Remote errors** from the Kubernetes API, `pods/proxy`, port-forward and Envoy are recorded as the HTTP status and the Kubernetes reason only, such as `403 Forbidden (Forbidden)`. Messages and response bodies never reach an error record. When the command lands, the guard also replaces every non-2xx body with a code-and-reason status before client-go or `check` builds an error string from it.
+- **Remote errors** from the Kubernetes API, `pods/proxy`, port-forward and Envoy are recorded as the HTTP status and the Kubernetes reason only, such as `403 Forbidden (Forbidden)`. Only canonical Kubernetes reasons are shown; any other reason becomes `request failed (<code>)`. Messages and response bodies never reach an error record. When the command lands, the guard also replaces every non-2xx body with a code-and-reason status before client-go or `check` builds an error string from it.
 - **Other error text**, including panic values, passes the server-address redactor and the pattern pass. It is folded to one line and cut at 512 bytes before it reaches the manifest, `errors.txt`, `run.log` or stderr. A collector panic is recovered into a `failed` status with that text. Stack traces never enter the archive.
 - **Context name.** The manifest records the kubeconfig context name through the same error text redactor. It is never part of a file or member name. The API server address is written as `<apiserver>`.
 - **`-o`.** The output path is never recorded. The archive root is `kgwctl-bundle-<UTC timestamp>`.
 - **Flags** are recorded by name. Only enum, numeric, duration and boolean flags carry a value: `-A`, `--all-controllers`, `--since`, `--tail`, `--timeout`, `--request-timeout`, `--max-size` and `--no-endpoints`. `-n`, `--install`, `--skip`, `-o`, `--kubeconfig`, `--context` and `--redact-header` appear by name only. The resolved scope carries the validated namespace and install names.
-- **Paths and sources.** Path components come only from validated Kubernetes names or constants. A source name that fails validation is replaced before it reaches the manifest.
+- **Paths and sources.** A path component must be a `pkg/bundle` constant or fit Kubernetes name grammar, with an optional fixed extension. A source name that fails validation is replaced before it reaches the manifest. A capture identity or exclusion reason outside the defined values is rejected and recorded without the value.
 
 ## RBAC used
 
@@ -104,26 +104,26 @@ A `403` marks the affected items `denied`, and the run continues. A reader-only 
 
 - The output file is created with `O_CREATE|O_EXCL` and mode `0600`. kgwctl never overwrites a file. Members inside are regular files with mode `0644`.
 - Redaction runs before staging, so only redacted bytes are ever spooled. Staged bytes past the RAM budget spill to a `0600` file in a `0700` temporary directory. The spool is removed on success, cancel and failure.
-- A fatal write error closes and removes a file output.
+- A fatal write error, a footer encoding error or a panic while writing the archive closes and removes a file output.
+- Every footer is built within its cap. A manifest that does not fit even in its minimal form is replaced by a small placeholder, noted in `errors.txt`. At most 4096 failed items per collector are listed; the rest are counted.
 - No context name appears in any file or member name.
 - `-o -` writes to stdout. The user is then responsible for where the bytes go, and the spool sits in the system temporary directory.
 
 ## Trust boundary
 
-Downstream builds can register their own collectors. These are trusted in-process code with the same privileges as kgwctl. The Sink and the request guard protect against their mistakes: an untyped body, a bad path, a Secret or ConfigMap object, or a registry kind that resolves to `secrets`. They do not protect against a malicious collector, which could open its own client or write to disk directly.
+Downstream builds can register their own collectors. These are trusted in-process code with the same privileges as kgwctl. The Sink and the request guard protect against their mistakes: an untyped body, a bad path, a Secret or ConfigMap object, or a registry kind that resolves to `secrets`. They do not protect against a malicious collector, which could open its own client or write to disk directly. The path grammar cannot tell a real name from captured data that happens to fit it, so collectors must build paths from names read from the API, never from log or response content.
 
 ## Residual risks and limitations
 
 1. **Map keys stay.** Keys are kept so a file keeps its structure. A secret used as a map key stays in the output. It is shown as `[key]` in `redactions.json` but kept in the file.
-2. **`[key]` is a heuristic outside known map fields.** In a map the redactor does not know, a key that looks like a field name (a lowercase identifier) is shown literally in a `redactions.json` location. The value is still redacted.
-3. **A single JWK or a PEM public key is redacted whole.** The JWKS rule accepts only a `{"keys":[...]}` set. Other shapes lose their public members too.
-4. **Pattern redaction is best effort.** Free text and logs are caught only when a secret has a known shape or a credential-named key. Custom formats, base64-encoded or compressed content, and application log formats can pass. Unknown extension config (`TypedStruct`, `Any`, Wasm configuration) gets only the pattern pass.
-5. **Names reveal topology.** Metrics, stats and object names show namespaces, services, routes and hosts. This is on purpose.
-6. **`-n` does not bound derived artifacts.** Proxy config dumps, stats and metrics are kept whole. They can name other namespaces' routes and backends, also under `-n`. `check` reads cluster-wide.
-7. **Endpoint addresses.** The config dump with endpoints (EDS) and `clusters.txt` hold endpoint IP addresses. `--no-endpoints` drops both. Pod and Service IPs in workload objects stay.
-8. **Envoy redacts little.** Envoy `/config_dump` redacts only the fields Envoy marks sensitive. kgwctl's header-value rule covers the structures listed above. A secret in another Envoy field relies on the key-name rule and the pattern pass.
-9. **Values resolved from Secrets.** kgwctl never reads Secrets, but the controller copies Secret values into Envoy config, for example a header from a Secret reference. The structural rules catch these in the known header structures. Logs can echo them anywhere.
-10. **Over-redaction.** A `BEGIN … PRIVATE KEY` marker with no matching end redacts every later line of that log. Every scalar under a credential-named object is redacted, including values that are not secret.
+2. **A single JWK or a PEM public key is redacted whole.** The JWKS rule accepts only a `{"keys":[...]}` set. Other shapes lose their public members too.
+3. **Pattern redaction is best effort.** Free text and logs are caught only when a secret has a known shape or a credential-named key. Custom formats, base64-encoded or compressed content, and application log formats can pass. Unknown extension config (`TypedStruct`, `Any`, Wasm configuration) gets only the pattern pass.
+4. **Names reveal topology.** Metrics, stats and object names show namespaces, services, routes and hosts. This is on purpose.
+5. **`-n` does not bound derived artifacts.** Proxy config dumps, stats and metrics are kept whole. They can name other namespaces' routes and backends, also under `-n`. `check` reads cluster-wide.
+6. **Endpoint addresses.** The config dump with endpoints (EDS) and `clusters.txt` hold endpoint IP addresses. `--no-endpoints` drops both. Pod and Service IPs in workload objects stay.
+7. **Envoy redacts little.** Envoy `/config_dump` redacts only the fields Envoy marks sensitive. kgwctl's header-value rule covers the structures listed above. A secret in another Envoy field relies on the key-name rule and the pattern pass.
+8. **Values resolved from Secrets.** kgwctl never reads Secrets, but the controller copies Secret values into Envoy config, for example a header from a Secret reference. The structural rules catch these in the known header structures. Logs can echo them anywhere.
+9. **Over-redaction.** A `BEGIN … PRIVATE KEY` marker with no matching end redacts every later line of that log. Every scalar under a credential-named object is redacted, including values that are not secret.
 
 ## Advice for users
 
