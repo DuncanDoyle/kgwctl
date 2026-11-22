@@ -18,10 +18,10 @@ import (
 	"sync"
 	"time"
 
+	yamlv2 "go.yaml.in/yaml/v2"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"sigs.k8s.io/yaml"
 
 	"github.com/DuncanDoyle/kgwctl/internal/redact"
 	pb "github.com/DuncanDoyle/kgwctl/pkg/bundle"
@@ -979,14 +979,11 @@ func (s *sink) Object(p pb.Path, u *unstructured.Unstructured, src pb.Source) er
 	if err != nil {
 		return s.w.finish(c, outcome{status: pb.ItemFailed, reason: s.w.errorText(err), err: err})
 	}
-	if indentCost(obj.Object, 0, false, s.w.lim.Other) > s.w.lim.Other {
-		return s.w.finish(c, outcome{status: pb.ItemDropped, reason: ReasonSizeCap, err: fmt.Errorf("%w: %s", pb.ErrBudget, ReasonSizeCap)})
-	}
-	body, err := yaml.Marshal(obj.Object)
+	body, over, err := encodeYAML(obj.Object, s.w.lim.Other)
 	if err != nil {
 		return s.w.finish(c, outcome{status: pb.ItemFailed, reason: s.w.errorText(err), err: err})
 	}
-	if int64(len(body)) > s.w.lim.Other {
+	if over {
 		return s.w.finish(c, outcome{status: pb.ItemDropped, reason: ReasonSizeCap, err: fmt.Errorf("%w: %s", pb.ErrBudget, ReasonSizeCap)})
 	}
 	return s.w.finish(c, outcome{body: body, findings: fs})
@@ -1082,56 +1079,6 @@ func (w *Writer) degraded() map[string]bool {
 	return out
 }
 
-// indentCost is a lower bound on the indentation YAML gives v: each map
-// entry and sequence element on its own line costs its column. A map nests
-// two columns deeper; a sequence nests two deeper only inside a sequence.
-// A multi-line string is a block scalar: each line sits two columns deeper.
-// shared means v's first child shares its parent's line ("- - x"). It
-// stops past limit.
-func indentCost(v any, col int64, shared bool, limit int64) int64 {
-	var n int64
-	switch v := v.(type) {
-	case map[string]any:
-		i := 0
-		for _, e := range v {
-			if !(shared && i == 0) {
-				n += col
-			}
-			switch e := e.(type) {
-			case string:
-				n += blockCost(e, col)
-			case map[string]any:
-				n += indentCost(e, col+2, false, limit-n)
-			case []any:
-				n += indentCost(e, col, false, limit-n)
-			}
-			if n > limit {
-				return n
-			}
-			i++
-		}
-	case []any:
-		for i, e := range v {
-			if !(shared && i == 0) {
-				n += col
-			}
-			switch e := e.(type) {
-			case string:
-				n += blockCost(e, col)
-			case map[string]any, []any:
-				n += indentCost(e, col+2, true, limit-n)
-			}
-			if n > limit {
-				return n
-			}
-		}
-	}
-	return n
-}
-
-// blockCost is the indentation of s as a block scalar under column col.
-func blockCost(s string, col int64) int64 { return int64(strings.Count(s, "\n")) * (col + 2) }
-
 func (w *Writer) panicErr(r any) error {
 	return fmt.Errorf("bundle: finalize panicked: %s", redact.ErrorText(fmt.Errorf("%v", r), w.server))
 }
@@ -1149,4 +1096,33 @@ func (w *Writer) sealOrAbort() (err error) {
 	}()
 	w.Seal()
 	return nil
+}
+
+// capWriter keeps up to max bytes; a write past that fails and sets over.
+type capWriter struct {
+	b    bytes.Buffer
+	max  int64
+	over bool
+}
+
+func (c *capWriter) Write(p []byte) (int, error) {
+	if int64(c.b.Len()+len(p)) > c.max {
+		c.over = true
+		return 0, errStop
+	}
+	return c.b.Write(p)
+}
+
+// encodeYAML streams v as YAML, in sigs.k8s.io/yaml's format, and stops once
+// the output passes max; over reports that.
+func encodeYAML(v any, max int64) (body []byte, over bool, err error) {
+	cw := &capWriter{max: max}
+	enc := yamlv2.NewEncoder(cw)
+	if err = enc.Encode(v); err == nil {
+		err = enc.Close()
+	}
+	if cw.over {
+		return nil, true, nil
+	}
+	return cw.b.Bytes(), false, err
 }

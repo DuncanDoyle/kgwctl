@@ -17,6 +17,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"sigs.k8s.io/yaml"
 
 	"github.com/DuncanDoyle/kgwctl/internal/bundle/bundletest"
 	"github.com/DuncanDoyle/kgwctl/internal/redact"
@@ -485,7 +486,7 @@ func TestObjectSequenceIndentBounded(t *testing.T) {
 	n := allocated(func() {
 		err = h.w.Sink("c").Object(pb.Path{"x", "s.yaml"}, &unstructured.Unstructured{Object: obj}, pb.Source{})
 	})
-	if !errors.Is(err, pb.ErrBudget) || n > 32<<20 {
+	if !errors.Is(err, pb.ErrBudget) || n > yamlAllocBound {
 		t.Errorf("err = %v, allocated %d bytes", err, n)
 	}
 }
@@ -597,7 +598,7 @@ func TestObjectMultilineIndentBounded(t *testing.T) {
 	n := allocated(func() {
 		err = h.w.Sink("c").Object(pb.Path{"x", "s.yaml"}, &unstructured.Unstructured{Object: obj}, pb.Source{})
 	})
-	if !errors.Is(err, pb.ErrBudget) || n > 32<<20 {
+	if !errors.Is(err, pb.ErrBudget) || n > yamlAllocBound {
 		t.Errorf("err = %v, allocated %d bytes", err, n)
 	}
 }
@@ -642,5 +643,52 @@ func TestRunSealPanicAborts(t *testing.T) {
 	}
 	if d := spoolDir(t, dir); d != "" {
 		t.Errorf("spool left behind: %s", d)
+	}
+}
+
+func TestObjectYAMLStreamBounded(t *testing.T) {
+	wrap := func(leaf string) map[string]any {
+		var v any = leaf
+		for range 200 {
+			v = map[string]any{"f": v}
+		}
+		return map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"name": "s"}, "spec": v}
+	}
+	h := newHarness(t, mustLimits(t, 32<<20), redact.Options{}, "")
+	s := h.w.Sink("c")
+	// U+2028 separators: go-yaml indents each one, about 24 MB in all.
+	big := wrap("x\n" + strings.Repeat("x\u2028", 60_000) + "x")
+	var err error
+	n := allocated(func() {
+		err = s.Object(pb.Path{"x", "big.yaml"}, &unstructured.Unstructured{Object: big}, pb.Source{})
+	})
+	if !errors.Is(err, pb.ErrBudget) || n > yamlAllocBound {
+		t.Errorf("big: err = %v, allocated %d bytes", err, n)
+	}
+	// A trailing blank makes go-yaml quote the scalar: it fits.
+	small := wrap(strings.Repeat("x\n", 50_000) + "x ") // a block scalar would be 20 MB
+	if err := s.Object(pb.Path{"x", "small.yaml"}, &unstructured.Unstructured{Object: small}, pb.Source{}); err != nil {
+		t.Errorf("small: %v", err)
+	}
+}
+
+// yamlAllocBound is what a dropped object may allocate: the YAML buffer grows
+// to the 16 MiB cap (about 32 MB in all), plus the redactor's copies.
+const yamlAllocBound = 100 << 20
+
+func TestObjectYAMLFormatUnchanged(t *testing.T) {
+	for _, fx := range bundletest.Corpus(t) {
+		if fx.Method != bundletest.MethodObject || fx.ExpectError != "" {
+			continue
+		}
+		u := objectFromYAML(t, fx.Input)
+		want, err := yaml.Marshal(u.Object)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, over, err := encodeYAML(u.Object, 16<<20)
+		if err != nil || over || !bytes.Equal(got, want) {
+			t.Errorf("%s/%s: streamed YAML differs from sigs.k8s.io/yaml (err %v, over %v)", fx.Dir, fx.Name, err, over)
+		}
 	}
 }
