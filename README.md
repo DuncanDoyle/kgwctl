@@ -222,3 +222,7 @@ hack/live-check.sh verify hack/live/out/reader.kubeconfig  # the same commands w
 hack/live-check.sh routes                                  # proxy routes live and from a dump; sets enableRouteSourceMetadata, then back to false
 hack/scale/run.sh                                          # scale benchmark: 1,000 namespaces, 500 Gateways, 5,000 HTTPRoutes
 ```
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE).
