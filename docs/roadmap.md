@@ -54,8 +54,8 @@ A support engineer's first command on a cluster they troubleshoot: what is wrong
 
 One command that collects what support asks for, so nobody hand-collects it (D-010).
 - Gateway API and kgateway resources, workloads, install metadata, controller and proxy logs (including previous containers), controller metrics, and per-replica proxy config dumps, stats and metrics; `version` and `check` output.
-- One `tar.gz`; namespace, install and time-window filters.
-- No API request for Secrets or ConfigMaps, so no Helm values. No controller admin snapshots: `/snapshots/xds` holds private keys, `/snapshots/krt` can return raw ConfigMaps (D-025).
+- One `tar.gz`, cluster-wide by default; namespace, install and time-window filters.
+- No API request for Secrets or ConfigMaps, enforced on every client, so no Helm values. No controller admin snapshots: `/snapshots/xds` holds private keys, `/snapshots/krt` can return raw ConfigMaps (D-025).
 - Mandatory redaction in the archive writer, tested on the extracted archive (D-026).
 - Bundle collectors are an extension point for downstream builds (D-009).
 - Prior art: `agctl bug-report` ([agentgateway#3991](https://github.com/agentgateway/agentgateway/pull/3991)). Borrow kind discovery by CRD category (`kgateway`), partial results with an `errors.txt` under a global `--timeout`, and previous-container logs only after a restart (D-019).

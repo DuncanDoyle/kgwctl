@@ -190,15 +190,17 @@ An unknown operation fails before a stream opens, and redirects are refused. `pr
 **Consequences:** The `pods/portforward` grant and its warning are unchanged. A new operation needs a decision entry.
 
 ## D-026 — Redaction is a mandatory stage of the bundle writer (2026-11-22, phase 4) — proposed, pending owner approval
-**Context:** A bundle leaves the customer's trust boundary. Envoy redacts only fields it marks sensitive. Header values (including values kgateway resolves from a Secret), `initial_metadata`, inline JWKS, Lua code, transformation templates and `last-applied-configuration` carry secrets past it.
+**Context:** A bundle leaves the customer's trust boundary. Envoy redacts only fields it marks sensitive. Header values (including values kgateway resolves from a Secret), ext-auth `headers_to_add`, `initial_metadata`, inline JWKS, Lua code, transformation templates and `last-applied-configuration` carry secrets past it.
 **Decision:** Collectors hand typed content to the writer, which runs the redactor for that type and refuses undeclared types.
-- Every header value in header-mutation structures and header modifiers is redacted, whatever the header's name. Names are kept.
-- Inline JWKS keep only public members (`kty`, `kid`, `alg`, `use`, `key_ops`, `n`, `e`, `crv`, `x`, `y`, `x5c`, `x5t`). Every other member is redacted; an unparseable value is redacted whole.
+- Every header value in header-mutation structures, header modifiers, ext-auth `headersToAdd`, tunnel headers and `initialMetadata` is redacted, whatever the header's name. Names are kept.
+- Envoy debug header lines keep values only for an allowlist of non-secret names (`:authority`, `:method`, `:scheme`, `:status`, `content-type`, `content-length`, `user-agent`, `x-request-id`, `x-envoy-*`).
+- Inline JWKS are rebuilt as `{"keys":[...]}` from a typed public projection per `kty` (RSA `n`, `e`; EC `crv`, `x`, `y`; OKP `crv`, `x`; plus `kid`, `alg`, `use`, `key_ops`, `x5c`, `x5t`, `x5t#S256`). Any other shape or type is redacted whole.
 - Prometheus content must parse as text exposition, or it is dropped with an error. Label values and comments get the pattern pass.
-- Every error string, including panic values, is redacted before it reaches the archive or stderr. The manifest records flag values only for flags without free text.
+- Remote errors are recorded as HTTP status and Kubernetes reason/code only, never bodies. Other error text, including panic values, is redacted and cut at 512 bytes.
+- No context name in file or member names; path components only from validated Kubernetes names or constants; operation codes, not text; flag values only for enum, numeric, duration and boolean flags; map keys shown as `[key]` in redaction locations.
 - Structured rules for objects and JSON, a pattern pass for text, the marker `[redacted]`, and a `redactions.json` report without values.
-- kgwctl makes no API request for Secrets or ConfigMaps in Phase 4. Derived artifacts can still carry values the controller resolved from Secrets; the redaction above covers known structures and patterns.
+- kgwctl makes no API request for Secrets or ConfigMaps in Phase 4. A guard on every bundle-owned client refuses such requests before they are sent, and the object Sink refuses both kinds. Derived artifacts can still carry values the controller resolved from Secrets; the redaction above covers known structures and patterns.
 
-Downstream collectors are trusted in-process code. The Sink protects against their mistakes, not against malice.
+Downstream collectors are trusted in-process code. The Sink and the guard protect against their mistakes, not against malice.
 **Alternatives:** Redaction per collector — a downstream collector could skip it. Header redaction by name — misses a Secret-backed custom header. Hashing values — low-entropy secrets can be guessed offline.
 **Consequences:** Redaction is tested on the extracted archive with a canary corpus per artifact class. Its limits are documented in docs/bundle-threat-model.md and the README.
