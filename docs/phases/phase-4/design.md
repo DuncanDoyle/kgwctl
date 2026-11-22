@@ -1,6 +1,6 @@
 # Phase 4 — Support bundle: Design
 
-Status: r4, 2026-11-22. Applies the Codex review triages (`reviews/design-codex.md`, `-r2.md`, `-r3.md`). For owner approval.
+Status: r5, 2026-11-22. Applies the Codex review triages (`reviews/design-codex.md`, `-r2.md`, `-r3.md`, `-r4.md`). For owner approval.
 Roadmap: Phase 4. Decisions: D-009, D-010, D-015, D-017, D-019, D-021, D-024; D-025 and D-026 (proposed, §12).
 
 ## 1. Goal and scope
@@ -113,7 +113,7 @@ The core group is written as `core`. Member names follow §8.4. The four root fi
 - run start, seal and end times, and the finalization outcome;
 - the replica inventory (§8.2);
 - per collector: name, status (`ok`, `partial`, `failed`, `skipped`, `timeout`), duration, redacted error and a count of `late` results;
-- per item: path, size, content type, capture time, source (namespace, pod, UID, container, operation code), status (`ok`, `skipped`, `denied`, `disabled`, `failed`, `timeout`, `dropped`), identity outcome (§8.2) and redaction count.
+- per item: path, size, content type, capture time, source (namespace, pod, UID, container, operation code, identity outcome per §8.2), status (`ok`, `skipped`, `denied`, `disabled`, `failed`, `timeout`, `dropped`) and redaction count.
 
 Flags are recorded by name. Values appear only for enum, numeric, duration and boolean flags: `-A`, `--all-controllers`, `--since`, `--tail`, `--timeout`, `--request-timeout`, `--max-size`, `--no-endpoints`. All others, including `-n`, `--install`, `--skip`, `-o`, `--kubeconfig`, `--context` and `--redact-header`, appear by name only. The scope carries the validated namespace and install names.
 
@@ -134,7 +134,7 @@ Per replica, the manifest keeps pod identity, restart counts and capture times n
 | `proxy-admin` | each proxy replica's allowlisted Envoy admin operations (§6.3) | `pods/portforward` (optional Role, D-021) | on |
 
 - A 403 gives each affected item the status `denied`, and the run continues. `errors.txt` ends with grant lines, one per grant and namespace, whichever collectors hit it. A reader-only user gets resources, workloads, install, version without observed Envoy versions, and `check`.
-- Metrics use the Snellius `ctrlmetrics.PodProxyScraper` (one GET, no redirects). A transport wrapper keeps a 403 typed and never reads error bodies. Proxy metrics always try 9091. Item status: `denied` on 403; `disabled` only when the connection is refused and the Pod declares no 9091 port; `failed` otherwise.
+- Metrics use the Snellius `ctrlmetrics.PodProxyScraper` (one GET, no redirects). The guard classifies a pods/proxy 502/503 first: it reads at most 4 KiB of the body for "connection refused" and sets a typed `Refused` marker, then replaces the body (§7.1). The body is never stored. A 403 stays typed. Proxy metrics always try 9091. Item status: `denied` on 403; `disabled` only when the connection is refused and the Pod declares no 9091 port; `failed` otherwise.
 - No model is shared between collectors.
 
 ### 6.1 Secrets, ConfigMaps and Helm values
@@ -184,7 +184,7 @@ One mandatory stage sits in the archive writer. A collector hands the Sink typed
 - **Report:** `redactions.json` lists per file each rule, location and count. A location is a schema field path with every map key shown as `[key]`, or a line number. It never holds values or map keys.
 
 ### 7.1 Metadata and errors
-- **Remote errors** (Kubernetes API, pods/proxy, port-forward, Envoy) are recorded as the HTTP status and the Kubernetes reason and code only, with the operation for non-Kubernetes errors. Response bodies never reach an error. This holds for client-go's log-stream errors, the port-forward adapter's status errors in the bundle path, and the `check` collector, which sanitizes errors before the reused check path flattens them into `Input.Reason`.
+- **Remote errors** (Kubernetes API, pods/proxy, port-forward, Envoy) are recorded as the HTTP status and the Kubernetes reason and code only, with the operation for non-Kubernetes errors. Response bodies never reach an error. This holds for client-go's log-stream errors, `proxydump`'s port-forward status errors in every command (`proxy dump` keys its RBAC hint on the typed Forbidden, so its messages stay the same), and the `check` collector, which sanitizes errors before the reused check path flattens them into `Input.Reason`.
 - **Other error text**, including panic values, passes `view.Redactor` and the text pattern pass, then is cut at 512 bytes, before it reaches the manifest, `errors.txt`, `run.log` or stderr. Stack traces never enter the archive.
 - **Names:** the archive root has no context name. Path components come only from validated Kubernetes names or constants (§8.4). `Source.Operation` is an operation code. Flag values follow §5.
 
@@ -221,16 +221,16 @@ Built once, after scope resolution and before any collector. Logs, metrics, admi
   - Only Gateways whose class belongs to a selected install are kept, unless `--all-controllers` is set.
 - **Each `Replica`** holds namespace, pod, UID, role, owner (install or Gateway `<ns>/<name>`), identity (`annotation`, `selector`, `unverified`), ready, terminating, phase, containers with restart counts (init included), start time, metrics port and whether the Pod declares it.
 - Unready, terminating and restarting replicas stay in. A Pod that is not `Running` skips metrics and admin (`skipped: not running`) but still gets logs.
-- **Identity check:** after each log, metrics, version or admin capture the Pod is read again. A different UID records the item as `identity: changed`, a missing Pod as `gone`, a failed read as `reread-failed`.
+- **Identity check:** after each log, metrics, version or admin capture the Pod is read again. The outcome goes in the item's `Source.Identity`: `verified` (same UID), `changed`, `gone` or `reread-failed`.
 
 ### 8.3 Staging, budget, sealing and finalization
 - **Item caps:** logs 10 MiB, config dump 64 MiB, metrics 8 MiB, others 16 MiB. A text item over its cap is cut at a line boundary (§3). A structured item over its cap is dropped with an error.
 - **Staging:** items are redacted before staging. A structured item is staged once complete; a text item line by line, so a cut or sealed stream keeps its complete lines. The writer, not the collector, appends truncation markers.
 - **Spool:** staged bytes use a fixed 64 MiB RAM budget. Past it, the already-redacted bytes spill to a `0600` file in a `0700` temp directory. Spool and index are bounded by `--max-size`; an item past that bound is `dropped: staging`, the one timing-dependent drop. The spool is removed on success, cancel and failure.
-- **Commit and budget:** one writer goroutine owns the tar and gzip streams. Items commit in a fixed order: collector registration order, then path. `--max-size` (minimum `32Mi`) is applied in that order, so the kept set does not depend on timing. Items past it are `dropped: size budget`.
-- **Footers** have caps that sum to at most a quarter of `--max-size`: at the default, `manifest.json` 4 MiB, `redactions.json` 4 MiB, `errors.txt` 1 MiB, `run.log` 1 MiB, scaled down for smaller sizes. Every manifest list (items, replicas, collectors) is bounded and records an omitted count. A text footer is cut with a marker.
+- **Commit and budget:** one writer goroutine owns the tar and gzip streams. Items commit in a fixed order: collector registration order, then path. `--max-size` (minimum `32Mi`) covers items and footers together: items get `--max-size` minus the footer reserve, applied in that order, so the kept set does not depend on timing. Items past it are `dropped: size budget`.
+- **Footers** have a reserve inside `--max-size`, the sum of their caps, at most a quarter of `--max-size`: at the default, `manifest.json` 4 MiB, `redactions.json` 4 MiB, `errors.txt` 1 MiB, `run.log` 1 MiB, scaled down for smaller sizes. Every manifest list (items, replicas, collectors) is bounded and records an omitted count. A text footer is cut with a marker.
 - **Seal:** at the collection deadline the run context is cancelled and all staged state is frozen. Sink calls still in flight at that moment are counted per collector as `late`; their results are not written. Collectors still running are `timeout`.
-- **Finalization:** the deadline guarantee covers collection. Finalization is not cancellable; it is bounded by sizes, since it writes at most `--max-size` plus footers. A stalled stdout reader can still hold the process; this is documented.
+- **Finalization:** the deadline guarantee covers collection. Finalization is not cancellable; it is bounded by sizes, since it writes at most `--max-size` in total. A stalled stdout reader can still hold the process; this is documented.
 - **Failure:** a tar, gzip, write or close error is fatal: exit 2. A file output is closed and removed. `Run` returns the commit error.
 - **Panics** in a collector are recovered into `failed` with the redacted panic value.
 
@@ -270,7 +270,7 @@ Boundaries: redaction is proven on the extracted archive written by the producti
   20. a Secret and a ConfigMap handed to `Object`, and a downstream kind resolving to `secrets`;
   21. a downstream collector writing an undeclared type.
 
-  Corpus tests run each redactor. The full corpus is also replayed through the production writer; the extracted archive is scanned in every member and member name, including the footers: raw bytes, base64-decoded strings and gzip members. Extraction fails on a duplicate header. `redactions.json` must name each location. Negative cases keep names, hostnames, header names, JWKS public members and cert SANs, and every redacted file re-parses with the same keys.
+  Corpus tests run each redactor. Every row that is a Sink input is also replayed through the production writer (4.1.4); flag recording, registry resolution and transport denials are gated where the command and adapters exist (4.2.5, 4.3.x). In both, the extracted archive is scanned in every member and member name, including the footers: raw bytes, base64-decoded strings and gzip members. Extraction fails on a duplicate header. `redactions.json` must name each location. Negative cases keep names, hostnames, header names, JWKS public members and cert SANs, and every redacted file re-parses with the same keys.
 - **Writer and runner:** budget order; footer caps at `32Mi` and the default; bounded manifest lists; spool permissions and removal on success, cancel and failure; in-flight calls at the seal counted as `late`; writer-appended truncation markers; duplicate paths across collectors and a reserved name; a failing destination removed with exit 2; `O_EXCL` and `0600`. No test asserts a finalization timeout, since finalization is bounded by size only.
 - **Transport:** at the HTTP level, the log query, the metrics route `pods/http:<pod>:<port>/proxy/metrics`, redirect refusal, a typed 403 and the guard refusing `secrets` and `configmaps`. At the SPDY level, each operation's GET target, redirect refusal with a response-configurable fixture, and cancelling an established capture through a CONNECT or SOCKS5 proxy (Phase 3 carry-over).
 - **Command:** envtest with fixtures and the real log, scraper and port-forward adapters behind testenv proxy rules. One success, one denied and one timed-out item give exit 0 and matching statuses, and each denial rule is hit. Two collectors denied `pods/portforward` in one namespace give two `denied` items and one grant line. Once the command is wired, the full metadata canaries, a registry kind resolving to `secrets`, and the exact request set of a namespaced run are asserted there.
@@ -302,9 +302,10 @@ Where a triage ruling left room, the design takes the safer reading:
 4. A text item stages line by line, so a stream cut by the seal keeps its complete lines (r3).
 5. Label-only proxy Pods are always `unverified`. kgwctl never reads ReplicaSets, even when RBAC would allow it (r4, row 2).
 6. The spool lives in a temp directory beside the output file, or in the system temp directory for `-o -` (r4, row 3).
-7. Footer caps scale by `min(1, (--max-size / 4) / 10 MiB)`. A `--max-size` below `32Mi` is a usage error, exit 2 (r4, row 3).
+7. Footer caps scale by `min(1, (--max-size / 4) / 10 MiB)`, and their sum is the reserve taken out of `--max-size`. A `--max-size` below `32Mi` is a usage error, exit 2 (r4, r5).
 8. "Late counters sampled at seal" means Sink calls in flight at the seal, per collector; nothing later changes the count (r4, row 3).
 9. Grant lines name the grant, namespace and Role to add, and follow the item lines in `errors.txt` (r4, row 6).
 10. The guard on every client replaces non-2xx bodies with a code-and-reason `Status` before client-go or Snellius flattens them. That is how `check` and load errors are sanitized (r4, row 1).
-11. "Connection refused" is read from the first 4 KiB of a pods/proxy 502/503 body. The body is never stored (r4, row 5).
+11. The guard's `Refused` marker is a fixed cause type in the canonical `Status` it writes (`kgwctl.kgateway.dev/ConnectionRefused`), which the scraper reads back as `HTTPStatusError.Refused` (r5).
 12. The full metadata canaries and the registry-alias test run in the task that wires `check` (4.2.5). The exact request set runs once all collectors exist (4.3.4) (r4, row 4).
+13. For a streamed log, the re-read runs after `Sink.Text` returns. An outcome other than `verified` is recorded through `Sink.Error` with that `Source` (r5).

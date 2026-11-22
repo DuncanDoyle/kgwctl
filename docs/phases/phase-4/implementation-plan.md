@@ -8,17 +8,17 @@
 
 **Tech Stack:** Go 1.26, cobra, client-go v0.36.x, `archive/tar`, `compress/gzip`, `prometheus/common/expfmt` (already in the graph), Snellius v0.8.2, xdsview v0.4.3. No new modules.
 
-**Spec:** [`design.md`](design.md) (r4). Read it first. §n refers to it.
+**Spec:** [`design.md`](design.md) (r5). Read it first. §n refers to it.
 
 ## Global Constraints
 
-- Every bundle-owned client is built from one `rest.Config` wrapped by the request guard: no request for core `secrets` or `configmaps` leaves the process (§6.1), and every non-2xx response body is replaced by a canonical `Status` with code and reason only, before client-go or Snellius turns it into an error string (§7.1).
+- Every bundle-owned client is built from one `rest.Config` wrapped by the request guard: no request for core `secrets` or `configmaps` leaves the process (§6.1), and every non-2xx response body is replaced by a canonical `Status` with code and reason only (a pods/proxy "connection refused" is classified first, from at most 4 KiB), before client-go or Snellius turns it into an error string (§7.1).
 - No controller admin request (§6.2). Envoy admin only through `proxydump.Op` (§6.3); no API takes a path.
 - Every archive member goes through a `bundle.Sink` method: `Object`, `ConfigDump`, `JSON`, `Prometheus`, `Text`. Path components come from `bundle` constructors (§8.4).
 - Header values in the §7 structures redacted whatever their name; debug header lines by allowlist; JWKS rebuilt from a typed projection; Prometheus validated (§7).
 - Remote errors: HTTP status and Kubernetes reason/code only, never bodies. Other error text: redacted and cut at 512 bytes (§7.1).
 - Marker `[redacted]`; no hashes or lengths; `redactions.json` holds rule, location (map keys as `[key]`) and count only.
-- Item caps: logs 10 MiB, config dump 64 MiB, metrics 8 MiB, others 16 MiB. `--max-size` default `512Mi`, minimum `32Mi`, applied in commit order. Footer caps at the default: manifest 4, redactions 4, errors 1, run.log 1 MiB, scaled by `min(1, (max/4)/10 MiB)`. Staging RAM 64 MiB, then a redacted spool (`0700` dir, `0600` file) bounded by `--max-size` and always removed. Finalization is bounded by size, not by a timer (§8.3).
+- Item caps: logs 10 MiB, config dump 64 MiB, metrics 8 MiB, others 16 MiB. `--max-size` default `512Mi`, minimum `32Mi`, covers items and footers; items get `--max-size` minus the footer reserve, applied in commit order. Footer caps (their sum is the reserve) at the default: manifest 4, redactions 4, errors 1, run.log 1 MiB, scaled by `min(1, (max/4)/10 MiB)`. Staging RAM 64 MiB, then a redacted spool (`0700` dir, `0600` file) bounded by `--max-size` and always removed. Finalization is bounded by size, not by a timer (§8.3).
 - Identity: label-only proxy Pods are `unverified` and not captured; every capture re-reads its Pod (`changed`, `gone`, `reread-failed`) (§8.2).
 - Grant lines in `errors.txt`: one per grant and namespace; per-item statuses stay (§6).
 - Output `kgwctl-bundle-<UTC ts>.tar.gz`: `O_CREATE|O_EXCL`, `0600`, removed on fatal failure; regular entries only, `0644` inside. No context name in any file or member name.
@@ -79,14 +79,15 @@ Each task builds and passes on its own; no task consumes a type a later task int
   - constants `Cluster = "_cluster"`, `Core = "core"` and the fixed directory and file names of design §4.
 - `func ValidatePath(p Path) error` (§8.4; reserved root names rejected; duplicates are the writer's job).
 - `type Op int` (codes for `Source.Operation`: `OpList`, `OpLog`, `OpPreviousLog`, `OpMetrics`, `OpConfigDump`, `OpConfigDumpEDS`, `OpStats`, `OpServerInfo`, `OpCerts`, `OpClusters`, `OpCheck`, `OpCustom`); `func (o Op) String() string`
-- `type Source struct{ Namespace, Pod string; UID types.UID; Container string; Operation Op }`
+- `type CaptureIdentity string` (`""` for non-Pod items, `IdentityVerified`, `IdentityChanged`, `IdentityGone`, `IdentityRereadFailed`)
+- `type Source struct{ Namespace, Pod string; UID types.UID; Container string; Operation Op; Identity CaptureIdentity }` (every Sink method, `Error` included, takes a `Source`)
 - `type Sink interface { Object(p Path, u *unstructured.Unstructured, src Source) error; ConfigDump(p Path, r io.Reader, src Source) error; JSON(p Path, r io.Reader, src Source) error; Prometheus(p Path, r io.Reader, src Source) error; Text(p Path, r io.Reader, src Source) error; Error(item Path, src Source, err error) }`
 - `type Collector interface { Name() string; Collect(ctx context.Context, env Env, s Sink) error }`
 - `type Env struct{ Kube kubernetes.Interface; Dynamic dynamic.Interface; Discovery discovery.DiscoveryInterface; Scope Scope; Window Window; Replicas []Replica; Now func() time.Time; RequestTimeout time.Duration }` (clients are guarded)
 - `type Scope struct{ Namespace string /* "": all */; Installs []Install; AllControllers bool }`; `func (s Scope) Namespaces() []string` (nil for all; else the namespace plus install namespaces)
 - `type Install struct{ Namespace, Deployment, Chosen string /* "flag"|"detected" */; MetricsPort int32 }`
 - `type Window struct{ Start, Since time.Time; Tail int64 }`
-- `type Role string` (`RoleController`, `RoleProxy`); `type Identity string` (`IdentityAnnotation`, `IdentitySelector`, `IdentityUnverified`); `type Reread string` (`""`, `RereadChanged`, `RereadGone`, `RereadFailed`); `type Container struct{ Name string; Init bool; Restarts int32 }`
+- `type Role string` (`RoleController`, `RoleProxy`); `type Identity string` (`IdentityAnnotation`, `IdentitySelector`, `IdentityUnverified`); `type Container struct{ Name string; Init bool; Restarts int32 }`
 - `type Replica struct{ Namespace, Pod string; UID types.UID; Role Role; Owner string; Identity Identity; Ready, Terminating bool; Phase corev1.PodPhase; Containers []Container; StartTime time.Time; MetricsPort int32; MetricsPortDeclared bool }`
 - `type CollectorStatus string` (`ok`, `partial`, `failed`, `skipped`, `timeout`); `type ItemStatus string` (`ok`, `skipped`, `denied`, `disabled`, `failed`, `timeout`, `dropped`)
 - `var ErrSealed, ErrBudget, ErrDuplicate, ErrInvalidPath, ErrForbiddenKind` (Sink sentinels)
@@ -105,7 +106,7 @@ Each task builds and passes on its own; no task consumes a type a later task int
 - `type BuildInfo struct{ Version, Commit, Date string }` (filled from `view.BuildInfo` by the caller; `bundle` does not import `view`)
 - `type FlagValue struct{ Name string; Value *string }` (`name`, `value`; nil value for name-only flags)
 - `type CollectorEntry struct{ Name string; Status bundle.CollectorStatus; DurationMs int64; Error string; Late int }`
-- `type Item struct{ Path string; Size int64; ContentType string; CapturedAt time.Time; Source bundle.Source; Status bundle.ItemStatus; Reason string; Identity bundle.Reread; Redactions int }`
+- `type Item struct{ Path string; Size int64; ContentType string; CapturedAt time.Time; Source bundle.Source; Status bundle.ItemStatus; Reason string; Redactions int }` (the identity outcome is `source.identity`)
 - `const ManifestKind = "BundleManifest"`; `func WriteManifest(w io.Writer, m Manifest) error` (via `print.Envelope`)
 - [ ] `TestBundleManifestDocMatchesSchema` (in `internal/bundle`, so it can import the type): the `BundleManifest` section of docs/output.md lists exactly the JSON fields and both status sets.
 - [ ] `TestManifestEnvelope`: output has `schemaVersion`, `kind: BundleManifest`, `item`; times RFC3339; empty fields omitted.
@@ -152,8 +153,8 @@ Each task builds and passes on its own; no task consumes a type a later task int
 - `func (w *Writer) Seal()` (freezes staged state, appends truncation markers to open text items, samples in-flight calls per collector as late; later calls return `ErrSealed`)
 - `func (w *Writer) Finalize(order []string, m Manifest) error` (commits in `order` then path, applies the budget, writes footers within their caps, closes, removes the spool; on error `Abort`; no timer)
 - `func (w *Writer) Items() []Item`; `func (w *Writer) Late() map[string]int`
-- [ ] `TestWriterCorpusReplay` (archive boundary): `bundletest.Corpus` through the matching Sink methods and `Error`; `Extract` + `AssertNoCanary` over all members and names, footers included.
-- [ ] `TestWriterBudgetOrder`: the same items staged in two different orders keep the same set under `MaxSize`; the rest `dropped: size budget`.
+- [ ] `TestWriterCorpusReplay` (archive boundary): every `bundletest.Corpus` row that is a Sink input, through the matching Sink method or `Error`; `Extract` + `AssertNoCanary` over all members and names, footers included. Flag recording, registry resolution and transport denials are gated in Tasks 4.2.5 and 4.3.x.
+- [ ] `TestWriterBudgetOrder`: the same items staged in two different orders keep the same set under `MaxSize` minus the footer reserve; the rest `dropped: size budget`; the whole archive's uncompressed tar content is ≤ `MaxSize`.
 - [ ] `TestWriterFooterCaps`: 100 000 items → `manifest.json` ≤ 4 MiB with `itemsOmitted` > 0; `errors.txt` ≤ 1 MiB with a marker line; at `--max-size 32Mi` the footers total ≤ 8 MiB.
 - [ ] `TestDefaultLimitsMinimum`: `31Mi` → error; `32Mi` → ok.
 - [ ] `TestSpool`: past 64 MiB RAM, bytes go to a `0600` file in a `0700` dir and contain no canary; past `MaxSize` → `dropped: staging`; the dir is gone after success, after cancel and after a failed `Finalize`.
@@ -164,7 +165,7 @@ Each task builds and passes on its own; no task consumes a type a later task int
 - [ ] `TestWriterRegularEntries`: every header `TypeReg`, mode `0644`, under the root.
 - [ ] `TestCreateFileExclusive`: existing path → error, file unchanged; new file mode `0600`.
 - [ ] `TestFinalizeFailureRemovesFile`: a `Dest` failing on write → error, file gone; stdout `Dest` → error, `Abort` no-op.
-- [ ] `TestFinalizeBoundedBySize`: `Finalize` writes at most `MaxSize` plus the footer caps of uncompressed tar content; there is no finalization timeout to test.
+- [ ] `TestFinalizeBoundedBySize`: `Finalize` writes at most `MaxSize` of uncompressed tar content, footers included; there is no finalization timeout to test.
 - [ ] Implement; pass; commit `feat(bundle): writer with staging, budget, seal and finalization`.
 
 ### Task 4.1.5: Runner
@@ -207,26 +208,27 @@ Each task builds and passes on its own; no task consumes a type a later task int
 ### Task 4.2.2: Request guard, scope and inventory
 **Files:** create `internal/bundle/{guard.go,inventory.go}`, `internal/app/bundle_scope.go`, tests.
 **Interfaces (produces):**
-- `func Guard(cfg *rest.Config) *rest.Config` (copy with a `WrapTransport` that refuses core `secrets`/`configmaps` with `ErrForbiddenKind`, unsent, and replaces each non-2xx body with a canonical `metav1.Status` holding only code and reason)
+- `func Guard(cfg *rest.Config) *rest.Config` (copy with a `WrapTransport` that refuses core `secrets`/`configmaps` with `ErrForbiddenKind`, unsent; for a pods/proxy 502/503 it first reads at most 4 KiB of the body for `connect: connection refused` and records the `kgwctl.kgateway.dev/ConnectionRefused` cause; then it replaces each non-2xx body with a canonical `metav1.Status` holding only code, reason and that cause; the body is never stored)
 - `type GatewaySet map[types.NamespacedName]string` (Gateway → owning install ID)
 - `func resolveScope(f *Flags, explicitNamespace bool, res *load.Result) (bundle.Scope, GatewaySet, []string /* warnings */, error)`
 - `type ControllerSelector struct{ Install bundle.Install; Selector labels.Selector }`
 - `func Inventory(ctx context.Context, kube kubernetes.Interface, s bundle.Scope, gws GatewaySet, ctrls []ControllerSelector) ([]bundle.Replica, []error)`
-- `func Reidentify(ctx context.Context, kube kubernetes.Interface, r bundle.Replica) bundle.Reread`
+- `func Reidentify(ctx context.Context, kube kubernetes.Interface, r bundle.Replica) bundle.CaptureIdentity`
 - [ ] `TestGuardRefuses` (HTTP boundary): list, get and watch on `secrets` and `configmaps`, namespaced and cluster-wide → error, zero requests at the server; `pods` passes.
-- [ ] `TestGuardSanitizesBodies` (HTTP boundary): a 403 and a 500 with pattern-free canary bodies → client-go errors carry code and reason, no canary.
+- [ ] `TestGuardSanitizesBodies` (HTTP boundary): a 403 and a 500 with pattern-free canary bodies → client-go errors carry code and reason, no canary; a pods/proxy 503 whose body says `connection refused` keeps the refused cause and loses the body; a 5 KiB body with the phrase past 4 KiB is not marked.
 - [ ] `TestResolveScope`: no `-n` → all; `-A` → all; `-n team-a` → `team-a` plus install namespaces; two installs → both `detected`, one warning; unknown ownership with installs → all, warning; `--install x/y` undetected → exit 2; none → controller collectors `skipped: no install`.
 - [ ] `TestInventoryFullName`: a 70-character Gateway with three Pods (shortened label, full-name annotation) → three replicas, `IdentityAnnotation`; a Pod with the same label and another annotation excluded.
 - [ ] `TestInventoryUnverified`: a Pod with the gateway label and no annotation → `IdentityUnverified`, an error line, and no `replicasets` request in `Proxy.Requests()`.
 - [ ] `TestInventoryStates`: not-ready, terminating, Pending and restarted Pods kept with state and per-container restarts, init included.
 - [ ] `TestInventoryMetricsPort`: proxy Pod with and without a 9091 declaration → `MetricsPort` 9091 and `MetricsPortDeclared` true/false; controller port from the install.
 - [ ] `TestInventoryAllControllers`: another class's Gateway excluded unless `AllControllers`; a Pod without the proxy label is never included.
-- [ ] `TestReidentify`: same UID → `""`; recreated under the same name → `changed`; deleted → `gone`; a 403 on get → `reread-failed`.
+- [ ] `TestReidentify`: same UID → `verified`; recreated under the same name → `changed`; deleted → `gone`; a 403 on get → `reread-failed`.
 - [ ] Implement design §3.2, §6.1, §8.2; pass; commit `feat(bundle): request guard, scope and replica inventory`.
 
 ### Task 4.2.3: `proxydump` operations (transport)
-**Files:** modify `internal/proxydump/fetch.go`, `fetch_test.go`, `spdy_test.go`, `portforward_test.go`.
+**Files:** modify `internal/proxydump/fetch.go`, `portforward.go`, `fetch_test.go`, `spdy_test.go`, `portforward_test.go`; `internal/app/proxy_test.go` (hint check).
 **Interfaces (produces):**
+- `statusError(resp *http.Response) error` in `portforward.go` returns an `*apierrors.StatusError` with code and reason only and never reads the body, for every command. `proxy dump` keys its RBAC hint on `apierrors.IsForbidden`, so its messages stay the same.
 - `type Op int`: `OpConfigDump`, `OpConfigDumpEDS`, `OpStats`, `OpServerInfo`, `OpCerts`, `OpClusters`; `func (o Op) String() string`; `func (o Op) Code() bundle.Op`
 - `func FetchOp(ctx context.Context, d Dialer, pod types.NamespacedName, op Op, now func() time.Time) (*Capture, error)`
 - `Fetch(ctx, d, pod, now)` = `FetchOp(ctx, d, pod, OpConfigDump, now)`; `Capture` gains `Op Op`.
@@ -234,7 +236,8 @@ Each task builds and passes on its own; no task consumes a type a later task int
 - [ ] `TestFetchOpUnknown`: `Op(99)` and `Op(-1)` fail before `Dial` (dial counter 0).
 - [ ] `TestFetchBareConfigDump`: `Fetch` sends `GET /config_dump`; existing `proxy dump` and `proxy routes` tests pass unchanged.
 - [ ] `TestFetchOpRedirect` (`newSPDYPodWith` returning 302): refused for every Op; the `Location` value is in no error.
-- [ ] `TestPortForwardStatusNoBody` (SPDY boundary): an upgrade refused with 403 and a pattern-free body → error carries code and reason only.
+- [ ] `TestPortForwardStatusNoBody` (SPDY boundary): an upgrade refused with 403 and a pattern-free body → error carries code and reason only; `apierrors.IsForbidden` holds.
+- [ ] `TestProxyDumpForbiddenHint`: `proxy dump` with a refused upgrade prints the same RBAC hint as before; the existing `proxy` tests pass unchanged.
 - [ ] `TestFetchCancelThroughProxy`: an established capture through a CONNECT proxy and through SOCKS5 ends when ctx is cancelled; tunnel and proxy connection closed (Phase 3 carry-over).
 - [ ] Commit `feat(proxydump): allowlisted admin operations`.
 
@@ -272,7 +275,7 @@ Each task builds and passes on its own; no task consumes a type a later task int
 - `func KubeLogSource(kube kubernetes.Interface) LogSource` (errors through `redact.RemoteError`); `func Logs(src LogSource) bundle.Collector`
 - [ ] `TestKubeLogSourceQuery` (HTTP boundary): `GET /api/v1/namespaces/<ns>/pods/<pod>/log` with `container`, `sinceTime` = `Window.Since` for every stream, `timestamps=true`, `tailLines`, `limitBytes`, and `previous=true` only for restarted containers.
 - [ ] `TestKubeLogSourceErrorBody` (HTTP boundary): a 500 with a canary body → the error has the status, not the canary.
-- [ ] `TestLogsReread`: a Pod deleted after its stream → items `gone`.
+- [ ] `TestLogsReread`: a stream from a Pod that stays → no identity error line; a Pod deleted after its stream → an error line whose `Source.Identity` is `gone` (design §12, call 13).
 - [ ] `TestLogsPerReplica`: every inventory container incl. init; `.previous.log` only when `Restarts > 0`.
 - [ ] `TestLogsCancelMidStream` (archive boundary): a stream cut by the seal keeps complete lines and a truncation line, an open PEM block redacted; collector `timeout`.
 - [ ] Commit `feat(bundle): log collector`.
@@ -282,7 +285,7 @@ Each task builds and passes on its own; no task consumes a type a later task int
 **Interfaces (produces):**
 - `type Scraper interface{ Scrape(ctx context.Context, pod *corev1.Pod, port int32) (io.ReadCloser, error) }`
 - `type HTTPStatusError struct{ Code int; Reason string; Refused bool }`
-- `func StatusScraper(cfg *rest.Config) (Scraper, error)` (Snellius `ctrlmetrics.PodProxyScraper` over a guarded clientset whose transport turns a non-200 into `*HTTPStatusError`; `Refused` is set when a 502/503 body's first 4 KiB contain `connect: connection refused`; the body is never stored)
+- `func StatusScraper(cfg *rest.Config) (Scraper, error)` (Snellius `ctrlmetrics.PodProxyScraper` over a guarded clientset; a non-200 becomes `*HTTPStatusError` from the guard's canonical `Status`, with `Refused` set from its `ConnectionRefused` cause)
 - `func ControllerMetrics(s Scraper) bundle.Collector`; `func ProxyMetrics(s Scraper) bundle.Collector` (always scrape `Replica.MetricsPort`; re-read after each scrape)
 - [ ] `TestStatusScraperRoute` (HTTP boundary): GET to `/api/v1/namespaces/<ns>/pods/http:<pod>:9091/proxy/metrics`; a 302 is not followed; a 403 is `*HTTPStatusError{403}`; a 503 with a refused body sets `Refused`; no body text is in any error.
 - [ ] `TestMetricsStatuses`: `ok`; `denied` (403); `disabled` only when `Refused` and `!MetricsPortDeclared`; refused with a declared port → `failed`; `skipped: not running`.
