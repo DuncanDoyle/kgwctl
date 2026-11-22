@@ -181,7 +181,7 @@ Each task builds and passes on its own; no task consumes a type a later task int
 - `func RecordFlags(fs *pflag.FlagSet) []FlagValue` (values only for the design §5 list)
 - [ ] `TestRunDeadline`: a collector blocking past the deadline → `timeout`; one finished → `ok`; manifest written.
 - [ ] `TestRunPanic`: a collector panicking with a Bearer token → `failed`; the token is in no member.
-- [ ] `TestRunSkip`: `Skip{"logs"}` → `skipped`, `Collect` never called.
+- [ ] `TestRunSkip`: `Skip{"logs"}` → `skipped` with reason `flag`, `Collect` never called, no `errors.txt` line.
 - [ ] `TestRunCommitOrder`: collectors finishing in reverse order appear in registration order.
 - [ ] `TestRunCommitError`: a failing `Dest` → `Run` returns the error.
 - [ ] `TestRunErrorCanaries` (archive boundary): canaries in a returned error, a panic, a malformed JSON body and a 2 KiB error; none in any member. The full metadata set (context, flags, `-o`) waits for the command (Task 4.2.5).

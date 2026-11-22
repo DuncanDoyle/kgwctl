@@ -24,7 +24,24 @@ Status: design
 - [ ] phase-4-complete.md written, roadmap updated, tracked items closed
 
 ## Sub-phase
-n/a
+Sub-phase: 4.1 — Contract, redaction, writer
+Kind: planned
+Base: 40a50b6
+Brief: docs/phases/phase-4/phase-4.1-brief.md
+
+### Allowed work
+Features within the approved design (r6).
+
+### Not allowed
+Design changes without a decisions.md entry and owner approval.
+
+### Queue
+- [ ] Task 4.1.1 `pkg/bundle` contract ← CURRENT
+- [ ] Task 4.1.2 Manifest schema
+- [ ] Task 4.1.3 Redactors and canary corpus
+- [ ] Task 4.1.4 Writer
+- [ ] Task 4.1.5 Runner
+- [ ] Task 4.1.6 Threat model
 
 ## Program
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
