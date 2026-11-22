@@ -20,6 +20,7 @@ const (
 	maxSelectors    = 64
 	maxExcluded     = 1024
 	maxString       = 256
+	maxKind         = 320 // group (253) + "/" + kind (63)
 	maxMinimalIDs   = 64
 	maxMinimalFlags = 32
 )
@@ -120,11 +121,29 @@ func cut(s string, n int) string {
 	return s[:n]
 }
 
+// cutEscaped shortens s until its JSON encoding, where <, > and & take six
+// bytes, is at most n bytes.
+func cutEscaped(s string, n int) string {
+	w := 0
+	for i := 0; i < len(s); i++ {
+		w++
+		if c := s[i]; c == '<' || c == '>' || c == '&' {
+			w += 5
+		}
+		if w > n {
+			return cut(s, i)
+		}
+	}
+	return s
+}
+
 // Bound limits m so that its encoding is at most max bytes (no limit when max
 // is not positive). It drops list entries in this order, recording each drop
 // in an omitted count: items, replicas, workload namespaces, unwatched
 // namespace names, selectors, installs, collectors. When that is not enough it
-// replaces m with a minimal manifest marked Truncated.
+// replaces m with a minimal manifest marked Truncated. Every field of the
+// minimal manifest is capped, so it stays under 1 MiB, below the smallest
+// manifest cap.
 func Bound(m *Manifest, max int64) {
 	capStrings(m)
 	capExcluded(m)
@@ -242,6 +261,13 @@ func capStrings(m *Manifest) {
 // capExcluded keeps Excluded within maxExcluded entries by summing the overflow
 // into one "other" entry per reason, so no count is lost.
 func capExcluded(m *Manifest) {
+	if len(m.Excluded) > 0 {
+		ex := slices.Clone(m.Excluded)
+		for i := range ex {
+			ex[i].Kind = cutEscaped(ex[i].Kind, maxKind)
+		}
+		m.Excluded = ex
+	}
 	if len(m.Excluded) <= maxExcluded {
 		return
 	}

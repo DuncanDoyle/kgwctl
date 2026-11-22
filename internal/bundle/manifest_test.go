@@ -172,7 +172,30 @@ func TestManifestBoundMinimal(t *testing.T) {
 	if len(m.Excluded) != 1 || m.Build.Version != "v1" || len(m.Build.Commit) > 256 {
 		t.Errorf("minimal fields: %v %v", m.Excluded, m.Build)
 	}
-	if n := encodedSize(t, m); n > 64<<10 {
-		t.Errorf("minimal manifest %d bytes", n)
+	if n := encodedSize(t, m); n > 1<<20 {
+		t.Errorf("minimal manifest %d bytes, want under 1 MiB", n)
+	}
+}
+
+func TestManifestBoundMinimalWorstCase(t *testing.T) {
+	m := Manifest{Context: strings.Repeat("x", 4<<20), Finalization: strings.Repeat("f", 1000)}
+	m.Build = BuildInfo{Version: strings.Repeat("<", 300), Commit: strings.Repeat("&", 300), Date: strings.Repeat(">", 300)}
+	for range 1024 {
+		m.Excluded = append(m.Excluded, Exclusion{Kind: strings.Repeat("<>&", 120), Reason: pb.ExcludeScope, Count: 1})
+	}
+	for range 64 {
+		m.Scope.Installs = append(m.Scope.Installs, pb.Install{Namespace: strings.Repeat("<", 256), Deployment: strings.Repeat("&", 256)})
+	}
+	m.Scope.Namespace = strings.Repeat(">", 256)
+	for range 32 {
+		v := strings.Repeat("<", 256)
+		m.Flags = append(m.Flags, FlagValue{Name: strings.Repeat("&", 256), Value: &v})
+	}
+	Bound(&m, 64<<10)
+	if !m.Truncated {
+		t.Fatal("expected minimal manifest")
+	}
+	if n := encodedSize(t, m); n >= 1<<20 {
+		t.Errorf("minimal manifest %d bytes, want under 1 MiB", n)
 	}
 }

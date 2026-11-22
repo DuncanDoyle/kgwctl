@@ -547,7 +547,7 @@ A breaking change to xdsview's `model` (a renamed or removed field, or a changed
 
 ## BundleManifest
 
-`manifest.json` in a support bundle is one envelope with `kind: BundleManifest`. Every list in it is bounded and has an omitted count. When the manifest still would not fit its size cap, it is replaced by a minimal one with `truncated: true`: build, flags, times, finalization, `excluded`, the omitted counts, and the scope's namespace and up to 64 installs.
+`manifest.json` in a support bundle is one envelope with `kind: BundleManifest`. Every list in it is bounded and has an omitted count. When the manifest still would not fit its size cap, it is replaced by a minimal one with `truncated: true`: build, flags, times, finalization, `excluded`, the omitted counts, and the scope's namespace and up to 64 installs. The minimal manifest is under 1 MiB, below the smallest manifest cap.
 
 ### BundleManifest
 

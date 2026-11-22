@@ -215,7 +215,7 @@ type Install struct {
 	Deployment  string         `json:"deployment"`
 	Chosen      string         `json:"chosen,omitempty"` // "flag" or "detected"
 	MetricsPort int32          `json:"metricsPort,omitempty"`
-	Discovery   DiscoveryScope `json:"discovery"`
+	Discovery   DiscoveryScope `json:"discovery,omitzero"`
 }
 
 // DiscoveryScope records which namespaces an install watches.
