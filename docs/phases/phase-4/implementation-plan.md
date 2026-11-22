@@ -42,7 +42,7 @@
 5. **A Gateway with a 63+ character name and 3 replicas, one CrashLooping, one replaced mid-run.** Expects attribution by annotation, one replica with `.previous` logs and `failed` admin items, and `identity: changed` on the replaced one. Tasks 4.2.2, 4.3.3.
 6. **`-n team-a`.** Expects the exact §3.2 request set, with bootstrap's cluster-wide lists and watches allowed; no `team-b` resource or workload member. Tasks 4.2.4, 4.3.4.
 7. **The output exists, or the destination fails mid-write.** Expects exit 2; an existing file untouched; a failed file removed. Tasks 4.1.4, 4.2.1.
-8. **A second Gateway API controller, and a discovery selector that excludes `team-b`.** Expects no foreign GatewayClass, Gateway, route or workload member; `team-b` named in the manifest with its route to a kgateway Gateway listed as unwatched; all present with `--all-controllers`. Tasks 4.2.2, 4.2.4.
+8. **A second Gateway API controller, and a discovery selector that excludes `team-b`.** Expects no foreign GatewayClass, Gateway or route, and no workloads from namespaces only the other controller uses; `team-b` named in the manifest, its route counted under `scope` and named by `check` (KGWUI-004); a route checked against its parent's install; all present with `--all-controllers`, never past `-n`. Tasks 4.2.2, 4.2.4.
 
 ## Test harness
 
@@ -85,10 +85,11 @@ Each task builds and passes on its own; no task consumes a type a later task int
 - `type Source struct{ Namespace, Pod string; UID types.UID; Container string; Operation Op; Identity CaptureIdentity }` (every Sink method, `Error` included, takes a `Source`)
 - `type Sink interface { Object(p Path, u *unstructured.Unstructured, src Source) error; ConfigDump(p Path, r io.Reader, src Source) error; JSON(p Path, r io.Reader, src Source) error; Prometheus(p Path, r io.Reader, src Source) error; Text(p Path, r io.Reader, src Source) error; Error(item Path, src Source, err error) }`
 - `type Collector interface { Name() string; Collect(ctx context.Context, env Env, s Sink) error }`
-- `type Env struct{ Kube kubernetes.Interface; Dynamic dynamic.Interface; Discovery discovery.DiscoveryInterface; Scope Scope; Window Window; Replicas []Replica; Now func() time.Time; RequestTimeout time.Duration; Keep func(obj *unstructured.Unstructured) bool }` (clients are guarded; `Keep` is the §3.2 ownership and scope filter, always true with `AllControllers`)
+- `type Env struct{ Kube kubernetes.Interface; Dynamic dynamic.Interface; Discovery discovery.DiscoveryInterface; Scope Scope; Window Window; Replicas []Replica; Now func() time.Time; RequestTimeout time.Duration; Keep func(obj *unstructured.Unstructured) ExcludeReason }` (clients are guarded; `Keep` is the §3.2 ownership and scope filter, `ExcludeNone` to keep; always `ExcludeNone` with `AllControllers`)
 - `type Scope struct{ Namespace string /* "": all */; Installs []Install; AllControllers bool; WorkloadNamespaces []string /* nil: all */ }`; `func (s Scope) Namespaces() []string` (nil for all; else the namespace plus install namespaces)
 - `type Install struct{ Namespace, Deployment, Chosen string /* "flag"|"detected" */; MetricsPort int32; Discovery DiscoveryScope }`
-- `type DiscoveryScope struct{ Mode string /* "all"|"selectors"|"unknown" */; Selectors []string /* as read */; Source, Reason string; Unwatched []string /* namespace names */; UnwatchedRoutes []string /* "<ns>/<name>" */ }`
+- `type DiscoveryScope struct{ Mode string /* "all"|"selectors"|"unknown"|"namespaces-unreadable" */; Selectors []string /* metav1.FormatLabelSelector of each parsed selector */; Source, Reason string; Unwatched []string /* namespace names, bounded */; UnwatchedOmitted int }`
+- `type ExcludeReason string` (`ExcludeNone` = "", `ExcludeOwnership`, `ExcludeScope`)
 - `type Window struct{ Start, Since time.Time; Tail int64 }`
 - `type Role string` (`RoleController`, `RoleProxy`); `type Identity string` (`IdentityAnnotation`, `IdentitySelector`, `IdentityUnverified`); `type Container struct{ Name string; Init bool; Restarts int32 }`
 - `type Replica struct{ Namespace, Pod string; UID types.UID; Role Role; Owner string; Identity Identity; Ready, Terminating bool; Phase corev1.PodPhase; Containers []Container; StartTime time.Time; MetricsPort int32; MetricsPortDeclared bool }`
@@ -103,17 +104,18 @@ Each task builds and passes on its own; no task consumes a type a later task int
 ### Task 4.1.2: Manifest schema
 **Files:** create `internal/bundle/manifest.go`, `internal/bundle/manifest_doc_test.go`; modify `docs/output.md`.
 **Interfaces (produces):**
-- `type Manifest struct{ Build BuildInfo; Context, Server string; Flags []FlagValue; Scope bundle.Scope; Window bundle.Window; Start, Sealed, End time.Time; Finalization string; Replicas []bundle.Replica; Collectors []CollectorEntry; Items []Item; ReplicasOmitted, CollectorsOmitted, ItemsOmitted int }`
-- JSON fields (camelCase, omit-empty, RFC3339): `build`, `context`, `server`, `flags`, `scope`, `window`, `start`, `sealed`, `end`, `finalization`, `replicas`, `collectors`, `items`, `replicasOmitted`, `collectorsOmitted`, `itemsOmitted`.
+- `type Manifest struct{ Build BuildInfo; Context, Server string; Flags []FlagValue; Scope bundle.Scope; Window bundle.Window; Start, Sealed, End time.Time; Finalization string; Replicas []bundle.Replica; Collectors []CollectorEntry; Items []Item; Excluded []Exclusion; ReplicasOmitted, CollectorsOmitted, ItemsOmitted int }`
+- JSON fields (camelCase, omit-empty, RFC3339): `build`, `context`, `server`, `flags`, `scope`, `window`, `start`, `sealed`, `end`, `finalization`, `replicas`, `collectors`, `items`, `excluded`, `replicasOmitted`, `collectorsOmitted`, `itemsOmitted`.
 - `func Bound(m *Manifest, max int64)` (drops list tails until the encoded manifest fits, counting each list's omissions)
 - `type BuildInfo struct{ Version, Commit, Date string }` (filled from `view.BuildInfo` by the caller; `bundle` does not import `view`)
 - `type FlagValue struct{ Name string; Value *string }` (`name`, `value`; nil value for name-only flags)
-- `type CollectorEntry struct{ Name string; Status bundle.CollectorStatus; DurationMs int64; Error string; Late int }`
+- `type CollectorEntry struct{ Name string; Status bundle.CollectorStatus; Reason string /* e.g. "flag", "no install" */; DurationMs int64; Error string; Late int }`
+- `type Exclusion struct{ Kind string /* group/kind */; Reason bundle.ExcludeReason; Count int }` (`kind`, `reason`, `count`)
 - `type Item struct{ Path string; Size int64; ContentType string; CapturedAt time.Time; Source bundle.Source; Status bundle.ItemStatus; Reason string; Redactions int }` (the identity outcome is `source.identity`)
 - `const ManifestKind = "BundleManifest"`; `func WriteManifest(w io.Writer, m Manifest) error` (via `print.Envelope`)
 - [ ] `TestBundleManifestDocMatchesSchema` (in `internal/bundle`, so it can import the type): the `BundleManifest` section of docs/output.md lists exactly the JSON fields and both status sets.
 - [ ] `TestManifestEnvelope`: output has `schemaVersion`, `kind: BundleManifest`, `item`; times RFC3339; empty fields omitted.
-- [ ] `TestManifestBound`: 100 000 items and 20 000 replicas with a 1 MiB limit → the encoding fits; `itemsOmitted` and `replicasOmitted` > 0.
+- [ ] `TestManifestBound`: 100 000 items, 20 000 replicas and 50 000 unwatched namespace names with a 1 MiB limit → the encoding fits; `itemsOmitted`, `replicasOmitted` and the scope's `unwatchedOmitted` > 0.
 - [ ] Implement; pass; commit `feat(bundle): BundleManifest schema`.
 
 ### Task 4.1.3: Redactors and canary corpus
@@ -212,20 +214,23 @@ Each task builds and passes on its own; no task consumes a type a later task int
 **Files:** create `internal/bundle/{guard.go,inventory.go}`, `internal/app/bundle_scope.go`, tests.
 **Interfaces (produces):**
 - `func Guard(cfg *rest.Config) *rest.Config` (copy with a `WrapTransport` that refuses core `secrets`/`configmaps` with `ErrForbiddenKind`, unsent; for a pods/proxy 502/503 it first reads at most 4 KiB of the body for `connect: connection refused` and records the `kgwctl.kgateway.dev/ConnectionRefused` cause; then it replaces each non-2xx body with a canonical `metav1.Status` holding only code, reason and that cause; the body is never stored)
-- `type GatewaySet map[types.NamespacedName]string` (Gateway → owning install ID)
-- `func resolveScope(f *Flags, explicitNamespace bool, res *load.Result) (bundle.Scope, GatewaySet, []string /* warnings */, error)`
+- `type GatewaySet map[types.NamespacedName]string` (kept Gateway → owning install ID; the inventory takes proxies only of these)
+- `func resolveScope(f *Flags, explicitNamespace bool, res *load.Result) (bundle.Scope, GatewaySet, func(*unstructured.Unstructured) bundle.ExcludeReason, []string /* warnings */, error)`
+- The keep function resolves each object's `kinds.Served` from `res.Served` by GVK, and calls `view.Filter.Visible` with a `view.Scope{AllNamespaces: true, Install: f.Install}`, so the filter checks ownership only; the bundle bounds namespaces. Scope comes from `res.Model.Installs[i].Resolved.Scope`; no `install.Resolve` call. The installs an object is checked against follow design §3.2 (owners of a Gateway or ListenerSet, owners of a route's kept spec parents, else every selected install); `view.Filter` gains an exported `Owners(ref objects.Ref) []int` for that, its only change.
 - `type ControllerSelector struct{ Install bundle.Install; Selector labels.Selector }`
 - `func Inventory(ctx context.Context, kube kubernetes.Interface, s bundle.Scope, gws GatewaySet, ctrls []ControllerSelector) ([]bundle.Replica, []error)`
 - `func Reidentify(ctx context.Context, kube kubernetes.Interface, r bundle.Replica) bundle.CaptureIdentity`
 - [ ] `TestGuardRefuses` (HTTP boundary): list, get and watch on `secrets` and `configmaps`, namespaced and cluster-wide → error, zero requests at the server; `pods` passes.
 - [ ] `TestGuardSanitizesBodies` (HTTP boundary): a 403 and a 500 with pattern-free canary bodies → client-go errors carry code and reason, no canary; a pods/proxy 503 whose body says `connection refused` keeps the refused cause and loses the body; a 5 KiB body with the phrase past 4 KiB is not marked.
 - [ ] `TestResolveScope`: no `-n` → all; `-A` → all; `-n team-a` → `team-a` plus install namespaces; two installs → both `detected`, one warning; unknown ownership with installs → all, warning; `--install x/y` undetected → exit 2; none → controller collectors `skipped: no install`.
-- [ ] `TestResolveDiscoveryScope`: `resolveScope` also returns `keep func(*unstructured.Unstructured) bool`, built from `view.NewFilter` (same `view.Scope` as `get`) and each install's scope from the Snellius engine model, or `install.Resolve(insts, kgateway.Scope())` where the model lacks it. Selector `[{matchLabels: {team: a}}]` → mode `selectors`, `team-b` in `Unwatched`, a `team-b` HTTPRoute parented to a kept Gateway in `UnwatchedRoutes`, `keep` false for `team-b` objects and true for GatewayClasses; empty value → `all`; an `envFrom`-only controller → `unknown` with a reason, `keep` true for every namespace; another controller's GatewayClass and Gateway → `keep` false; `AllControllers` → `keep` always true, scope still recorded. `WorkloadNamespaces` = install, replica, kept-resource and kept-route `backendRefs` namespaces.
+- [ ] `TestResolveDiscoveryScope`: selector env value `[{"matchLabels":{"team":"a"}}]` → mode `selectors`, `Selectors` = `["team=a"]`, `team-b` in `Unwatched`; keep gives `ExcludeScope` for a `team-b` TrafficPolicy and `ExcludeNone` for GatewayClasses; empty value → `all`; an `envFrom`-only controller → `unknown` with a reason, nothing scope-excluded; a denied Namespace list (`res.Inputs`) → `namespaces-unreadable`, nothing scope-excluded; another controller's GatewayClass and Gateway → `ExcludeOwnership`; `AllControllers` → always `ExcludeNone`, scope still recorded.
+- [ ] `TestResolveScopePerInstall`: installs A (selector excludes `team-b`) and B (watches `team-b`); a `team-b` HTTPRoute whose only parent is A's Gateway → `ExcludeScope`; a `team-b` HTTPRoute parented to B's Gateway → kept.
+- [ ] `TestResolveWorkloadNamespaces`: `WorkloadNamespaces` = install, replica, kept-resource and kept-route `backendRefs` namespaces; with `-n team-a`, a `backendRefs` Service in `team-c` adds nothing, also with `--all-controllers`, and `--all-controllers` yields `team-a` plus install namespaces, not all.
 - [ ] `TestInventoryFullName`: a 70-character Gateway with three Pods (shortened label, full-name annotation) → three replicas, `IdentityAnnotation`; a Pod with the same label and another annotation excluded.
 - [ ] `TestInventoryUnverified`: a Pod with the gateway label and no annotation → `IdentityUnverified`, an error line, and no `replicasets` request in `Proxy.Requests()`.
 - [ ] `TestInventoryStates`: not-ready, terminating, Pending and restarted Pods kept with state and per-container restarts, init included.
 - [ ] `TestInventoryMetricsPort`: proxy Pod with and without a 9091 declaration → `MetricsPort` 9091 and `MetricsPortDeclared` true/false; controller port from the install.
-- [ ] `TestInventoryAllControllers`: another class's Gateway excluded unless `AllControllers`; a Pod without the proxy label is never included.
+- [ ] `TestInventoryAllControllers`: proxies only of `GatewaySet` Gateways: another class's Gateway, and a kgateway Gateway left out by scope, excluded unless `AllControllers`; a Pod without the proxy label is never included.
 - [ ] `TestReidentify`: same UID → `verified`; recreated under the same name → `changed`; deleted → `gone`; a 403 on get → `reread-failed`.
 - [ ] Implement design §3.2, §6.1, §8.2; pass; commit `feat(bundle): request guard, scope and replica inventory`.
 
@@ -253,7 +258,7 @@ Each task builds and passes on its own; no task consumes a type a later task int
 - [ ] `install`: each install's controller Deployment; GatewayClasses.
 - [ ] `TestClusterStateArchive` (envtest, archive boundary): canaries in `last-applied-configuration`, a TrafficPolicy `x-tenant-key` modifier, a GatewayExtension `headersToAdd` and an Event message; extracted paths as design §4; `AssertNoCanary`.
 - [ ] `TestClusterStateScope`: `-n team-a` → no `team-b` member; GatewayClass under `_cluster`.
-- [ ] `TestClusterStateOwnership` (envtest, archive boundary): a second controller's GatewayClass (`example.com/other`), its Gateway, HTTPRoute and that namespace's Deployment are absent; a selector excluding `team-b` leaves out `team-b` resources, and the manifest names `team-b` and its unwatched route; `check/check.json` has KGWUI-004 for that route; with `--all-controllers` all are present.
+- [ ] `TestClusterStateOwnership` (envtest, archive boundary): a second controller's GatewayClass (`example.com/other`), its Gateway and HTTPRoute are absent from `resources/` and from the `install` collector's GatewayClasses; a Deployment in a namespace only the other controller uses is absent; one in a namespace shared with a kgateway Gateway is present (per-namespace workloads, §3.2); a selector excluding `team-b` leaves out `team-b` resources, the manifest names `team-b`, and `excluded` counts the left-out HTTPRoute under `scope`; with `--all-controllers` all are present.
 - [ ] `TestEventsWindow`: an Event with an old `lastTimestamp` and a recent `series.lastObservedTime` is kept; one older on all three is left out.
 - [ ] Commit `feat(bundle): resource, workload and install collectors`.
 
@@ -267,6 +272,7 @@ Each task builds and passes on its own; no task consumes a type a later task int
 - [ ] `TestVersionFile`: server version from discovery; image tags under `installs`; two replicas with different `/server_info` versions → two `observed` entries by pod; a denied replica → `denied`, no version; a replaced Pod → `changed`.
 - [ ] `TestCheckCollectorMatchesCheck` (envtest): `check/check.json` equals `kgwctl check -o json` with the same `-n` on the same fixture apart from timestamps and sanitized reasons; existing `check` tests unchanged.
 - [ ] `TestCheckCollectorDenialBody` (envtest, production bundle path): a list denied with `Action{Status: 403, Body: <pattern-free canary>}` → `check.json`, `errors.txt` and `run.log` carry `403 Forbidden`, not the canary.
+- [ ] `TestCheckCollectorUnwatchedRoute` (envtest): with the `TestClusterStateOwnership` fixture, `check/check.json` has KGWUI-004 naming the left-out `team-b` HTTPRoute.
 - [ ] `TestBundleMetadataCanaries` (command, archive boundary): canaries in the context name, `--redact-header`, `-o` path and a map key; none in any member or name.
 - [ ] `TestBundleRegistryAlias` (command): a registry kind resolving to core `secrets`, with an admin kubeconfig → no `secrets` request in `Proxy.Requests()`; an error line; exit 0.
 - [ ] Commit `feat(bundle): version and check collectors`.

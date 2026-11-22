@@ -67,11 +67,19 @@ The root flags resolve once, before any collector runs, into one `Scope` that ev
 - **Default: all namespaces.** A support bundle is cluster-wide unless narrowed. `-A` is accepted and changes nothing.
 - **`-n <ns>`** (scalar; repeatable `-n` stays deferred, D-015): resources, workloads, Events and logs come from that namespace plus each install namespace. Proxy replicas come from that namespace.
 - **`--install <ns>/<name>`** selects one install. Without it, every detected install is taken, each recorded, with a stderr warning when there are several. When installs are detected but ownership is unknown, the same applies. No install: a warning, and controller collectors record `skipped: no install`. `--install` naming no detected install: exit 2.
-- **Ownership (default on).** Resources follow the rule `get` uses (Phase 1 design §6.2: `view.Filter` over the ownership Snellius `install.Assign` computes). A GatewayClass or Gateway of another controller is left out, as is a route whose spec parentRefs all name left-out parents, and a policy whose ancestors name only other controllers. With `--install`, objects owned only by other installs are left out too. When ownership is unknown, nothing is left out and a stderr warning says so.
-- **Discovery scope (default on).** Each install's watched namespaces come from Snellius `install.Scope`, read from the controller's `KGW_DISCOVERY_NAMESPACE_SELECTORS` env entry; no Helm values. A namespaced resource is kept only in a namespace that a selected install watches. Cluster-scoped kinds are never scope-filtered. An install whose scope cannot be read (`ScopeUnknown`: no controller Pod, `envFrom`, `valueFrom`, invalid JSON) filters nothing.
-- **Recorded scope.** Per install, the manifest records the mode (`all`, `selectors`, `unknown`; unknown is never written as all), the selectors, their source, and the names of namespaces it does not watch. Routes in an unwatched namespace that reference a kept parent are listed by `<ns>/<name>` (Snellius `Assignment.Unwatched`). Their content is not written; `check` reports them (KGWUI-004). This is the evidence for "my route is ignored".
-- **Workload namespaces.** Deployments, Pods, Services and Events come from the install namespaces, the namespaces of in-scope proxy replicas, the namespaces of kept namespaced resources, and the namespaces of Services that kept routes name in `backendRefs`. Not every namespace in the cluster.
-- **`--all-controllers`** turns ownership and discovery scope off: resources and workloads from every namespace, and proxies of Gateways of any class, limited to Pods with the kgateway proxy label (§8.2). Scope is still recorded.
+- **Ownership (default on).** Resources follow the rule `get` uses (Phase 1 design §6.2: `view.Filter` over the ownership Snellius `install.Assign` computes), with the filter's own namespace check off; the bundle bounds namespaces itself. A GatewayClass or Gateway of another controller is left out, as is a route whose spec parentRefs all name left-out parents, and a policy whose ancestors name only other controllers. With `--install`, objects owned only by other installs are left out too. When ownership is unknown, nothing is left out and a stderr warning says so.
+- **Discovery scope (default on).** Each install's scope is the Snellius `install.Scope` on the loaded model (`Model.Installs[i].Resolved.Scope`), read from the controller's `KGW_DISCOVERY_NAMESPACE_SELECTORS` entry on a Pod or, without one, the Deployment template; no Helm values. A namespaced object is checked against the installs it belongs to, not any install:
+  - a Gateway or ListenerSet: the installs that own it;
+  - a route: the installs that own its kept spec parents; with no resolvable parent, every selected install;
+  - any other namespaced object: every selected install.
+
+  It is kept when one of those installs watches its namespace. Cluster-scoped kinds are never scope-filtered. Nothing is scope-filtered when an install's scope is `ScopeUnknown` (no controller Pod or Deployment, `envFrom` only, `valueFrom`, invalid JSON), or when Namespace objects could not be read (`load.Result.Inputs`); the reason is recorded.
+- **Recorded scope.** Per install, the manifest records the mode (`all`, `selectors`, `unknown`, `namespaces-unreadable`; never written as all), the selectors rendered from the parsed `LabelSelector`s, their source, and the names of namespaces it does not watch (bounded, with an omitted count). Routes left out by scope are counted, not listed; `check` names each (KGWUI-004), which is the evidence for "my route is ignored".
+- **Exclusion counts.** Each left-out object counts once per kind and reason (`ownership` or `scope`); no names.
+- **Workload namespaces.** Deployments, Pods, Services and Events come from the install namespaces, the namespaces of in-scope proxy replicas, the namespaces of kept namespaced resources, and the namespaces of Services that kept routes name in `backendRefs`. Not every namespace in the cluster. Workloads are filtered per namespace, not per object: another controller's Deployment in a shared namespace is collected.
+- **Proxies** are those of kept Gateways (§8.2).
+- **`--all-controllers`** turns ownership and discovery scope off: resources and workloads from every namespace in the run's namespace bound, and proxies of Gateways of any class, limited to Pods with the kgateway proxy label (§8.2). Scope is still recorded.
+- **`-n` always bounds.** With `-n`, no flag widens resources, workloads, Events or logs past that namespace plus install namespaces; a `backendRefs` Service elsewhere is not collected.
 - **Cluster-scoped kinds:** GatewayClass only, under `_cluster`.
 
 What a namespaced run reads and writes:
@@ -114,7 +122,8 @@ The core group is written as `core`. Member names follow §8.4. The four root fi
 `manifest.json` is a versioned envelope (`schemaVersion`, `kind: BundleManifest`, `item`) like the other kinds in docs/output.md. The plan fixes its JSON fields. It holds:
 - the kgwctl build, the context name through the text redactor, and the server as `<apiserver>`;
 - flags (below), the resolved `Scope` with each install's discovery scope (§3.2), and the window (`T0`, `since`, `tail`);
-- counts of objects left out by ownership and by discovery scope, per kind; no names;
+- `excluded`: counts of objects left out, per kind and reason (`ownership`, `scope`); no names;
+- per collector, a reason for `skipped` (`flag`, `no install`);
 - run start, seal and end times, and the finalization outcome;
 - the replica inventory (§8.2);
 - per collector: name, status (`ok`, `partial`, `failed`, `skipped`, `timeout`), duration, redacted error and a count of `late` results;
@@ -223,7 +232,7 @@ Built once, after scope resolution and before any collector. Logs, metrics, admi
 - **Proxy replicas:** Pods labelled `kgateway=kube-gateway` in scope.
   - A Pod belongs to the Gateway its `gateway.kgateway.dev/gateway-full-name` annotation names.
   - A Pod without the annotation is recorded with `identity: unverified` and gets no capture. The reader role cannot read ReplicaSets, so the owner chain cannot be verified.
-  - Only Gateways whose class belongs to a selected install are kept, unless `--all-controllers` is set.
+  - Only Gateways the §3.2 ownership and scope filters keep get proxies captured, unless `--all-controllers` is set.
 - **Each `Replica`** holds namespace, pod, UID, role, owner (install or Gateway `<ns>/<name>`), identity (`annotation`, `selector`, `unverified`), ready, terminating, phase, containers with restart counts (init included), start time, metrics port and whether the Pod declares it.
 - Unready, terminating and restarting replicas stay in. A Pod that is not `Running` skips metrics and admin (`skipped: not running`) but still gets logs.
 - **Identity check:** after each log, metrics, version or admin capture the Pod is read again. The outcome goes in the item's `Source.Identity`: `verified` (same UID), `changed`, `gone` or `reread-failed`.
@@ -280,7 +289,7 @@ Boundaries: redaction is proven on the extracted archive written by the producti
 - **Transport:** at the HTTP level, the log query, the metrics route `pods/http:<pod>:<port>/proxy/metrics`, redirect refusal, a typed 403 and the guard refusing `secrets` and `configmaps`. At the SPDY level, each operation's GET target, redirect refusal with a response-configurable fixture, and cancelling an established capture through a CONNECT or SOCKS5 proxy (Phase 3 carry-over).
 - **Command:** envtest with fixtures and the real log, scraper and port-forward adapters behind testenv proxy rules. One success, one denied and one timed-out item give exit 0 and matching statuses, and each denial rule is hit. Two collectors denied `pods/portforward` in one namespace give two `denied` items and one grant line. Once the command is wired, the full metadata canaries, a registry kind resolving to `secrets`, and the exact request set of a namespaced run are asserted there.
 - **Identity and metrics:** a Pod replaced, deleted or unreadable after capture gives `changed`, `gone` or `reread-failed`; a label-only Pod is `unverified` with no capture; a Pod with the stock markers, no 9091 declaration and a working endpoint is scraped `ok`.
-- **Ownership and scope:** a second controller's GatewayClass, Gateway, route and workloads are absent, and present with `--all-controllers`. A selector excluding `team-b` leaves out its resources, records `team-b` by name, and lists its route to a kgateway Gateway as unwatched; `check.json` has KGWUI-004 for it. An `envFrom` controller records `unknown` and filters nothing. `--skip logs` gives no `logs/` member, no `pods/log` request and no `errors.txt` line.
+- **Ownership and scope:** a second controller's GatewayClass, Gateway and route are absent, and present with `--all-controllers`; workloads follow namespaces, so a shared namespace keeps both controllers' Deployments. A selector excluding `team-b` leaves out its resources, records `team-b` by name and counts its route under `scope`; `check.json` has KGWUI-004 for it. A route is checked against the install behind its parent, not any install. An `envFrom` controller records `unknown`, and an unreadable Namespace list records `namespaces-unreadable`; neither filters by scope. `-n` is never widened. `--skip logs` gives no `logs/` member, no `pods/log` request and no `errors.txt` line.
 - **Offline use:** an extracted `config_dump.json` is read by `proxy routes --file`. Two replicas at different `version_text` and listener states keep both, attributed to the right pod.
 - **Live check** (`hack/live-check.sh bundle`): on kind `kgwctl-live` with planted canaries (including a Secret-backed header), a full bundle passes the canary scan and has, per proxy replica, `config_dump.json`, `stats.txt` with `version_text`, and a valid 9091 `metrics.txt`.
 
@@ -307,7 +316,8 @@ Where a triage ruling left room, the design takes the safer reading:
 1. Duplicate paths are compared case-insensitively. An Event's time also considers `series.lastObservedTime` (r2).
 2. `server_info.json` is written by `version` only. `--no-endpoints` keeps workload IPs. Resource YAML was filtered by namespace only (r2); r6 adds the ownership and discovery-scope filters at the owner's request (§3.2).
 14. Ownership reuses `view.Filter`, and `--all-controllers` turns off both filters; there is no separate scope flag. Routes are owned through spec `parentRefs`, never status, as in Snellius (r6).
-15. Objects in unwatched namespaces are left out, not kept as evidence; their routes to kept parents are listed by name and reported by `check` (r6).
+15. Objects in unwatched namespaces are left out, not kept as evidence. Their routes are counted, not listed: `engine.Model` does not expose Snellius's assignment, and `check` already names them (KGWUI-004) (r6, review r5).
+16. Workloads are filtered per namespace, not per object; ownership of a Deployment is not derived (r6, review r5).
 3. Installs detected with unknown ownership are all taken. Map keys appear in locations as the literal `[key]`. `--skip` is recorded by name only (r3).
 4. A text item stages line by line, so a stream cut by the seal keeps its complete lines (r3).
 5. Label-only proxy Pods are always `unverified`. kgwctl never reads ReplicaSets, even when RBAC would allow it (r4, row 2).
