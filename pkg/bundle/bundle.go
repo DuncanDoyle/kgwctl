@@ -22,10 +22,10 @@ import (
 // Op identifies the operation that produced an item, as recorded in Source.
 type Op int
 
-// Operation codes.
+// Operation codes. The zero Op is unset.
 const (
 	// OpList is a Kubernetes list or get.
-	OpList Op = iota
+	OpList Op = iota + 1
 	// OpLog is a container log read.
 	OpLog
 	// OpPreviousLog is a previous-instance container log read.
@@ -73,6 +73,24 @@ func (o Op) String() string {
 	return opNames[o]
 }
 
+// MarshalText renders the operation as its name.
+func (o Op) MarshalText() ([]byte, error) { return []byte(o.String()), nil }
+
+// UnmarshalText parses an operation name; the empty string is the unset Op.
+func (o *Op) UnmarshalText(b []byte) error {
+	if len(b) == 0 {
+		*o = 0
+		return nil
+	}
+	for i, n := range opNames {
+		if n == string(b) && n != "" {
+			*o = Op(i)
+			return nil
+		}
+	}
+	return fmt.Errorf("unknown operation %q", b)
+}
+
 // CaptureIdentity records whether a Pod was still the same Pod when its
 // capture finished.
 type CaptureIdentity string
@@ -95,12 +113,12 @@ type Source struct {
 	Pod       string          `json:"pod,omitempty"`
 	UID       types.UID       `json:"uid,omitempty"`
 	Container string          `json:"container,omitempty"`
-	Operation Op              `json:"-"`
+	Operation Op              `json:"operation,omitzero"`
 	Identity  CaptureIdentity `json:"identity,omitempty"`
 }
 
-// Sink receives collector output. Every method returns ErrSealed after the
-// collection deadline.
+// Sink receives collector output. Every method that returns an error returns
+// ErrSealed after the collection deadline.
 type Sink interface {
 	// Object writes a Kubernetes object as YAML.
 	Object(p Path, u *unstructured.Unstructured, src Source) error
@@ -114,8 +132,9 @@ type Sink interface {
 	Text(p Path, r io.Reader, src Source) error
 	// Error records a failed item. It never fails.
 	Error(item Path, src Source, err error)
-	// Exclude counts a left-out object. An empty group is core and is
-	// recorded as core; other groups and kinds must pass Name, else
+	// Exclude counts a left-out object. It returns ErrSealed after the seal.
+	// An empty group is core and is recorded as core; a non-empty group must
+	// pass Name(Group) and the kind must always pass Name(Kind), else
 	// ErrInvalidPath.
 	Exclude(gk schema.GroupKind, reason ExcludeReason) error
 }
@@ -219,8 +238,8 @@ func FormatSelector(s *metav1.LabelSelector) string { return metav1.FormatLabelS
 
 // Window bounds log collection.
 type Window struct {
-	Start time.Time `json:"start"`
-	Since time.Time `json:"since,omitempty"`
+	Start time.Time `json:"start,omitzero"`
+	Since time.Time `json:"since,omitzero"`
 	Tail  int64     `json:"tail,omitempty"`
 }
 
@@ -267,7 +286,7 @@ type Replica struct {
 	Terminating         bool            `json:"terminating,omitempty"`
 	Phase               corev1.PodPhase `json:"phase,omitempty"`
 	Containers          []Container     `json:"containers,omitempty"`
-	StartTime           time.Time       `json:"startTime,omitempty"`
+	StartTime           time.Time       `json:"startTime,omitzero"`
 	MetricsPort         int32           `json:"metricsPort,omitempty"`
 	MetricsPortDeclared bool            `json:"metricsPortDeclared,omitempty"`
 }

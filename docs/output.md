@@ -11,8 +11,8 @@
 | Field | Type | Meaning |
 |---|---|---|
 | `schemaVersion` | string | Schema version, currently `kgwctl.kgateway.dev/v1alpha1`. |
-| `kind` | string | `Describe`, `Version`, `Check` or `ProxyRoutes`. |
-| `item` | object | A `DescribeView`, a `VersionView`, a `Check` or a `ProxyRoutes`. |
+| `kind` | string | `Describe`, `Version`, `Check`, `ProxyRoutes` or `BundleManifest`. |
+| `item` | object | A `DescribeView`, a `VersionView`, a `Check`, a `ProxyRoutes` or a `BundleManifest`. |
 
 ## Conventions
 
@@ -544,3 +544,159 @@ A route name can repeat across route configs, so `routeConfig` and `name` togeth
 kgwctl changes two things in the model. First, a route whose origin xdsview resolved only by using the cluster's HTTPRoutes to break a tie appears in `snapshot` with `origin.certainty: "ambiguous"` and `origin.narrowedByKnown: true`. With `--route`, it is not a match: it is left out of `snapshot` and listed in `ambiguous` with `narrowedByKnown: true`. Without `--route`, `ambiguous` is absent and the route appears only in `snapshot`. kgwctl never treats a tie broken that way as a match, because Envoy can still serve a deleted HTTPRoute's route. When the cluster's HTTPRoutes leave two or more readings, the `snapshot` origin lists those, while `ambiguous` lists every reading of the name. Second, an empty `listeners` prints as `[]` instead of null. Everything else in `snapshot` is xdsview's model unchanged.
 
 A breaking change to xdsview's `model` (a renamed or removed field, or a changed meaning) bumps `schemaVersion`, as it does for kgwctl's own fields.
+
+## BundleManifest
+
+`manifest.json` in a support bundle is one envelope with `kind: BundleManifest`. Every list in it is bounded and has an omitted count. When the manifest still would not fit its size cap, it is replaced by a minimal one with `truncated: true`: build, flags, times, finalization, `excluded`, the omitted counts, and the scope's namespace and up to 64 installs.
+
+### BundleManifest
+
+| Field | Type | Meaning |
+|---|---|---|
+| `build` | ManifestBuild | The kgwctl build that wrote the bundle. |
+| `context` | string | Kubeconfig context name, after text redaction. |
+| `server` | string | The API server, always `<apiserver>`. |
+| `flags` | FlagValue[] | Flags of the run. Absent when none. |
+| `scope` | Scope | The resolved scope of the run. |
+| `window` | Window | The log window. |
+| `start` | string | RFC3339 run start time. |
+| `sealed` | string | RFC3339 time the collection deadline sealed the bundle. Absent when it did not. |
+| `end` | string | RFC3339 run end time. |
+| `finalization` | string | Outcome of writing the archive. |
+| `replicas` | Replica[] | Controller and proxy Pods of the run. |
+| `collectors` | CollectorEntry[] | One entry per collector. |
+| `items` | ManifestItem[] | One entry per file or failed item. |
+| `excluded` | Exclusion[] | Counts of objects left out, per kind and reason; at most 1024 entries. |
+| `replicasOmitted` | integer | Replicas left out of `replicas`. |
+| `collectorsOmitted` | integer | Collectors left out of `collectors`. |
+| `itemsOmitted` | integer | Items left out of `items`. |
+| `truncated` | boolean | True for the minimal manifest. Absent otherwise. |
+
+### ManifestBuild
+
+Each string is at most 256 bytes.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `version` | string | kgwctl version. |
+| `commit` | string | Source commit. |
+| `date` | string | Build date. |
+
+### FlagValue
+
+Values appear only for `-A`, `--all-controllers`, `--since`, `--tail`, `--timeout`, `--request-timeout`, `--max-size` and `--no-endpoints`. All other flags appear by name only.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `name` | string | Flag name. |
+| `value` | string | Flag value. Absent for flags recorded by name only. |
+
+### Scope
+
+| Field | Type | Meaning |
+|---|---|---|
+| `namespace` | string | The `-n` value. Absent for all namespaces. |
+| `installs` | Install[] | The selected installs. |
+| `allControllers` | boolean | True with `--all-controllers`. Absent otherwise. |
+| `workloadNamespaces` | string[] | Namespaces that workloads came from. Absent for all. |
+| `installsOmitted` | integer | Installs left out of `installs`. |
+| `workloadNamespacesOmitted` | integer | Names left out of `workloadNamespaces`. |
+
+### Install
+
+| Field | Type | Meaning |
+|---|---|---|
+| `namespace` | string | Namespace of the controller Deployment. |
+| `deployment` | string | Name of the controller Deployment. |
+| `chosen` | string | `flag` when `--install` named it, `detected` otherwise. |
+| `metricsPort` | integer | Controller metrics port, when known. |
+| `discovery` | DiscoveryScope | The namespaces the install watches. |
+
+### DiscoveryScope
+
+| Field | Type | Meaning |
+|---|---|---|
+| `mode` | string | `all`, `selectors`, `unknown` or `namespaces-unreadable`. |
+| `selectors` | string[] | Namespace selectors, at most 64 of at most 256 bytes each. |
+| `selectorsOmitted` | integer | Selectors left out of `selectors`. |
+| `source` | string | Where the selectors were read from. |
+| `reason` | string | Why the mode is `unknown` or `namespaces-unreadable`. |
+| `unwatched` | string[] | Names of namespaces the install does not watch. |
+| `unwatchedOmitted` | integer | Names left out of `unwatched`. |
+
+### Window
+
+| Field | Type | Meaning |
+|---|---|---|
+| `start` | string | RFC3339 run start time `T0`. |
+| `since` | string | RFC3339 start of the log and Event window. |
+| `tail` | integer | Most log lines per stream. |
+
+### Replica
+
+| Field | Type | Meaning |
+|---|---|---|
+| `namespace` | string | Pod namespace. |
+| `pod` | string | Pod name. |
+| `uid` | string | Pod UID. |
+| `role` | string | `controller` or `proxy`. |
+| `owner` | string | The install or Gateway the Pod belongs to. |
+| `identity` | string | How the owner was matched: `annotation`, `selector` or `unverified`. |
+| `ready` | boolean | Whether the Pod is ready. |
+| `terminating` | boolean | True while the Pod is terminating. Absent otherwise. |
+| `phase` | string | Pod phase. |
+| `containers` | ReplicaContainer[] | Containers of the Pod. |
+| `startTime` | string | RFC3339 Pod start time. |
+| `metricsPort` | integer | Metrics port, when known. |
+| `metricsPortDeclared` | boolean | True when the Pod declares the metrics port. Absent otherwise. |
+
+### ReplicaContainer
+
+| Field | Type | Meaning |
+|---|---|---|
+| `name` | string | Container name. |
+| `init` | boolean | True for an init container. Absent otherwise. |
+| `restarts` | integer | Restart count. |
+
+### CollectorEntry
+
+| Field | Type | Meaning |
+|---|---|---|
+| `name` | string | Collector name. |
+| `status` | string | `ok`, `partial`, `failed`, `skipped` or `timeout`. |
+| `reason` | string | Why a collector was skipped: `flag` or `no install`. |
+| `durationMs` | integer | Run time in milliseconds. |
+| `error` | string | Redacted error. |
+| `late` | integer | Results that arrived after the seal. |
+
+### Exclusion
+
+| Field | Type | Meaning |
+|---|---|---|
+| `kind` | string | `group/kind`, or the kind alone for the core group. `other` sums the entries over the 1024 limit. |
+| `reason` | string | `ownership` or `scope`. |
+| `count` | integer | Objects left out. |
+
+### ManifestItem
+
+| Field | Type | Meaning |
+|---|---|---|
+| `path` | string | Path inside the archive. |
+| `size` | integer | Size in bytes. |
+| `contentType` | string | Content type of the file. |
+| `capturedAt` | string | RFC3339 capture time. |
+| `source` | ItemSource | Where the item came from. |
+| `status` | string | `ok`, `skipped`, `denied`, `disabled`, `failed`, `timeout` or `dropped`. |
+| `reason` | string | Why the item has its status. |
+| `redactions` | integer | Values redacted in the file. |
+
+### ItemSource
+
+| Field | Type | Meaning |
+|---|---|---|
+| `namespace` | string | Namespace of the Pod or object. |
+| `pod` | string | Pod name. |
+| `uid` | string | Pod UID. |
+| `container` | string | Container name. |
+| `operation` | string | Operation name, such as `list`, `log`, `config-dump` or `stats`. |
+| `identity` | string | For Pod items: `verified`, `changed`, `gone` or `reread-failed`. |
