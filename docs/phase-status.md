@@ -10,7 +10,8 @@ Status: design
 - [x] Q1 Phase 4 design (`design.md`) r1, with research notes (prior art, reuse, threats) — not committed, in .agents-tmp/
 - [x] Q1b Roadmap: Phase 6 shows evidence, not effective policy; `proxy diff` replaced by a convergence candidate (D-024)
 - [x] Q2 Phase 4 implementation plan (4 planned sub-phases)
-- [ ] Q3 Cross-model review of design + plan, triage; owner go-ahead ← CURRENT
+- [x] Q3 Cross-model review of design + plan: 5 rounds (reviews/design-codex.md, -r2 to -r4 + triage); r5 at f4d2102
+- [ ] Q4 Owner go-ahead on design r5 and the open items in design §12 ← CURRENT
 
 ### Exit gates
 - [ ] tests/vet pass
