@@ -26,7 +26,7 @@ Research notes, not committed: prior art, reuse survey and threat assessment, 20
 
 - **Prior art.** agctl bug-report (agentgateway#3991) is the closest model: kinds by CRD category, 8 workers under one 5 min deadline, partial output with `errors.txt`, 10 MiB per log stream, previous logs only after a restart. It reads full Secret data and writes ConfigMaps unredacted. istioctl bug-report adds a time window and selectors, but dumps every CR unredacted. cilium sysdump keeps its own run log in the archive.
 - **kgateway v2.5.1.**
-  - Controller: metrics on 9092 (`pods/proxy`), admin on 9095 bound to localhost.
+  - Controller: metrics on 9092 (`pods/proxy`), admin on 9095, bound to localhost by default (`AdminBindAddress` makes it configurable; no auth).
   - Proxy: Envoy admin on 127.0.0.1:19000 (port-forward); 9091 serves `GET /metrics` and, by default, `/stats` (`pods/proxy`). The chart declares container port 9091 only when stats are enabled.
   - Controller pods carry `kgateway=kgateway`. Proxy pods carry `kgateway=kube-gateway`, `gateway.networking.k8s.io/gateway-name` (shortened with a hash past 63 characters) and the annotation `gateway.kgateway.dev/gateway-full-name`.
   - All kgateway CRDs are namespaced and carry the category `kgateway`.

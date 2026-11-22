@@ -37,6 +37,7 @@ n/a
 - `--only`, `--exclude`, `--fail-on`, repeatable `-n`, controller logs (D-015).
 - A narrow `pkg/cli` facade for vendor cluster commands (D-015).
 - Phase 3 (reviews/3.4-codex.md P3-4): a test that cancels an established capture through a CONNECT or SOCKS5 proxy, when Phase 4 reuses the capture.
+- E13: when xdsview v0.5.0 is tagged, bump it and update the `proxy routes` text and JSON goldens (certainty added). In docs, call `effectiveChain` the runtime filter chain; the JSON field keeps its name.
 
 ## Notes
 - GitHub repo: https://github.com/DuncanDoyle/kgwctl (`kgwctl` remains a working name, D-006).

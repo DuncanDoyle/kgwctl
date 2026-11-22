@@ -19,6 +19,7 @@ Append-only. Newest at the bottom. Supersede, don't edit.
 **Decision:** Effective policy, findings and Envoy → Gateway API mapping come from the shared libraries (program P-001). The CLI formats; it does not decide.
 **Alternatives:** CLI-local logic for speed — rejected.
 **Consequences:** Some CLI phases wait on library deliveries (edges E1–E3, E7).
+**Superseded in part by D-024 (2026-11-22):** effective policy no longer comes from the shared libraries; they provide relations and naming only.
 
 ## D-004 — Vendor-neutral core (2026-11-04, phase 0)
 **Context:** The CLI is headed for kgateway OSS.
@@ -165,12 +166,13 @@ Each source verifies only its own claim:
 | Source | Verifies | Does not verify |
 |---|---|---|
 | `route_source` route metadata | the originating route, rule and match of an Envoy route | which policy won, merged or produced a filter |
+| A route's `merge.*` metadata | the policy IDs merged at that route's level | which level (listener, virtual host, route) governs a request |
 | A policy's status condition | the controller's result for the target, controller and generation the condition names | targets, controllers or generations it does not name |
 | Envoy config dump | what one replica ran at capture time | other replicas, or later times |
 
 A link is `verified` only when one of these sources states it for the objects shown. It is `inferred` when it comes from names or selectors. It is `unknown` when evidence is absent, stale (another generation) or ambiguous. An effective-policy view ships only when the controller exposes the evidence itself, such as per-target policy status.
 **Alternatives:** Snellius's policy model as the effective view (E7 as written): rejected as authoritative, because it re-derives controller rules. It is still usable as an inferred link if marked so.
-**Consequences:** Narrows D-003: libraries may provide relations and naming, never semantics. E7 is redefined in the program file; that edit, including the E7 row that promises attached and effective policy, is the program session's (owner to approve). The deferred `proxy diff` (generic intended-versus-accepted) is dropped from the roadmap. A data-plane convergence candidate takes its place: it reads the raw per-replica evidence the support bundle keeps, and gives a stale-config verdict only with comparable controller evidence.
+**Consequences:** Supersedes D-003's "effective policy from the shared libraries": libraries may provide relations and naming, never semantics. E7 is redefined in the program file (P-008): declared policies, controller-reported attachment, and a route's `merge.*` policy IDs, from the Snellius Phase 8 declared-policy model and xdsview `origin.Policies` (E5, E13). Listener, RouteConfiguration and virtual-host metadata have no provider yet. Anything beyond controller-reported evidence stays out of scope. The deferred `proxy diff` (generic intended-versus-accepted) is dropped from the roadmap. A data-plane convergence candidate takes its place: it reads the raw per-replica evidence the support bundle keeps, and gives a stale-config verdict only with comparable controller evidence.
 
 ## D-025 — Envoy admin reads are an allowlist of operations (2026-11-22, phase 4) — proposed, pending owner approval
 **Context:** D-021 limits port-forward to one `GET /config_dump`. The support bundle also needs the config dump with endpoints, `/stats` (text readouts such as `version_text`), `/server_info`, `/certs` and `/clusters`.

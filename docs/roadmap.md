@@ -71,11 +71,13 @@ One command that collects what support asks for, so nobody hand-collects it (D-0
 ### Phase 6 — Topology and policies
 **Status:** Not started
 **Docs:** `docs/phases/phase-6/`
-**Waits on:** none for the evidence views. An effective-policy view waits on controller-provided evidence (D-024). E7 is to be redefined as policy relations only (owner to approve).
+**Waits on:** E7 = Snellius Phase 8 declared-policy model, plus xdsview `origin.Policies` for the route-level xDS part (E5, E13). No effective-policy view (D-024, P-008).
 
 The controller owns policy semantics; kgwctl shows evidence and never re-derives precedence, inheritance or merging (D-024).
-- `describe` shows declared policies that target the object, with their `targetRefs`/selectors as written.
-- The controller's status conditions on those policies and their targets: its result for the target, controller and generation each condition names.
+- `describe` lists policies, each labelled with its source (P-008):
+  - declared: `targetRefs`/selectors as written;
+  - controller-reported attached: ancestor conditions as the controller reports them, for the target, controller and generation each names;
+  - for a route, the policy IDs in its `merge.*` metadata. These are level-local: they do not say which level governs a request.
 - What Envoy runs for the route or listener (xdsview): one replica at capture time, linked from `describe` and back.
 - Each link marked verified, inferred (names, selectors) or unknown (no, stale or ambiguous evidence). `route_source` verifies the originating route and rule, not which policy won or merged.
 - `get -o graph`: Gateway → route → backend topology as DOT or Mermaid text, written without a graphics library.
@@ -90,7 +92,7 @@ The controller owns policy semantics; kgwctl shows evidence and never re-derives
 
 ## Deferred / out of roadmap
 - `kgwctl mcp` and traffic debugging: downstream builds on `pkg/cli` (D-023), not this repo.
-- Data-plane convergence (D-024): a candidate phase after Phase 4. It replaces a generic intended-versus-accepted `proxy diff`, which is no longer planned. The support bundle keeps the raw evidence per replica: pod identity, restart count, capture time, `version_text`, listener states (warming, draining) and rejection details where Envoy reports them. These show what each replica held at capture time. They do not show when a NACK happened. A stale-config verdict needs comparable controller evidence per replica; kgateway v2.5.1's snapshot metrics are per Gateway, not per pod.
+- Data-plane convergence (D-024): a candidate phase after Phase 4; it waits on E14, which the program's xDS convergence investigation may or may not create. It replaces a generic intended-versus-accepted `proxy diff`, which has no provider (P-009) and is no longer planned. The support bundle keeps the raw evidence per replica: pod identity, restart count, capture time, `version_text`, listener states (warming, draining) and rejection details where Envoy reports them. These show what each replica held at capture time. They do not show when a NACK happened. A stale-config verdict needs comparable controller evidence per replica; kgateway v2.5.1's snapshot metrics are per Gateway, not per pod.
 - Thin-client mode against the kgateway-ui API — only useful once the UI has per-user auth (its Phase 10).
 - Interactive TUI — krp's TUI covers this for now.
 - Vendor policy plugins — the build-time hook is D-009 (Phase 1); the plugins live outside this repo (program P-002).
