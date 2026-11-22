@@ -60,3 +60,6 @@ func setOf(keys ...string) map[string]bool {
 	}
 	return m
 }
+
+// SchemaField reports whether a location shows key literally.
+func SchemaField(key string) bool { return schemaFields[key] }

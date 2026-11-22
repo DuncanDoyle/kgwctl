@@ -4,6 +4,7 @@ import (
 	"os"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -79,14 +80,44 @@ func TestBundleManifestDocMatchesSchema(t *testing.T) {
 		t.Errorf("section has %d subsections, want %d", len(subs), len(docTypes))
 	}
 
-	for _, s := range []pb.CollectorStatus{pb.CollectorOK, pb.CollectorPartial, pb.CollectorFailed, pb.CollectorSkipped, pb.CollectorTimeout} {
-		if !strings.Contains(subs["CollectorEntry"], "`"+string(s)+"`") {
-			t.Errorf("collector status %q not documented", s)
+	enums := []struct {
+		sub, field string
+		want       []string
+	}{
+		{"CollectorEntry", "status", []string{"ok", "partial", "failed", "skipped", "timeout"}},
+		{"ManifestItem", "status", []string{"ok", "skipped", "denied", "disabled", "failed", "timeout", "dropped"}},
+		{"Exclusion", "reason", reasonValues()},
+		{"ItemSource", "identity", identityValues()},
+	}
+	for _, e := range enums {
+		row := regexp.MustCompile("(?m)^\\| `" + e.field + "` \\|.*$").FindString(subs[e.sub])
+		var got []string
+		for _, m := range regexp.MustCompile("`([a-z-]+)`").FindAllStringSubmatch(row, -1)[1:] {
+			got = append(got, m[1])
+		}
+		sort.Strings(got)
+		want := slices.Sorted(slices.Values(e.want))
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("### %s %s documents %v, want %v", e.sub, e.field, got, want)
 		}
 	}
-	for _, s := range []pb.ItemStatus{pb.ItemOK, pb.ItemSkipped, pb.ItemDenied, pb.ItemDisabled, pb.ItemFailed, pb.ItemTimeout, pb.ItemDropped} {
-		if !strings.Contains(subs["ManifestItem"], "`"+string(s)+"`") {
-			t.Errorf("item status %q not documented", s)
+}
+
+// reasonValues and identityValues are the values the Sink accepts.
+func reasonValues() []string {
+	var out []string
+	for r := range excludeReasons {
+		out = append(out, string(r))
+	}
+	return out
+}
+
+func identityValues() []string {
+	var out []string
+	for i := range identities {
+		if i != "" {
+			out = append(out, string(i))
 		}
 	}
+	return out
 }

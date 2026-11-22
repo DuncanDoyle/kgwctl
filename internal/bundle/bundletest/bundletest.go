@@ -220,6 +220,9 @@ const (
 	MethodError      = "Error"
 )
 
+// Expect is a finding a corpus case must report.
+type Expect struct{ Rule, Location string }
+
 // Fixture is one case of the canary corpus with the Sink method it feeds.
 type Fixture struct {
 	Row    int
@@ -234,9 +237,13 @@ type Fixture struct {
 	Canaries []string
 	// FindingsOnly values are map keys: kept in the item, never elsewhere.
 	FindingsOnly []string
-	ExpectError  string
-	ReadError    bool
-	Server       string
+	// Expect are the findings the case must report.
+	Expect []Expect
+	// Keep must survive in the written item.
+	Keep        []string
+	ExpectError string
+	ReadError   bool
+	Server      string
 	// Err is the error for the Error method.
 	Err error
 }
@@ -321,7 +328,7 @@ func Corpus(t *testing.T) []Fixture {
 			fx := Fixture{
 				Row: f.Row, Dir: d.Name(), Name: c.Name, Type: c.Type, Method: methods[c.Type],
 				ExtraHeaders: c.Options.ExtraHeaders, ExpectError: c.ExpectError,
-				ReadError: c.ReadError, Server: c.Server,
+				ReadError: c.ReadError, Server: c.Server, Keep: c.Keep,
 			}
 			if fx.Method == "" {
 				t.Fatalf("%s/%s: unknown type %q", d.Name(), c.Name, c.Type)
@@ -332,6 +339,9 @@ func Corpus(t *testing.T) []Fixture {
 				}
 			}
 			for _, cn := range c.Canaries {
+				if cn.Rule != "" {
+					fx.Expect = append(fx.Expect, Expect{Rule: cn.Rule, Location: cn.Location})
+				}
 				if cn.FindingsOnly {
 					fx.FindingsOnly = append(fx.FindingsOnly, cn.Value)
 				} else {

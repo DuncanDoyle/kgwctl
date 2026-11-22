@@ -172,6 +172,9 @@ func TestWriterCorpusReplay(t *testing.T) {
 					t.Errorf("footer %s missing", f)
 				}
 			}
+			if written {
+				checkReplayKept(t, a, fx, p.String(), data)
+			}
 			bundletest.AssertNoCanary(t, a, fx.Canaries)
 		})
 	}
@@ -694,4 +697,89 @@ func TestWriterSourceValidated(t *testing.T) {
 	if it := itemByPath(h.w.Items(), "x/good.json"); len(it) != 1 || it[0].Source != good {
 		t.Errorf("valid source changed: %+v", it)
 	}
+}
+
+// checkReplayKept asserts a written corpus item keeps its useful content and
+// that redactions.json reports its findings with schema-field locations only.
+func checkReplayKept(t *testing.T, a bundletest.Archive, fx bundletest.Fixture, path string, data []byte) {
+	t.Helper()
+	text := string(data)
+	if fx.Method == bundletest.MethodObject {
+		// As the corpus test does, also match the decoded string values.
+		var v any
+		if err := yaml.Unmarshal(data, &v); err != nil {
+			t.Fatal(err)
+		}
+		var walk func(any)
+		walk = func(v any) {
+			switch v := v.(type) {
+			case map[string]any:
+				for _, e := range v {
+					walk(e)
+				}
+			case []any:
+				for _, e := range v {
+					walk(e)
+				}
+			case string:
+				text += "\n" + v
+			}
+		}
+		walk(v)
+	}
+	for _, k := range fx.Keep {
+		if !strings.Contains(text, k) {
+			t.Errorf("kept value %q missing from the member", k)
+		}
+	}
+	var red struct {
+		Files []struct {
+			Path     string           `json:"path"`
+			Findings []redact.Finding `json:"findings"`
+		} `json:"files"`
+	}
+	rb, _ := a.File(pb.RedactionsFile)
+	if err := json.Unmarshal(rb, &red); err != nil {
+		t.Fatalf("redactions.json: %v", err)
+	}
+	var got []redact.Finding
+	for _, f := range red.Files {
+		if f.Path == path {
+			got = f.Findings
+		}
+	}
+	for _, e := range fx.Expect {
+		if !slices.ContainsFunc(got, func(f redact.Finding) bool { return string(f.Rule) == e.Rule && f.Location == e.Location }) {
+			t.Errorf("redactions.json lacks {%s %s}; got %+v", e.Rule, e.Location, got)
+		}
+	}
+	for _, f := range got {
+		loc := f.Location
+		if i := strings.LastIndex(loc, "keys[]"); f.Rule == redact.RuleJWKS && i >= 0 {
+			loc = loc[:i] // a fixed JWK member name follows
+		}
+		if seg := mapKeySegment(loc); seg != "" {
+			t.Errorf("location %q shows key %q", f.Location, seg)
+		}
+		for _, k := range fx.FindingsOnly {
+			if strings.Contains(f.Location, k) {
+				t.Errorf("location %q holds map key %q", f.Location, k)
+			}
+		}
+	}
+}
+
+// mapKeySegment returns the first literal segment of loc that is not a
+// schema field name, or "" when there is none.
+func mapKeySegment(loc string) string {
+	if strings.HasPrefix(loc, "line:") {
+		return ""
+	}
+	loc = strings.NewReplacer("[key]", ".", "[]", ".").Replace(loc)
+	for _, s := range strings.Split(loc, ".") {
+		if s != "" && !redact.SchemaField(s) {
+			return s
+		}
+	}
+	return ""
 }

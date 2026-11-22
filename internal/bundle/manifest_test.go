@@ -104,6 +104,9 @@ func TestManifestBound(t *testing.T) {
 	if d.UnwatchedOmitted <= 0 || d.UnwatchedOmitted+len(d.Unwatched) != 50000 {
 		t.Errorf("unwatched %d omitted %d", len(d.Unwatched), d.UnwatchedOmitted)
 	}
+	if s := m.Scope.Installs[1].Discovery; len(s.Selectors) != 64 || s.SelectorsOmitted != 36 {
+		t.Errorf("selectors %d omitted %d, want 64 and 36", len(s.Selectors), s.SelectorsOmitted)
+	}
 	if len(m.Excluded) != 1 || m.Excluded[0].Count != 3 {
 		t.Errorf("excluded cut: %v", m.Excluded)
 	}
