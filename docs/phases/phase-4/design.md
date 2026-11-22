@@ -1,6 +1,6 @@
 # Phase 4 — Support bundle: Design
 
-Status: r3, 2026-11-22. Applies the Codex review triages (`reviews/design-codex.md`, `reviews/design-codex-r2.md`). For owner approval.
+Status: r4, 2026-11-22. Applies the Codex review triages (`reviews/design-codex.md`, `-r2.md`, `-r3.md`). For owner approval.
 Roadmap: Phase 4. Decisions: D-009, D-010, D-015, D-017, D-019, D-021, D-024; D-025 and D-026 (proposed, §12).
 
 ## 1. Goal and scope
@@ -74,12 +74,10 @@ What a namespaced run reads and writes:
 
 | Source | Reads | Written |
 |---|---|---|
-| Install detection (`load.Load`, as `kgwctl version`) | cluster-wide lists | installs and Gateways in scope only |
+| Install detection (`load.Load`, as `kgwctl version`) | cluster-wide lists and watches (permitted) | installs and Gateways in scope only |
 | `check` | as `kgwctl check -n <ns>` makes them: cluster-wide | the namespaced report |
 | `resources`, `workloads`, `logs` | the namespace and install namespaces | the same |
 | Proxy captures and metrics of in-scope proxies and controllers | per replica | whole; they can name other namespaces' routes and backends |
-
-Resource YAML is filtered by namespace only, not by controller. Tests assert the exact request set of a namespaced run (§10).
 
 ## 4. Archive layout
 
@@ -115,7 +113,7 @@ The core group is written as `core`. Member names follow §8.4. The four root fi
 - run start, seal and end times, and the finalization outcome;
 - the replica inventory (§8.2);
 - per collector: name, status (`ok`, `partial`, `failed`, `skipped`, `timeout`), duration, redacted error and a count of `late` results;
-- per item: path, size, content type, capture time, source (namespace, pod, UID, container, operation code), status (`ok`, `skipped`, `denied`, `disabled`, `failed`, `timeout`, `dropped`) and redaction count.
+- per item: path, size, content type, capture time, source (namespace, pod, UID, container, operation code), status (`ok`, `skipped`, `denied`, `disabled`, `failed`, `timeout`, `dropped`), identity outcome (§8.2) and redaction count.
 
 Flags are recorded by name. Values appear only for enum, numeric, duration and boolean flags: `-A`, `--all-controllers`, `--since`, `--tail`, `--timeout`, `--request-timeout`, `--max-size`, `--no-endpoints`. All others, including `-n`, `--install`, `--skip`, `-o`, `--kubeconfig`, `--context` and `--redact-header`, appear by name only. The scope carries the validated namespace and install names.
 
@@ -135,8 +133,8 @@ Per replica, the manifest keeps pod identity, restart counts and capture times n
 | `proxy-metrics` | each proxy replica's 9091 `/metrics` | `pods/proxy` | on |
 | `proxy-admin` | each proxy replica's allowlisted Envoy admin operations (§6.3) | `pods/portforward` (optional Role, D-021) | on |
 
-- A 403 is recorded once per collector and namespace, with the grant to add, and the run continues. A reader-only user gets resources, workloads, install, version without observed Envoy versions, and `check`.
-- Metrics use the Snellius `ctrlmetrics.PodProxyScraper` (one GET, no redirects). A transport wrapper keeps a 403 typed and never reads error bodies. Item status: `denied` on 403; `disabled` only for a kgateway-chart proxy Pod without the chart's 9091 port declaration; otherwise the default port is tried and a failure is `failed`.
+- A 403 gives each affected item the status `denied`, and the run continues. `errors.txt` ends with grant lines, one per grant and namespace, whichever collectors hit it. A reader-only user gets resources, workloads, install, version without observed Envoy versions, and `check`.
+- Metrics use the Snellius `ctrlmetrics.PodProxyScraper` (one GET, no redirects). A transport wrapper keeps a 403 typed and never reads error bodies. Proxy metrics always try 9091. Item status: `denied` on 403; `disabled` only when the connection is refused and the Pod declares no 9091 port; `failed` otherwise.
 - No model is shared between collectors.
 
 ### 6.1 Secrets, ConfigMaps and Helm values
@@ -186,7 +184,7 @@ One mandatory stage sits in the archive writer. A collector hands the Sink typed
 - **Report:** `redactions.json` lists per file each rule, location and count. A location is a schema field path with every map key shown as `[key]`, or a line number. It never holds values or map keys.
 
 ### 7.1 Metadata and errors
-- **Remote errors** (Kubernetes API, pods/proxy, port-forward, Envoy) are recorded as the HTTP status and the Kubernetes reason and code only. Response bodies are never read into an error, including client-go's log-stream errors.
+- **Remote errors** (Kubernetes API, pods/proxy, port-forward, Envoy) are recorded as the HTTP status and the Kubernetes reason and code only, with the operation for non-Kubernetes errors. Response bodies never reach an error. This holds for client-go's log-stream errors, the port-forward adapter's status errors in the bundle path, and the `check` collector, which sanitizes errors before the reused check path flattens them into `Input.Reason`.
 - **Other error text**, including panic values, passes `view.Redactor` and the text pattern pass, then is cut at 512 bytes, before it reaches the manifest, `errors.txt`, `run.log` or stderr. Stack traces never enter the archive.
 - **Names:** the archive root has no context name. Path components come only from validated Kubernetes names or constants (§8.4). `Source.Operation` is an operation code. Flag values follow §5.
 
@@ -198,9 +196,7 @@ One mandatory stage sits in the archive writer. A collector hands the Sink typed
 - The bundle is as sensitive as the cluster's configuration. The README tells users to review `redactions.json` and the files before sharing.
 
 ### 7.3 Threat model
-`docs/bundle-threat-model.md` is written in 4.1 and kept current. It covers assets per artifact class, who receives the archive, what is never requested, redacted or kept, the RBAC used (including the `pods/portforward` power and the log Role reading every pod's logs in its namespace), archive handling and the limits above.
-
-Trust boundary: downstream collectors are trusted in-process code. The Sink and the request guard protect against mistakes, such as an unredacted type, a bad path or a registry kind resolving to Secrets, not against a malicious collector.
+`docs/bundle-threat-model.md` is written in 4.1 and kept current. It covers assets per artifact class, who receives the archive, what is never requested, redacted or kept, the RBAC used (including the `pods/portforward` power and the log Role reading every pod's logs in its namespace), archive handling and the limits above. Trust boundary: downstream collectors are trusted in-process code. The Sink and the request guard protect against mistakes, such as an unredacted type, a bad path or a registry kind resolving to Secrets, not against a malicious collector.
 
 ## 8. Architecture
 
@@ -221,21 +217,21 @@ Built once, after scope resolution and before any collector. Logs, metrics, admi
 - **Controller replicas:** Pods in each install's namespace that match its Deployment's `spec.selector`. Each carries the install's resolved metrics port (default 9092).
 - **Proxy replicas:** Pods labelled `kgateway=kube-gateway` in scope.
   - A Pod belongs to the Gateway its `gateway.kgateway.dev/gateway-full-name` annotation names.
-  - Without the annotation, the `gateway-name` label is used only when the Pod's owner chain leads to the Gateway's Deployment (§12, call 2). Otherwise the Pod is skipped with an error line.
+  - A Pod without the annotation is recorded with `identity: unverified` and gets no capture. The reader role cannot read ReplicaSets, so the owner chain cannot be verified.
   - Only Gateways whose class belongs to a selected install are kept, unless `--all-controllers` is set.
-  - Each carries its metrics port and the evidence: `chart-port`, `no-chart-port` or `default`.
-- **Each `Replica`** holds namespace, pod, UID, role, owner (install or Gateway `<ns>/<name>`), identity source (`annotation`, `owner-chain`, `selector`), ready, terminating, phase, containers with restart counts (init included), start time and metrics port.
+- **Each `Replica`** holds namespace, pod, UID, role, owner (install or Gateway `<ns>/<name>`), identity (`annotation`, `selector`, `unverified`), ready, terminating, phase, containers with restart counts (init included), start time, metrics port and whether the Pod declares it.
 - Unready, terminating and restarting replicas stay in. A Pod that is not `Running` skips metrics and admin (`skipped: not running`) but still gets logs.
-- **Identity check:** after each capture the Pod is read again. A changed UID marks that item `identity: changed`.
+- **Identity check:** after each log, metrics, version or admin capture the Pod is read again. A different UID records the item as `identity: changed`, a missing Pod as `gone`, a failed read as `reread-failed`.
 
 ### 8.3 Staging, budget, sealing and finalization
 - **Item caps:** logs 10 MiB, config dump 64 MiB, metrics 8 MiB, others 16 MiB. A text item over its cap is cut at a line boundary (§3). A structured item over its cap is dropped with an error.
-- **Staging:** a structured item is staged once complete and redacted. A text item is staged line by line, so a cut or sealed stream keeps its complete lines.
-- **Commit and budget:** one writer goroutine owns the tar and gzip streams. Items commit in a fixed order: collector registration order, then path. `--max-size` is applied in that order, so the kept set does not depend on timing. Items past it are `dropped: size budget`. Staged memory is bounded at 2 × `--max-size`; an item past that bound is `dropped: staging`, the one timing-dependent drop.
-- **Footers** have fixed caps inside a 10 MiB reserve: `manifest.json` 4 MiB, `redactions.json` 4 MiB, `errors.txt` 1 MiB, `run.log` 1 MiB. Past its cap, a JSON footer omits per-item entries and records how many; a text footer is cut with a marker.
-- **Seal:** at the collection deadline the run context is cancelled and all staged state is frozen. Results that arrive later are not written; each collector's manifest entry counts them as `late`. Collectors still running are `timeout`.
-- **Finalization:** after the seal, commits and footers run on a 30 s budget of their own. For a file output this bound holds. A blocked stdout write (a stalled reader) can hold the process; this is documented, and Ctrl-C ends it with exit 2.
-- **Failure:** a tar, gzip, write or close error, or an overrun budget, is fatal: exit 2. A file output is closed and removed. `Run` returns the commit error.
+- **Staging:** items are redacted before staging. A structured item is staged once complete; a text item line by line, so a cut or sealed stream keeps its complete lines. The writer, not the collector, appends truncation markers.
+- **Spool:** staged bytes use a fixed 64 MiB RAM budget. Past it, the already-redacted bytes spill to a `0600` file in a `0700` temp directory. Spool and index are bounded by `--max-size`; an item past that bound is `dropped: staging`, the one timing-dependent drop. The spool is removed on success, cancel and failure.
+- **Commit and budget:** one writer goroutine owns the tar and gzip streams. Items commit in a fixed order: collector registration order, then path. `--max-size` (minimum `32Mi`) is applied in that order, so the kept set does not depend on timing. Items past it are `dropped: size budget`.
+- **Footers** have caps that sum to at most a quarter of `--max-size`: at the default, `manifest.json` 4 MiB, `redactions.json` 4 MiB, `errors.txt` 1 MiB, `run.log` 1 MiB, scaled down for smaller sizes. Every manifest list (items, replicas, collectors) is bounded and records an omitted count. A text footer is cut with a marker.
+- **Seal:** at the collection deadline the run context is cancelled and all staged state is frozen. Sink calls still in flight at that moment are counted per collector as `late`; their results are not written. Collectors still running are `timeout`.
+- **Finalization:** the deadline guarantee covers collection. Finalization is not cancellable; it is bounded by sizes, since it writes at most `--max-size` plus footers. A stalled stdout reader can still hold the process; this is documented.
+- **Failure:** a tar, gzip, write or close error is fatal: exit 2. A file output is closed and removed. `Run` returns the commit error.
 - **Panics** in a collector are recovered into `failed` with the redacted panic value.
 
 ### 8.4 Paths
@@ -268,16 +264,17 @@ Boundaries: redaction is proven on the extracted archive written by the producti
   14. Envoy debug log `'authorization'`/`'cookie'` lines;
   15. access log `?access_token=` and `X-Amz-Signature=`;
   16. a controller log PEM private key block and an `sk-…` key; a PEM block cut by a cancelled stream;
-  17. a token in error text, a panic message, a malformed JSON body and a non-200 log-stream body;
+  17. a token in error text, a panic message and a malformed JSON body; a pattern-free body on a non-200 log stream, a port-forward denial and a denied list seen by the bundle `check` path;
   18. a token in a Prometheus label value and comment; a non-Prometheus body on the metrics path;
   19. metadata: a token in the context name, a `--redact-header` value, an `-o` path and a map key;
   20. a Secret and a ConfigMap handed to `Object`, and a downstream kind resolving to `secrets`;
   21. a downstream collector writing an undeclared type.
 
   Corpus tests run each redactor. The full corpus is also replayed through the production writer; the extracted archive is scanned in every member and member name, including the footers: raw bytes, base64-decoded strings and gzip members. Extraction fails on a duplicate header. `redactions.json` must name each location. Negative cases keep names, hostnames, header names, JWKS public members and cert SANs, and every redacted file re-parses with the same keys.
-- **Writer and runner:** budget order with footers; footer caps; a result after the seal counted as `late`; duplicate paths across collectors and a reserved name; a failing destination removed with exit 2; `O_EXCL` and `0600`.
+- **Writer and runner:** budget order; footer caps at `32Mi` and the default; bounded manifest lists; spool permissions and removal on success, cancel and failure; in-flight calls at the seal counted as `late`; writer-appended truncation markers; duplicate paths across collectors and a reserved name; a failing destination removed with exit 2; `O_EXCL` and `0600`. No test asserts a finalization timeout, since finalization is bounded by size only.
 - **Transport:** at the HTTP level, the log query, the metrics route `pods/http:<pod>:<port>/proxy/metrics`, redirect refusal, a typed 403 and the guard refusing `secrets` and `configmaps`. At the SPDY level, each operation's GET target, redirect refusal with a response-configurable fixture, and cancelling an established capture through a CONNECT or SOCKS5 proxy (Phase 3 carry-over).
-- **Command:** envtest with fixtures and the real log, scraper and port-forward adapters behind testenv proxy rules. One success, one denied and one timed-out item give exit 0 and matching statuses, and each denial rule is hit. The request recorder shows the exact request set of a namespaced run and no Secret or ConfigMap request.
+- **Command:** envtest with fixtures and the real log, scraper and port-forward adapters behind testenv proxy rules. One success, one denied and one timed-out item give exit 0 and matching statuses, and each denial rule is hit. Two collectors denied `pods/portforward` in one namespace give two `denied` items and one grant line. Once the command is wired, the full metadata canaries, a registry kind resolving to `secrets`, and the exact request set of a namespaced run are asserted there.
+- **Identity and metrics:** a Pod replaced, deleted or unreadable after capture gives `changed`, `gone` or `reread-failed`; a label-only Pod is `unverified` with no capture; a Pod with the stock markers, no 9091 declaration and a working endpoint is scraped `ok`.
 - **Offline use:** an extracted `config_dump.json` is read by `proxy routes --file`. Two replicas at different `version_text` and listener states keep both, attributed to the right pod.
 - **Live check** (`hack/live-check.sh bundle`): on kind `kgwctl-live` with planted canaries (including a Secret-backed header), a full bundle passes the canary scan and has, per proxy replica, `config_dump.json`, `stats.txt` with `version_text`, and a valid 9091 `metrics.txt`.
 
@@ -299,16 +296,15 @@ Boundaries: redaction is proven on the extracted archive written by the producti
 
 ### Calls made
 Where a triage ruling left room, the design takes the safer reading:
-1. Duplicate paths are compared case-insensitively (r2).
-2. The owner chain is checked without reading ReplicaSets, which the reader role cannot: the Pod's controller is a ReplicaSet named `<deployment>-<hash>`, the Pod matches that Deployment's selector, and the Deployment has a controller ownerReference to the Gateway (unverified that the deployer sets it) (r3, P2-1).
-3. An Event's time also considers `series.lastObservedTime` (r2).
-4. `server_info.json` is written by `version`, not `proxy-admin`, so it is fetched once (r2).
-5. `--no-endpoints` is documented narrowly: workload IPs stay (r2).
-6. Resource YAML is filtered by namespace only, not by controller (r2).
-7. Installs detected with unknown ownership are all taken, as with several installs (r3, P1-5).
-8. A kgateway-chart proxy Pod is one carrying `kgateway=kube-gateway` and the full-name annotation (r3, P2-5).
-9. Map keys appear in redaction locations as the literal `[key]`, never the key itself (r3, P1-3).
-10. `--skip` values are recorded by name only; skipped collectors show in their status (r3, P1-3).
-11. A text item stages line by line, so a stream cut by the seal keeps its complete lines (r3, P2-2).
-12. Staged memory is bounded at 2 × `--max-size`; past it, items are `dropped: staging`, the one timing-dependent drop (r3, P2-2).
-13. The footer reserve is 10 MiB, the sum of the footer caps. An oversized JSON footer omits per-item entries and records the count (r3, P2-2).
+1. Duplicate paths are compared case-insensitively. An Event's time also considers `series.lastObservedTime` (r2).
+2. `server_info.json` is written by `version` only. `--no-endpoints` keeps workload IPs. Resource YAML is filtered by namespace, not by controller (r2).
+3. Installs detected with unknown ownership are all taken. Map keys appear in locations as the literal `[key]`. `--skip` is recorded by name only (r3).
+4. A text item stages line by line, so a stream cut by the seal keeps its complete lines (r3).
+5. Label-only proxy Pods are always `unverified`. kgwctl never reads ReplicaSets, even when RBAC would allow it (r4, row 2).
+6. The spool lives in a temp directory beside the output file, or in the system temp directory for `-o -` (r4, row 3).
+7. Footer caps scale by `min(1, (--max-size / 4) / 10 MiB)`. A `--max-size` below `32Mi` is a usage error, exit 2 (r4, row 3).
+8. "Late counters sampled at seal" means Sink calls in flight at the seal, per collector; nothing later changes the count (r4, row 3).
+9. Grant lines name the grant, namespace and Role to add, and follow the item lines in `errors.txt` (r4, row 6).
+10. The guard on every client replaces non-2xx bodies with a code-and-reason `Status` before client-go or Snellius flattens them. That is how `check` and load errors are sanitized (r4, row 1).
+11. "Connection refused" is read from the first 4 KiB of a pods/proxy 502/503 body. The body is never stored (r4, row 5).
+12. The full metadata canaries and the registry-alias test run in the task that wires `check` (4.2.5). The exact request set runs once all collectors exist (4.3.4) (r4, row 4).
