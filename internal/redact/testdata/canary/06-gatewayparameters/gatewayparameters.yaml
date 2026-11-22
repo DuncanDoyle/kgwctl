@@ -1,0 +1,25 @@
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: GatewayParameters
+metadata:
+  name: proxy-config
+  namespace: kgateway-system
+spec:
+  kube:
+    envoyContainer:
+      env:
+        - name: TENANT_ID
+          value: kgwctl-canary-06-env
+        - name: LOG_LEVEL
+          value: debug
+    deploymentOverlay:
+      spec:
+        template:
+          metadata:
+            annotations:
+              vault.example/api-token: kgwctl-canary-06-key
+          spec:
+            containers:
+              - name: kgateway-proxy
+                env:
+                  - name: DB_PASSWORD
+                    value: kgwctl-canary-06-overlay

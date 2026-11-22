@@ -1,0 +1,24 @@
+row: 19
+title: "metadata: a token in the context name, a --redact-header header, a map key"
+cases:
+  - name: context-name
+    type: text
+    input: context.txt
+    canaries:
+      - {value: kgwctl-canary-19-ctx, rule: pattern, location: "line:1"}
+    keep: ["arn:aws:eks:eu-west-1:000000000000:cluster/prod"]
+  - name: map-key
+    type: object
+    input: httproute.yaml
+    options:
+      extraHeaders: [X-Kgwctl-Custom]
+    canaries:
+      - {value: kgwctl-canary-19-mapkey, findingsOnly: true}
+      - {value: kgwctl-canary-19-mapval, rule: pattern, location: "metadata.annotations[key]"}
+      - {value: kgwctl-canary-19-extra, rule: header-pair, location: "spec.rules[].matches[].headers[].value"}
+    keep: [x-kgwctl-custom]
+deferred:
+  - part: the --redact-header value and an -o path in the manifest and member names
+    task: "4.2.5"
+  - part: the context name recorded in manifest.json and the map key in redactions.json, through the writer
+    task: "4.1.4"

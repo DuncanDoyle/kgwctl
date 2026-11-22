@@ -1,0 +1,14 @@
+row: 1
+title: last-applied-configuration holding a Secret's data and stringData
+cases:
+  - name: deployment
+    type: object
+    input: deployment.yaml
+    canaries:
+      - value: kgwctl-canary-01-data
+        rule: last-applied
+        location: metadata.annotations[key]
+      - value: kgwctl-canary-01-stringdata
+        rule: last-applied
+        location: metadata.annotations[key]
+    keep: [kgateway, kgateway-system, deploy.example/owner]

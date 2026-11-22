@@ -1,0 +1,10 @@
+[2026-11-22 10:00:00.000][15][debug][http] [source/common/http/conn_manager_impl.cc:1135] [Tags: "ConnectionId":"1","StreamId":"123"] request headers complete (end_stream=true):
+':authority', 'api.example.com'
+':path', '/login?code=kgwctl-canary-14-path'
+':method', 'GET'
+'authorization', 'Bearer kgwctl-canary-14-auth'
+'cookie', 'session=kgwctl-canary-14-cookie'
+'x-request-id', '6b1d3c2e-1f'
+[2026-11-22 10:00:00.010][15][debug][router] [source/common/router/upstream_request.cc:410] upstream headers complete: end_stream=false
+':status', '200'
+'x-envoy-upstream-service-time', '3'

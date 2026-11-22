@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kgateway
+  namespace: kgateway-system
+spec:
+  selector:
+    matchLabels:
+      app: kgateway
+  template:
+    metadata:
+      labels:
+        app: kgateway
+    spec:
+      containers:
+        - name: kgateway
+          image: cr.kgateway.dev/kgateway-dev/kgateway:v2.5.1
+          env:
+            - name: LICENSE
+              value: kgwctl-canary-07-deploy
+            - name: KGW_XDS_SERVICE_PORT
+              value: "9977"

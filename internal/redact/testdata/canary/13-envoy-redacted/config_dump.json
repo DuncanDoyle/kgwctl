@@ -1,0 +1,57 @@
+{
+  "configs": [
+    {
+      "@type": "type.googleapis.com/envoy.admin.v3.SecretsConfigDump",
+      "dynamic_active_secrets": [
+        {
+          "name": "team-a/api-cert",
+          "secret": {
+            "@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.Secret",
+            "name": "team-a/api-cert",
+            "tls_certificate": {
+              "certificate_chain": {"filename": "/etc/envoy/tls.crt"},
+              "private_key": {"inline_bytes": "W3JlZGFjdGVkXQ=="}
+            }
+          }
+        },
+        {
+          "name": "team-a/basic",
+          "secret": {
+            "@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.Secret",
+            "name": "team-a/basic",
+            "generic_secret": {"secret": {"inline_string": "[redacted]"}}
+          }
+        }
+      ]
+    },
+    {
+      "@type": "type.googleapis.com/envoy.admin.v3.ClustersConfigDump",
+      "dynamic_active_clusters": [
+        {
+          "cluster": {
+            "@type": "type.googleapis.com/envoy.config.cluster.v3.Cluster",
+            "name": "aws_lambda",
+            "transport_socket": {
+              "name": "envoy.transport_sockets.tls",
+              "typed_config": {
+                "@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext",
+                "sni": "api.example.com",
+                "common_tls_context": {"validation_context": {"trusted_ca": {"filename": "/etc/envoy/ca.crt"}}}
+              }
+            },
+            "typed_extension_protocol_options": {
+              "envoy.extensions.upstreams.http.v3.HttpProtocolOptions": {
+                "@type": "type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions"
+              }
+            },
+            "metadata": {
+              "filter_metadata": {
+                "aws": {"access_key_id": "AKIAKGWCTLCANARY0013", "secret_access_key": "[redacted]"}
+              }
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

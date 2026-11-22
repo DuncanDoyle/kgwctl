@@ -1,0 +1,14 @@
+row: 15
+title: access log ?access_token= and X-Amz-Signature=
+cases:
+  - name: access-log
+    type: text
+    input: access.log
+    canaries:
+      - {value: kgwctl-canary-15-at, rule: pattern, location: "line:1"}
+      - {value: kgwctl-canary-15-sig, rule: pattern, location: "line:2"}
+    keep:
+      - "GET /callback?access_token=[redacted]&state=abc HTTP/1.1"
+      - "X-Amz-Signature=[redacted]"
+      - "X-Amz-Algorithm=AWS4-HMAC-SHA256"
+      - api.example.com

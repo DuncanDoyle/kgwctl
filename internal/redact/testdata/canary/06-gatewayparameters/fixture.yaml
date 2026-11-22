@@ -1,0 +1,17 @@
+row: 6
+title: GatewayParameters env[].value and a secret in deploymentOverlay
+cases:
+  - name: gatewayparameters
+    type: object
+    input: gatewayparameters.yaml
+    canaries:
+      - value: kgwctl-canary-06-env
+        rule: field
+        location: spec.kube.envoyContainer.env[].value
+      - value: kgwctl-canary-06-overlay
+        rule: field
+        location: spec.kube.deploymentOverlay.spec.template.spec.containers[].env[].value
+      - value: kgwctl-canary-06-key
+        rule: key-name
+        location: spec.kube.deploymentOverlay.spec.template.metadata.annotations[key]
+    keep: [TENANT_ID, LOG_LEVEL, debug, DB_PASSWORD, proxy-config]

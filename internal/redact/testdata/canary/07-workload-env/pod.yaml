@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gw-7d9f-abcde
+  namespace: team-a
+spec:
+  containers:
+    - name: kgateway-proxy
+      image: cr.kgateway.dev/kgateway-dev/envoy-wrapper:v2.5.1
+      env:
+        - name: UPSTREAM_URL
+          value: kgwctl-canary-07-pod
+        - name: KGW_LOG_LEVEL
+          value: info
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace

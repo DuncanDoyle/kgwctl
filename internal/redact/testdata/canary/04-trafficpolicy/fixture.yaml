@@ -1,0 +1,17 @@
+row: 4
+title: TrafficPolicy header modifier value, basicAuth.users hash, a JWT in a transformation template
+cases:
+  - name: trafficpolicy
+    type: object
+    input: trafficpolicy.yaml
+    canaries:
+      - value: kgwctl-canary-04-hm
+        rule: header-value
+        location: spec.headerModifiers.request.set[].value
+      - value: kgwctl-canary-04-hash
+        rule: field
+        location: spec.basicAuth.users[]
+      - value: kgwctl-canary-04-jwt
+        rule: pattern
+        location: spec.transformation.request.set[].value
+    keep: [alice, x-foo, x-jwt, "{{ request_header(\"x-in\") }}"]

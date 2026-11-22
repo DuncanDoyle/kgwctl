@@ -1,0 +1,153 @@
+package redact
+
+import (
+	"bufio"
+	"bytes"
+	"errors"
+	"io"
+	"regexp"
+	"strings"
+)
+
+// LineWriter receives redacted lines, without their line terminator.
+type LineWriter interface {
+	WriteLine(line []byte) error
+}
+
+// TextResult reports what Text did. The writer, not Text, appends the
+// truncation marker.
+type TextResult struct {
+	Findings []Finding
+	// Truncated is set when the cap or a read error ended the text early.
+	Truncated bool
+	// Reason is ReasonSizeCap or ReasonReadError when Truncated.
+	Reason string
+}
+
+// Truncation reasons.
+const (
+	ReasonSizeCap   = "size cap"
+	ReasonReadError = "read error"
+)
+
+var (
+	pemBeginRe = regexp.MustCompile(`-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----`)
+	pemEndRe   = regexp.MustCompile(`-----END [A-Z0-9 ]*PRIVATE KEY-----`)
+)
+
+var errLineTooLong = errors.New("line over the cap")
+
+// Text redacts r line by line into w (design §7): PEM private-key blocks, the
+// debug header-line rule, then the pattern pass. Each complete line is
+// written as soon as it is read. A partial last line before a read error is
+// dropped; a clean EOF keeps it. An open PEM block is redacted to the end.
+// max caps the bytes written, one newline per line included; the text is cut
+// before the first line that would pass it. max <= 0 means no cap. The error
+// is the reader's or the writer's.
+func Text(r io.Reader, w LineWriter, max int64, o Options) (TextResult, error) {
+	br := bufio.NewReaderSize(r, 64<<10)
+	t := &textState{rec: &recorder{}, opts: o}
+	var res TextResult
+	var written int64
+	var err error
+	for n := 1; ; n++ {
+		line, rerr := readLine(br, max)
+		if rerr != nil && rerr != io.EOF {
+			res.Truncated = true
+			res.Reason = ReasonReadError
+			if errors.Is(rerr, errLineTooLong) {
+				res.Reason = ReasonSizeCap
+			} else {
+				err = rerr
+			}
+			break
+		}
+		if rerr == io.EOF && len(line) == 0 {
+			break
+		}
+		out := t.line(string(line), n)
+		if max > 0 && written+int64(len(out))+1 > max {
+			res.Truncated = true
+			res.Reason = ReasonSizeCap
+			break
+		}
+		if werr := w.WriteLine([]byte(out)); werr != nil {
+			err = werr
+			break
+		}
+		written += int64(len(out)) + 1
+		if rerr == io.EOF {
+			break
+		}
+	}
+	if t.pemStart > 0 {
+		t.rec.add(RulePEMTail, lineLoc(t.pemStart), 1)
+	}
+	res.Findings = t.rec.findings()
+	return res, err
+}
+
+// readLine returns the next line without its newline. A line longer than max
+// gives errLineTooLong; at EOF the unterminated rest comes with io.EOF.
+func readLine(br *bufio.Reader, max int64) ([]byte, error) {
+	var line []byte
+	for {
+		chunk, err := br.ReadSlice('\n')
+		line = append(line, chunk...)
+		if max > 0 && int64(len(line)) > max+1 {
+			return nil, errLineTooLong
+		}
+		switch {
+		case err == nil:
+			return bytes.TrimSuffix(line, []byte("\n")), nil
+		case errors.Is(err, bufio.ErrBufferFull):
+			continue
+		case err == io.EOF:
+			return line, io.EOF
+		default:
+			return nil, err
+		}
+	}
+}
+
+// textState tracks an open PEM block across lines.
+type textState struct {
+	rec  *recorder
+	opts Options
+	// pemStart is the line of the open block's BEGIN marker, 0 when none.
+	pemStart int
+}
+
+func (t *textState) line(s string, n int) string {
+	if t.pemStart > 0 {
+		end := pemEndRe.FindStringIndex(s)
+		if end == nil {
+			return Marker
+		}
+		t.rec.add(RulePattern, lineLoc(t.pemStart), 1)
+		t.pemStart = 0
+		rest, hits := patternPass(s[end[0]:])
+		t.rec.add(RulePattern, lineLoc(n), hits)
+		if strings.TrimSpace(s[:end[0]]) != "" {
+			return Marker + rest
+		}
+		return rest
+	}
+	if b := pemBeginRe.FindStringIndex(s); b != nil && !pemEndRe.MatchString(s[b[1]:]) {
+		prefix, hits := patternPass(s[:b[0]])
+		t.rec.add(RulePattern, lineLoc(n), hits)
+		t.pemStart = n
+		out := prefix + s[b[0]:b[1]]
+		if strings.TrimSpace(s[b[1]:]) != "" {
+			out += Marker
+		}
+		return out
+	}
+	if out, rule, hits, ok := debugHeader(s, t.opts); ok {
+		t.rec.add(rule, lineLoc(n), hits)
+		return out
+	}
+	out, hits := patternPass(s)
+	t.rec.add(RulePattern, lineLoc(n), hits)
+	return out
+}

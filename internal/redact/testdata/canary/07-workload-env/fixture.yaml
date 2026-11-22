@@ -1,0 +1,19 @@
+row: 7
+title: a Deployment and Pod env[].value literal
+cases:
+  - name: pod
+    type: object
+    input: pod.yaml
+    canaries:
+      - value: kgwctl-canary-07-pod
+        rule: field
+        location: spec.containers[].env[].value
+    keep: [UPSTREAM_URL, KGW_LOG_LEVEL, info, gw-7d9f-abcde, POD_NAMESPACE]
+  - name: deployment
+    type: object
+    input: deployment.yaml
+    canaries:
+      - value: kgwctl-canary-07-deploy
+        rule: field
+        location: spec.template.spec.containers[].env[].value
+    keep: [LICENSE, KGW_XDS_SERVICE_PORT, "9977"]

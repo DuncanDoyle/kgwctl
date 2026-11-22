@@ -1,0 +1,22 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: route-a
+  namespace: team-a
+  managedFields:
+    - manager: kubectl
+      operation: Apply
+      apiVersion: gateway.networking.k8s.io/v1
+      fieldsType: FieldsV1
+      fieldsV1:
+        f:spec:
+          f:rules:
+            k:{"name":"x-kgwctl-canary-02-hdr"}:
+              f:value: {}
+spec:
+  parentRefs:
+    - name: gw
+  rules:
+    - backendRefs:
+        - name: svc-a
+          port: 8080

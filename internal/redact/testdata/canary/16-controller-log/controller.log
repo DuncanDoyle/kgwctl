@@ -1,0 +1,6 @@
+{"level":"info","ts":"2026-11-22T10:00:00Z","msg":"translated gateway kgateway-system/gw"}
+loading key -----BEGIN PRIVATE KEY-----
+MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQkgwctl-canary-16-pem
+AoIBAQC7kgwctl-canary-16-pem2Vb8nUiw
+-----END PRIVATE KEY----- done
+{"level":"error","ts":"2026-11-22T10:00:01Z","msg":"upstream call failed","apiKey":"sk-kgwctl-canary-16-skkey0000"}

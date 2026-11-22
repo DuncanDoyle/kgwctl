@@ -1,0 +1,11 @@
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: tenant-header
+  namespace: team-a
+spec:
+  headerModifiers:
+    request:
+      set:
+        - name: x-tenant-key
+          value: kgwctl-canary-10-tp

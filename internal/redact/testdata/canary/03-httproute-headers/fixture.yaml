@@ -1,0 +1,17 @@
+row: 3
+title: HTTPRoute requestHeaderModifier Authorization value and an x-api-key header-match value
+cases:
+  - name: httproute
+    type: object
+    input: httproute.yaml
+    canaries:
+      - value: kgwctl-canary-03-set
+        rule: header-value
+        location: spec.rules[].filters[].requestHeaderModifier.set[].value
+      - value: kgwctl-canary-03-add
+        rule: header-value
+        location: spec.rules[].filters[].responseHeaderModifier.add[].value
+      - value: kgwctl-canary-03-match
+        rule: header-pair
+        location: spec.rules[].matches[].headers[].value
+    keep: [Authorization, x-api-key, x-served-by, api.example.com, svc-a]

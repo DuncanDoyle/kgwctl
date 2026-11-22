@@ -1,0 +1,11 @@
+row: 5
+title: an AWS key in a DirectResponse body
+cases:
+  - name: directresponse
+    type: object
+    input: directresponse.yaml
+    canaries:
+      - value: AKIAKGWCTLCANARY0005
+        rule: field
+        location: spec.body
+    keep: [dr-a, team-a]

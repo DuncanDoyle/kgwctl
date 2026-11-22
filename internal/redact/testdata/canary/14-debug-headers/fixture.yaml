@@ -1,0 +1,18 @@
+row: 14
+title: Envoy debug log authorization and cookie lines
+cases:
+  - name: envoy-log
+    type: text
+    input: envoy.log
+    canaries:
+      - {value: kgwctl-canary-14-auth, rule: debug-header, location: "line:5"}
+      - {value: kgwctl-canary-14-cookie, rule: debug-header, location: "line:6"}
+      - {value: kgwctl-canary-14-path, rule: pattern, location: "line:3"}
+    keep:
+      - "':authority', 'api.example.com'"
+      - "':method', 'GET'"
+      - "':path', '/login?code=[redacted]'"
+      - "'x-envoy-upstream-service-time', '3'"
+      - "'authorization', '[redacted]'"
+      - "'cookie', '[redacted]'"
+      - "'x-request-id', '6b1d3c2e-1f'"

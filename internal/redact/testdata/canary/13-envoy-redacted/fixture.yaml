@@ -1,0 +1,16 @@
+row: 13
+title: fields Envoy already redacted stay [redacted] and are not reported
+cases:
+  - name: config-dump
+    type: config-dump
+    input: config_dump.json
+    keep:
+      - '"inline_bytes": "W3JlZGFjdGVkXQ=="'
+      - '"inline_string": "[redacted]"'
+      - '"secret_access_key": "[redacted]"'
+      - '"filename": "/etc/envoy/ca.crt"'
+      - api.example.com
+    canaries:
+      - value: AKIAKGWCTLCANARY0013
+        rule: pattern
+        location: configs[].dynamic_active_clusters[].cluster.metadata.filter_metadata[key][key]
