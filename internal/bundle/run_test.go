@@ -86,20 +86,14 @@ func TestRunDeadlineKeepsFinished(t *testing.T) {
 	h := newHarness(t, mustLimits(t, MinSize), redact.Options{}, "")
 	ctx, cancel := context.WithCancel(context.Background())
 	release := make(chan struct{})
-	finished := make(chan struct{})
-	// The second collector is only started once the first has finished and returned.
-	fast := fake("fast", func(ctx context.Context, s pb.Sink) error {
-		err := text("a.log", "hello\n")(ctx, s)
-		close(finished)
-		return err
-	})
+	// One worker takes collectors in order, so hung starts after fast is recorded.
+	fast := fake("fast", text("a.log", "hello\n"))
 	hung := fake("hung", func(context.Context, pb.Sink) error {
-		<-finished
 		cancel()
 		<-release
 		return nil
 	})
-	m, err := Run(ctx, []pb.Collector{fast, hung}, runEnv(), h.w, Manifest{}, RunOptions{Workers: 2})
+	m, err := Run(ctx, []pb.Collector{fast, hung}, runEnv(), h.w, Manifest{}, RunOptions{Workers: 1})
 	close(release)
 	if err != nil {
 		t.Fatal(err)
