@@ -54,7 +54,7 @@ type CollectorEntry struct {
 
 // Exclusion counts objects left out of the bundle, per kind and reason.
 type Exclusion struct {
-	// Kind is group/kind, or just the kind for the core group.
+	// Kind is group/kind, with core as the group of the core API group.
 	Kind   string           `json:"kind"`
 	Reason pb.ExcludeReason `json:"reason"`
 	Count  int              `json:"count"`
