@@ -58,9 +58,10 @@ var pairValueKeys = map[string]bool{
 	"prefix_match": true, "suffix_match": true, "contains_match": true, "safe_regex_match": true,
 }
 
-// objectMapFields are Kubernetes map fields whose keys are user data.
+// objectMapFields are Kubernetes map fields whose keys are user data; every
+// child key shows as [key], even one that equals a schema field name.
 var objectMapFields = map[string]bool{
-	"labels": true, "annotations": true, "matchLabels": true, "nodeSelector": true, "extraLabels": true,
+	"selector": true, "labels": true, "annotations": true, "matchLabels": true, "nodeSelector": true, "extraLabels": true,
 	"extraAnnotations": true, "data": true, "stringData": true, "binaryData": true,
 }
 
@@ -80,19 +81,20 @@ func (w *walker) walk(n *node, at, key string, z zone) {
 		w.object(n, at, key, z)
 	case kindArray:
 		list := w.mode == modeObject && key == "items" && at == w.base+"items"
+		el := capLoc(at + "[]")
 		for _, e := range n.elems {
 			if e.kind == kindString {
-				w.str(e, at+"[]", key, z, false, false)
+				w.str(e, el, key, z, false, false)
 				continue
 			}
 			if k, _ := e.get("kind"); list && k != "" {
 				// A List member gets its own kind's rules.
 				sub := *w
-				sub.kind, sub.base = k, at+"[]."
-				sub.walk(e, at+"[]", key, z&^(zMapKeys|zHeaderMap))
+				sub.kind, sub.base = k, el+"."
+				sub.walk(e, el, key, z&^(zMapKeys|zHeaderMap))
 				continue
 			}
-			w.walk(e, at+"[]", key, z&^(zMapKeys|zHeaderMap))
+			w.walk(e, el, key, z&^(zMapKeys|zHeaderMap))
 		}
 	case kindString:
 		w.str(n, at, key, z, false, false)
@@ -111,6 +113,8 @@ func (w *walker) literal(n *node, at, key string, z zone) {
 	case z&zPair != 0:
 		n.kind = kindString
 		w.set(n, RuleHeaderPair, at)
+	case keptLiteralKey(key) && string(n.lit) != "true" && string(n.lit) != "false":
+		// a token-bucket number stays
 	case sensitiveKey(key), z&zKeyName != 0 && !refKey(key):
 		n.kind = kindString
 		w.set(n, RuleKeyName, at)
@@ -153,9 +157,9 @@ func (w *walker) object(n *node, at, key string, z zone) {
 // loc is the location of member key of the object at at.
 func (w *walker) loc(at, key string, z zone) string {
 	if z&(zMapKeys|zMapAll) != 0 || !schemaFields[key] {
-		return at + "[key]"
+		return capLoc(at + "[key]")
 	}
-	return joinLoc(at, key)
+	return capLoc(joinLoc(at, key))
 }
 
 // dropped applies the managed-fields and last-applied rules.
@@ -194,6 +198,10 @@ func (w *walker) childZone(z zone, parent, key string) zone {
 			z |= zJWKS
 		case "filter_metadata":
 			z |= zMapAll
+		case "metadata":
+			if parent == "node" {
+				z |= zMapKeys
+			}
 		case "typed_filter_metadata", "typed_per_filter_config", "providers",
 			"typed_extension_protocol_options", "requirement_map":
 			z |= zMapKeys

@@ -40,20 +40,25 @@ const (
 // after lowercasing and dropping '_', '-' and '.'.
 var sensitiveKeyRe = regexp.MustCompile(`(password|passwd|secret|token|apikey|credential|privatekey|accesskey|secretkey|signature|licensekey)s?$`)
 
-// keptKeyNames are rate-limit token-bucket settings, normalized like
-// sensitiveKey's input; they name no credential.
-var keptKeyNames = map[string]bool{"maxtokens": true, "tokensperfill": true, "fillinterval": true}
+// keptKeyNames are rate-limit token-bucket fields, normalized like
+// sensitiveKey's input. Only their numeric values stay.
+var keptKeyNames = map[string]bool{"maxtokens": true, "tokensperfill": true}
 
-// sensitiveKey reports whether a key or name falls under the key-name rule.
-func sensitiveKey(k string) bool {
-	k = strings.Map(func(r rune) rune {
+func normKey(k string) string {
+	return strings.Map(func(r rune) rune {
 		if r == '_' || r == '-' || r == '.' {
 			return -1
 		}
 		return r
 	}, strings.ToLower(k))
-	return !keptKeyNames[k] && sensitiveKeyRe.MatchString(k)
 }
+
+// sensitiveKey reports whether a key or name falls under the key-name rule.
+func sensitiveKey(k string) bool { return sensitiveKeyRe.MatchString(normKey(k)) }
+
+// keptLiteralKey reports whether a number under field k stays: the
+// token-bucket fields name no credential.
+func keptLiteralKey(k string) bool { return keptKeyNames[normKey(k)] }
 
 // sensitiveHeaders is the header-pair rule's list, design §7.
 var sensitiveHeaders = map[string]bool{

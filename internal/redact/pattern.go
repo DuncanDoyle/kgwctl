@@ -39,7 +39,10 @@ var patterns = []patternRule{
 	{re: regexp.MustCompile(`(?i)(` + credAssign + `(?:\\?["'])?)[^\s"'&,;<>{}\[\]\\]+`), keep: 1},
 	// Authorization credentials.
 	{re: regexp.MustCompile(`(?i)(\bbearer\s+)[A-Za-z0-9._~+/=-]+`), keep: 1},
-	// "Basic authentication" is prose: an all-lowercase word is skipped.
+	// After an authorization header name, the Basic credential is redacted
+	// whatever its shape.
+	{re: regexp.MustCompile(`(?i)(\bauthorization(?:\\?["'])?\s*[:=]\s*(?:\\?["'])?basic\s+)[^\s"',;\\\[\]]+`), keep: 1},
+	// Elsewhere "basic authentication" is prose: an all-lowercase word is skipped.
 	{re: regexp.MustCompile(`(?i)(\bbasic\s+)([A-Za-z0-9+/]{8,}={0,2})`), keep: 1,
 		skip: func(sub []string) bool {
 			return sub[2] == strings.ToLower(sub[2]) && !strings.ContainsAny(sub[2], "0123456789+/=")

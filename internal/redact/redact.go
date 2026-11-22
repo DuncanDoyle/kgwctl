@@ -50,6 +50,8 @@ type Options struct {
 type recorder struct {
 	idx  map[Finding]int
 	list []Finding
+	// limit, when positive, caps distinct findings; omitted counts the rest.
+	limit, omitted int
 }
 
 func (r *recorder) add(rule Rule, loc string, n int) {
@@ -62,6 +64,10 @@ func (r *recorder) add(rule Rule, loc string, n int) {
 	}
 	if i, ok := r.idx[k]; ok {
 		r.list[i].Count += n
+		return
+	}
+	if r.limit > 0 && len(r.list) >= r.limit {
+		r.omitted++
 		return
 	}
 	r.idx[k] = len(r.list)
@@ -83,4 +89,35 @@ func joinLoc(at, rel string) string {
 		return at + rel
 	}
 	return at + "." + rel
+}
+
+// maxLoc caps a rendered location; locCut marks the cut middle.
+const (
+	maxLoc = 512
+	locCut = "[...]"
+)
+
+// capLoc keeps a location within maxLoc bytes: its head, the marker, then
+// the newest segments, so suffix-based rules still match a deep path.
+func capLoc(s string) string {
+	if len(s) <= maxLoc {
+		return s
+	}
+	head, rest := "", ""
+	if i := strings.Index(s, locCut); i >= 0 {
+		head, rest = s[:i], s[i+len(locCut):]
+	} else {
+		j := strings.LastIndexAny(s[:maxLoc/2], ".[")
+		if j <= 0 {
+			j = maxLoc / 2
+		}
+		head, rest = s[:j], s[j:]
+	}
+	if room := maxLoc - len(head) - len(locCut); len(rest) > room {
+		rest = rest[len(rest)-room:]
+		if k := strings.IndexAny(rest, ".["); k >= 0 {
+			rest = rest[k:]
+		}
+	}
+	return head + locCut + rest
 }

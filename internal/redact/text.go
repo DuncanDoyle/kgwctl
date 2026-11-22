@@ -23,7 +23,12 @@ type TextResult struct {
 	Truncated bool
 	// Reason is ReasonSizeCap or ReasonReadError when Truncated.
 	Reason string
+	// FindingsOmitted counts distinct findings past MaxTextFindings.
+	FindingsOmitted int
 }
+
+// MaxTextFindings caps the distinct findings Text returns.
+const MaxTextFindings = 4096
 
 // Truncation reasons.
 const (
@@ -47,7 +52,7 @@ var errLineTooLong = errors.New("line over the cap")
 // Findings cover written lines only. The error is the reader's or the writer's.
 func Text(r io.Reader, w LineWriter, max int64, o Options) (TextResult, error) {
 	br := bufio.NewReaderSize(r, 64<<10)
-	all := &recorder{}
+	all := &recorder{limit: MaxTextFindings}
 	t := &textState{opts: o}
 	var res TextResult
 	var written int64
@@ -89,7 +94,7 @@ func Text(r io.Reader, w LineWriter, max int64, o Options) (TextResult, error) {
 	if t.pemStart > 0 {
 		all.add(RulePEMTail, lineLoc(t.pemStart), 1)
 	}
-	res.Findings = all.findings()
+	res.Findings, res.FindingsOmitted = all.findings(), all.omitted
 	return res, err
 }
 
