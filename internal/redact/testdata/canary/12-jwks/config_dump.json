@@ -56,6 +56,12 @@
                                                                     "local_jwks": {
                                                                         "inline_string": "{\"keys\": [kgwctl-canary-12-cd-invalid"
                                                                     }
+                                                                },
+                                                                "p7": {
+                                                                    "issuer": "https://issuer.example.com",
+                                                                    "local_jwks": {
+                                                                        "inline_bytes": "eyJrZXlzIjpbeyJrdHkiOiJFQyIsImtpZCI6ImVjLWJ5dGVzIiwiY3J2IjoiUC0yNTYiLCJ4IjoiZjgzT0ozRDJ4RjFCZzh2dWI5dExlMWdITXpWNzZlOFR1czl1UEh2UlZFVSIsInkiOiJ4X0ZFelJ1OW0zNkhMTl90dWU2NTlMTnBYVzZwQ3lTdGlrWWpLSVdJNWEwIiwiZCI6Imtnd2N0bC1jYW5hcnktMTItY2QtYnl0ZXMifV19"
+                                                                    }
                                                                 }
                                                             }
                                                         }

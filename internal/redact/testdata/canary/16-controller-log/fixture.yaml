@@ -8,6 +8,7 @@ cases:
       - {value: kgwctl-canary-16-pem, rule: pattern, location: "line:2"}
       - {value: kgwctl-canary-16-pem2, rule: pattern, location: "line:2"}
       - {value: kgwctl-canary-16-skkey, rule: pattern, location: "line:6"}
+      - {value: kgwctl-canary-16-escaped, rule: pattern, location: "line:7"}
     keep:
       - "-----BEGIN PRIVATE KEY-----"
       - "-----END PRIVATE KEY-----"

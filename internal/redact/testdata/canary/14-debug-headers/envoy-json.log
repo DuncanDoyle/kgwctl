@@ -1,0 +1,1 @@
+2026-11-22T10:00:00.000000000Z {"time":"2026-11-22T10:00:00.000Z","level":"debug","logger":"http","msg":"request headers complete (end_stream=true):\n':authority', 'api.example.com'\n':method', 'GET'\n'x-tenant-key', 'kgwctl-canary-14-json-tenant'\n'cookie', 'session=kgwctl-canary-14-json-cookie'"}

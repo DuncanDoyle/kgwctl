@@ -25,3 +25,13 @@ cases:
         rule: debug-header
         location: line:3
     keep: ["'x-tenant-key', '[redacted]'", "':method', 'GET'"]
+  - name: debug-log-timestamped
+    type: text
+    input: envoy-timestamped.log
+    canaries:
+      - {value: kgwctl-canary-10-dbgts, rule: debug-header, location: "line:3"}
+      - {value: kgwctl-canary-10-dbgoff, rule: debug-header, location: "line:4"}
+    keep:
+      - "2026-11-22T10:00:00.000000000Z 'x-tenant-key', '[redacted]'"
+      - "2026-11-22T11:00:00.5+01:00 'x-tenant-key', '[redacted]'"
+      - "2026-11-22T10:00:00.000000000Z ':method', 'GET'"

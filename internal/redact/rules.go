@@ -38,7 +38,7 @@ const (
 
 // sensitiveKeyRe is the key-name rule: a credential word at the end of a key,
 // after lowercasing and dropping '_', '-' and '.'.
-var sensitiveKeyRe = regexp.MustCompile(`(password|passwd|secret|token|apikey|credential|credentials|privatekey|accesskey|secretkey|signature|licensekey)$`)
+var sensitiveKeyRe = regexp.MustCompile(`(password|passwd|secret|token|apikey|credential|privatekey|accesskey|secretkey|signature|licensekey)s?$`)
 
 // sensitiveKey reports whether a key or name falls under the key-name rule.
 func sensitiveKey(k string) bool {

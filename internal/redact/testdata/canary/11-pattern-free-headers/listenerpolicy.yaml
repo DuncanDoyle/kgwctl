@@ -18,3 +18,8 @@ spec:
           initialMetadata:
             - key: x-collector-tenant
               value: kgwctl-canary-11-meta
+    httpSettings:
+      earlyRequestHeaderModifier:
+        set:
+          - name: x-tenant-key
+            value: kgwctl-canary-11-early

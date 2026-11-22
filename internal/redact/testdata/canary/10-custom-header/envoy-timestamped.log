@@ -1,0 +1,4 @@
+2026-11-22T10:00:00.000000000Z [2026-11-22 10:00:00.000][15][debug][http] [source/common/http/conn_manager_impl.cc:1135] request headers complete (end_stream=true):
+2026-11-22T10:00:00.000000000Z ':method', 'GET'
+2026-11-22T10:00:00.000000000Z 'x-tenant-key', 'kgwctl-canary-10-dbgts'
+2026-11-22T11:00:00.5+01:00 'x-tenant-key', 'kgwctl-canary-10-dbgoff'

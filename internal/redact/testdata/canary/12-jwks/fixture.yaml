@@ -22,4 +22,5 @@ cases:
       - {value: kgwctl-canary-12-cd-extra, rule: jwks, location: "configs[].dynamic_listeners[].active_state.listener.filter_chains[].filters[].typed_config.http_filters[].typed_config.providers[key].local_jwks.inline_string[key]"}
       - {value: kgwctl-canary-12-cd-shape, rule: jwks, location: "configs[].dynamic_listeners[].active_state.listener.filter_chains[].filters[].typed_config.http_filters[].typed_config.providers[key].local_jwks.inline_string"}
       - {value: kgwctl-canary-12-cd-invalid, rule: jwks, location: "configs[].dynamic_listeners[].active_state.listener.filter_chains[].filters[].typed_config.http_filters[].typed_config.providers[key].local_jwks.inline_string"}
+      - {value: kgwctl-canary-12-cd-bytes, rule: jwks, location: "configs[].dynamic_listeners[].active_state.listener.filter_chains[].filters[].typed_config.http_filters[].typed_config.providers[key].local_jwks.inline_bytes.keys[].d"}
     keep: [rsa-1, ec-1, ed-1, AQAB, P-256, Ed25519, https://issuer.example.com]

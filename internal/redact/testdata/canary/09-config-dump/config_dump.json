@@ -86,6 +86,9 @@
                 "request_headers_to_add": [
                   {"header": {"key": "authorization", "value": "Bearer kgwctl-canary-09-rh"}, "append_action": "OVERWRITE_IF_EXISTS_OR_ADD"}
                 ],
+                "response_headers_to_add": [
+                  {"header": {"key": "x-upstream-auth", "raw_value": "QmVhcmVyIGtnd2N0bC1jYW5hcnktMDktcmF3"}}
+                ],
                 "routes": [
                   {
                     "match": {"prefix": "/"},

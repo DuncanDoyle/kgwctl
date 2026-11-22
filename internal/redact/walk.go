@@ -36,7 +36,19 @@ const (
 	zMapKeys
 	// zMapAll: every key below is a map key.
 	zMapAll
+	// zKeyName: a key above names a credential; scalars below are redacted.
+	zKeyName
 )
+
+// refKey is a member that names or locates a credential rather than holding
+// it, such as secret.secretName; it stays under zKeyName.
+func refKey(key string) bool {
+	switch key {
+	case "name", "namespace", "kind", "group", "apiVersion", "key", "path", "type", "@type":
+		return true
+	}
+	return strings.HasSuffix(key, "Name") || strings.HasSuffix(key, "_name") || strings.HasSuffix(key, "Namespace")
+}
 
 const lastApplied = "kubectl.kubernetes.io/last-applied-configuration"
 
@@ -45,6 +57,12 @@ const lastApplied = "kubectl.kubernetes.io/last-applied-configuration"
 var pairValueKeys = map[string]bool{
 	"value": true, "raw_value": true, "string_match": true, "exact_match": true,
 	"prefix_match": true, "suffix_match": true, "contains_match": true, "safe_regex_match": true,
+}
+
+// objectMapFields are Kubernetes map fields whose keys are user data.
+var objectMapFields = map[string]bool{
+	"labels": true, "annotations": true, "matchLabels": true, "nodeSelector": true, "extraLabels": true,
+	"extraAnnotations": true, "data": true, "stringData": true, "binaryData": true,
 }
 
 // fieldRe is a key shown literally in a location; anything else is [key].
@@ -138,6 +156,9 @@ func (w *walker) dropped(at, key, loc string) bool {
 // childZone is the zone of the children of member key, whose object is held by parent.
 func (w *walker) childZone(z zone, parent, key string) zone {
 	z &^= zMapKeys | zHeaderMap
+	if sensitiveKey(key) {
+		z |= zKeyName
+	}
 	switch w.mode {
 	case modeConfigDump:
 		switch key {
@@ -157,19 +178,19 @@ func (w *walker) childZone(z zone, parent, key string) zone {
 			z |= zMapKeys
 		}
 	case modeObject:
-		switch key {
-		case "requestHeaderModifier", "responseHeaderModifier", "headerModifiers", "initialMetadata":
+		switch {
+		// request, response and early header modifiers of routes and ListenerPolicy
+		case strings.HasSuffix(key, "HeaderModifier"), key == "headerModifiers", key == "initialMetadata":
 			z |= zHeaderValue
-		case "headers":
+		case key == "headers":
 			if parent == "tunnel" || strings.HasSuffix(w.kind, "ListenerPolicy") {
 				z |= zHeaderValue
 			}
-		case "headersToAdd":
+		case key == "headersToAdd":
 			z |= zHeaderMap | zMapKeys
-		case "basicAuth":
+		case key == "basicAuth":
 			z |= zBasicAuth
-		case "labels", "annotations", "matchLabels", "nodeSelector", "extraLabels",
-			"extraAnnotations", "data", "stringData", "binaryData":
+		case objectMapFields[key]:
 			z |= zMapKeys
 		}
 	}
@@ -202,7 +223,7 @@ func (w *walker) str(n *node, at, key string, z zone, pairValue, envValue bool) 
 		w.set(n, RuleField, at)
 	case w.mode == modeObject && key == "inline" && strings.HasSuffix(at, "jwks.local.inline"):
 		w.jwks(n, at, false)
-	case sensitiveKey(key):
+	case sensitiveKey(key), z&zKeyName != 0 && !refKey(key):
 		w.set(n, RuleKeyName, at)
 	default:
 		s, hits := patternPass(n.str)

@@ -32,4 +32,7 @@ cases:
       - value: kgwctl-canary-11-meta
         rule: header-value
         location: spec.default.accessLog[].grpcService.initialMetadata[].value
+      - value: kgwctl-canary-11-early
+        rule: header-value
+        location: spec.default.httpSettings.earlyRequestHeaderModifier.set[].value
     keep: [x-collector-tenant]

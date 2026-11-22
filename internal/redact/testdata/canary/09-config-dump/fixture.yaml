@@ -20,4 +20,7 @@ cases:
       - value: kgwctl-canary-09-src
         rule: lua
         location: configs[].dynamic_listeners[].active_state.listener.filter_chains[].filters[].typed_config.http_filters[].typed_config.source_codes[key].inline_string
+      - value: kgwctl-canary-09-raw
+        rule: header-value
+        location: configs[].dynamic_route_configs[].route_config.virtual_hosts[].response_headers_to_add[].header.raw_value
     keep: [authorization, x-ext-authz-key, api.example.com, kube_team-a_svc-a_8080, listener~80, x-jwt]

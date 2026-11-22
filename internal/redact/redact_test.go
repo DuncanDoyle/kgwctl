@@ -59,6 +59,8 @@ func TestHeaderValueAnyName(t *testing.T) {
 					"headers":[{"name":%[1]q,"value":%[2]q}]}}}`,
 				`{"apiVersion":"gateway.kgateway.dev/v1alpha1","kind":"ListenerPolicy","metadata":{"name":"l"},"spec":{"default":{
 					"accessLog":[{"grpcService":{"initialMetadata":[{"key":%[1]q,"value":%[2]q}]}}]}}}`,
+				`{"apiVersion":"gateway.kgateway.dev/v1alpha1","kind":"ListenerPolicy","metadata":{"name":"l"},"spec":{"default":{
+					"httpSettings":{"earlyRequestHeaderModifier":{"set":[{"name":%[1]q,"value":%[2]q}],"add":[{"name":%[1]q,"value":%[2]q}]}}}}}`,
 			}
 			for _, tmpl := range objects {
 				u := &unstructured.Unstructured{}
@@ -108,6 +110,9 @@ func TestDebugHeaderLines(t *testing.T) {
 		"':method', 'GET'",
 		"'x-envoy-upstream-service-time', '3'",
 		"':path', '/a?token=v'",
+		"2026-11-22T10:00:00.000000000Z 'x-tenant-key', 'v'",
+		"2026-11-22T11:00:00+01:00 ':method', 'GET'",
+		`{"msg":"request headers complete:\n':method', 'GET'\n'x-tenant-key', 'v'\n'cookie', 'a=v'"}`,
 	}, "\n") + "\n"
 	var w lines
 	res, err := redact.Text(strings.NewReader(in), &w, 1<<20, redact.Options{})
@@ -120,13 +125,52 @@ func TestDebugHeaderLines(t *testing.T) {
 		"':method', 'GET'",
 		"'x-envoy-upstream-service-time', '3'",
 		"':path', '/a?token=[redacted]'",
+		"2026-11-22T10:00:00.000000000Z 'x-tenant-key', '[redacted]'",
+		"2026-11-22T11:00:00+01:00 ':method', 'GET'",
+		`{"msg":"request headers complete:\n':method', 'GET'\n'x-tenant-key', '[redacted]'\n'cookie', '[redacted]'"}`,
 	}
 	if !reflect.DeepEqual(w.l, want) {
 		t.Errorf("got %q\nwant %q", w.l, want)
 	}
 	if !hasFinding(res.Findings, redact.RuleDebugHeader, "line:1") || !hasFinding(res.Findings, redact.RuleDebugHeader, "line:2") ||
-		!hasFinding(res.Findings, redact.RulePattern, "line:5") {
+		!hasFinding(res.Findings, redact.RulePattern, "line:5") || !hasFinding(res.Findings, redact.RuleDebugHeader, "line:6") ||
+		!hasFinding(res.Findings, redact.RuleDebugHeader, "line:8") {
 		t.Errorf("findings %+v", res.Findings)
+	}
+}
+
+func TestKeyNamePluralAndNested(t *testing.T) {
+	in := `{"apiKeys":["plainkey1"],"tokens":["plaintok2"],"password":{"value":"plainpw3"},
+		"secret":{"name":"keepname","value":"plainsv4"},"clientSecrets":[{"name":"keepname2","data":"plaincs5"}]}`
+	out, fs, err := redact.JSON([]byte(in), redact.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []string{"plainkey1", "plaintok2", "plainpw3", "plainsv4", "plaincs5"} {
+		if strings.Contains(string(out), s) {
+			t.Errorf("%q kept:\n%s", s, out)
+		}
+	}
+	for _, s := range []string{"keepname", "keepname2"} {
+		if !strings.Contains(string(out), s) {
+			t.Errorf("reference name %q lost:\n%s", s, out)
+		}
+	}
+	for _, loc := range []string{"apiKeys[]", "tokens[]", "password.value", "secret.value", "clientSecrets[].data"} {
+		if !hasFinding(fs, redact.RuleKeyName, loc) {
+			t.Errorf("no key-name finding at %q: %+v", loc, fs)
+		}
+	}
+}
+
+func TestEscapedJSONAssignment(t *testing.T) {
+	in := `{"level":"error","error":"token exchange failed: {\"access_token\":\"opaqueValue123\"}"}` + "\n"
+	var w lines
+	if _, err := redact.Text(strings.NewReader(in), &w, 1<<20, redact.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.String(); strings.Contains(got, "opaqueValue123") || !strings.Contains(got, `\"access_token\":\"[redacted]\"}`) {
+		t.Errorf("got %s", got)
 	}
 }
 

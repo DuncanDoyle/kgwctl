@@ -21,8 +21,9 @@ var patterns = []patternRule{
 	{re: regexp.MustCompile(`(-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----)(?s:.*?)(-----END [A-Z0-9 ]*PRIVATE KEY-----|\z)`), keep: 1, tail: 2},
 	// Credential query values: ?access_token=, &X-Amz-Signature=, ?code=.
 	{re: regexp.MustCompile(`(?i)([?&](?:[a-z0-9_.-]*(?:token|secret|password|passwd|signature|credential|api[_-]?key|apikey)|code|sig|key)=)[^&\s"'#\[\]]+`), keep: 1},
-	// Credential assignments in free text: password=..., "apiKey":"...".
-	{re: regexp.MustCompile(`(?i)(\b[a-z0-9_.-]*(?:password|passwd|secret|token|api[_-]?key|apikey|credentials?|private[_-]?key|access[_-]?key|client[_-]?secret|signature)["']?\s*[:=]\s*["']?)[^\s"'&,;<>{}\[\]]+`), keep: 1},
+	// Credential assignments in free text: password=..., "apiKey":"...", and
+	// the same inside an escaped JSON string (\"access_token\":\"...\").
+	{re: regexp.MustCompile(`(?i)(\b[a-z0-9_.-]*(?:password|passwd|secret|token|api[_-]?key|apikey|credentials?|private[_-]?key|access[_-]?key|client[_-]?secret|signature)s?(?:\\?["'])?\s*[:=]\s*(?:\\?["'])?)[^\s"'&,;<>{}\[\]\\]+`), keep: 1},
 	// Authorization credentials.
 	{re: regexp.MustCompile(`(?i)(\bbearer\s+)[A-Za-z0-9._~+/=-]+`), keep: 1},
 	// "Basic authentication" is prose: an all-lowercase word is skipped.

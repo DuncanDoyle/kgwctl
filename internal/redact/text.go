@@ -118,7 +118,17 @@ type textState struct {
 	pemStart int
 }
 
+// timestampRe is the kubelet's prefix on logs read with timestamps=true.
+var timestampRe = regexp.MustCompile(`^\d{4}-\d\d-\d\dT[0-9:.]+(?:Z|[+-]\d\d:\d\d)\s+`)
+
+// line redacts one line; a kubelet timestamp prefix is kept and the rules run
+// on the rest.
 func (t *textState) line(s string, n int) string {
+	ts := timestampRe.FindString(s)
+	return ts + t.body(s[len(ts):], n)
+}
+
+func (t *textState) body(s string, n int) string {
 	if t.pemStart > 0 {
 		end := pemEndRe.FindStringIndex(s)
 		if end == nil {
@@ -143,11 +153,9 @@ func (t *textState) line(s string, n int) string {
 		}
 		return out
 	}
-	if out, rule, hits, ok := debugHeader(s, t.opts); ok {
-		t.rec.add(rule, lineLoc(n), hits)
-		return out
-	}
-	out, hits := patternPass(s)
+	s, hits := debugHeaders(s, t.opts)
+	t.rec.add(RuleDebugHeader, lineLoc(n), hits)
+	s, hits = patternPass(s)
 	t.rec.add(RulePattern, lineLoc(n), hits)
-	return out
+	return s
 }

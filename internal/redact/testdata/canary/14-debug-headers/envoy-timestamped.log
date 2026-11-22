@@ -1,0 +1,6 @@
+2026-11-22T10:00:00.000000000Z [2026-11-22 10:00:00.000][15][debug][http] [source/common/http/conn_manager_impl.cc:1135] request headers complete (end_stream=true):
+2026-11-22T10:00:00.000000000Z ':authority', 'api.example.com'
+2026-11-22T10:00:00.000000000Z ':path', '/login?code=kgwctl-canary-14-ts-path'
+2026-11-22T10:00:00.000000000Z ':method', 'GET'
+2026-11-22T10:00:00.000000000Z 'authorization', 'Bearer kgwctl-canary-14-ts-auth'
+2026-11-22T10:00:00.000000000Z 'cookie', 'session=kgwctl-canary-14-ts-cookie'

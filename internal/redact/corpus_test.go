@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -189,6 +190,10 @@ func checkCase(t *testing.T, c fixCase, r result) {
 	if r.err != nil {
 		scan += "\n" + r.err.Error()
 	}
+	decoded := decodeBase64Runs(r.out)
+	if strings.Contains(decoded, "kgwctl-canary") {
+		t.Errorf("a base64 run in the output decodes to a canary:\n%s", decoded)
+	}
 	for _, cn := range c.Canaries {
 		for _, f := range r.findings {
 			if strings.Contains(f.Location, cn.Value) {
@@ -202,7 +207,7 @@ func checkCase(t *testing.T, c fixCase, r result) {
 		if strings.Contains(r.out, cn.Value) {
 			t.Errorf("canary %q leaked", cn.Value)
 		}
-		if b64 := base64.StdEncoding.EncodeToString([]byte(cn.Value)); strings.Contains(r.out, b64) {
+		if strings.Contains(decoded, cn.Value) {
 			t.Errorf("canary %q leaked as base64", cn.Value)
 		}
 		if cn.Rule != "" && !hasFinding(r.findings, redact.Rule(cn.Rule), cn.Location) {
@@ -222,6 +227,31 @@ func checkCase(t *testing.T, c fixCase, r result) {
 			t.Errorf("malformed finding %+v", f)
 		}
 	}
+}
+
+// base64Run is a run that may be base64, in either alphabet, padded or not.
+var base64Run = regexp.MustCompile(`[A-Za-z0-9+/_-]{16,}={0,2}`)
+
+// decodeBase64Runs decodes every base64-looking run of s at each of the four
+// alignments, in both alphabets, and returns the decoded bytes joined.
+func decodeBase64Runs(s string) string {
+	var b strings.Builder
+	for _, run := range base64Run.FindAllString(s, -1) {
+		run = strings.TrimRight(run, "=")
+		for off := 0; off < 4 && off < len(run); off++ {
+			r := run[off:]
+			// Whole quanta always decode; the full run also covers a partial tail.
+			for _, in := range []string{r[:len(r)-len(r)%4], r} {
+				for _, e := range []*base64.Encoding{base64.RawStdEncoding, base64.RawURLEncoding} {
+					if d, err := e.DecodeString(in); err == nil {
+						b.Write(d)
+						b.WriteByte('\n')
+					}
+				}
+			}
+		}
+	}
+	return b.String()
 }
 
 func hasFinding(fs []redact.Finding, rule redact.Rule, loc string) bool {

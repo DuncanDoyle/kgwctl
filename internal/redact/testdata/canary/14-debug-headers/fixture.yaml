@@ -16,3 +16,21 @@ cases:
       - "'authorization', '[redacted]'"
       - "'cookie', '[redacted]'"
       - "'x-request-id', '6b1d3c2e-1f'"
+  - name: envoy-log-timestamped
+    type: text
+    input: envoy-timestamped.log
+    canaries:
+      - {value: kgwctl-canary-14-ts-auth, rule: debug-header, location: "line:5"}
+      - {value: kgwctl-canary-14-ts-cookie, rule: debug-header, location: "line:6"}
+      - {value: kgwctl-canary-14-ts-path, rule: pattern, location: "line:3"}
+    keep:
+      - "2026-11-22T10:00:00.000000000Z ':authority', 'api.example.com'"
+      - "2026-11-22T10:00:00.000000000Z 'authorization', '[redacted]'"
+  - name: envoy-json-log
+    type: text
+    input: envoy-json.log
+    canaries:
+      - {value: kgwctl-canary-14-json-tenant, rule: debug-header, location: "line:1"}
+      - {value: kgwctl-canary-14-json-cookie, rule: debug-header, location: "line:1"}
+    keep:
+      - "\\n':authority', 'api.example.com'\\n':method', 'GET'\\n'x-tenant-key', '[redacted]'\\n'cookie', '[redacted]'\"}"
