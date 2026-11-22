@@ -45,7 +45,7 @@ Design changes without a decisions.md entry and owner approval.
 
 ## Program
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
-- Read 2026-11-22 at kgateway-tooling `841f508` (main after the owner-approved history rewrite; E7 text merged, P-008, P-009, E13, E14). Phase 4 waits on no edge. The program session asked the bundle to capture per-replica convergence inputs (§5 of the design).
+- Read 2026-11-22 at kgateway-tooling `56c8868` (main after the owner-approved history rewrite; E7 text merged, P-008, P-009, E13, E14). Phase 4 waits on no edge. The program session asked the bundle to capture per-replica convergence inputs (§5 of the design).
 - Consumed: E1 and E11 — xdsview `v0.4.3` (kgwctl#1, kgwctl#10).
 - Waiting on: E7 (Phase 6). E6 (xdsview#32) before Phase 7.
 - Consumers: none
