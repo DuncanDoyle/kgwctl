@@ -14,4 +14,4 @@ cases:
       - value: kgwctl-canary-04-jwt
         rule: pattern
         location: spec.transformation.request.set[].value
-    keep: [alice, x-foo, x-jwt, "{{ request_header(\"x-in\") }}"]
+    keep: [tp-a, alice,x-foo, x-jwt, "{{ request_header(\"x-in\") }}"]

@@ -16,6 +16,15 @@ cases:
     canaries:
       - {value: kgwctl-canary-17-panic}
     keep: ["panic in collector logs"]
+  - name: quoted-and-basic
+    type: error-text
+    input: quoted.txt
+    canaries:
+      - {value: kgwctl-canary-17-q1}
+      - {value: kgwctl-canary-17-q2}
+      - {value: two words}
+      - {value: a2d3Y3RsLWNhbmFyeS0xNy1iYXNpYw}
+    keep: ["login failed: password=\"[redacted]\" secret='[redacted]' authorization: basic [redacted]"]
   - name: malformed-json
     type: json
     input: malformed.json

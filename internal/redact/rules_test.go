@@ -21,7 +21,7 @@ func TestKeyUnderCredentialRedacted(t *testing.T) {
 	if strings.Contains(string(out), "plainvalue") {
 		t.Errorf("value under apiKeys[].key kept:\n%s", out)
 	}
-	if !hasFinding(fs, redact.RuleKeyName, "apiKeys[].key") {
+	if !hasFinding(fs, redact.RuleKeyName, "[key][].key") {
 		t.Errorf("findings %+v", fs)
 	}
 }

@@ -16,7 +16,21 @@ cases:
       - {value: kgwctl-canary-19-mapkey, findingsOnly: true}
       - {value: kgwctl-canary-19-mapval, rule: pattern, location: "metadata.annotations[key]"}
       - {value: kgwctl-canary-19-extra, rule: header-pair, location: "spec.rules[].matches[].headers[].value"}
-    keep: [x-kgwctl-custom]
+    keep: [route-b, x-kgwctl-custom]
+  - name: selector-key
+    type: object
+    input: service.yaml
+    canaries:
+      - {value: teamblue_canary19sel, findingsOnly: true}
+      - {value: kgwctl-canary-19-sel, rule: pattern, location: "spec.selector[key]"}
+    keep: [svc-sel, team-a, "8080"]
+  - name: node-metadata-key
+    type: config-dump
+    input: node_metadata.json
+    canaries:
+      - {value: teamblue_canary19node, findingsOnly: true}
+      - {value: kgwctl-canary-19-node, rule: pattern, location: "configs[].bootstrap.node.metadata[key]"}
+    keep: [gw-7d9f.team-a, "kgateway-kube-gateway-api~team-a~gw"]
 deferred:
   - part: the --redact-header value and an -o path in the manifest and member names
     task: "4.2.5"

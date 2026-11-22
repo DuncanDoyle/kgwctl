@@ -21,7 +21,7 @@ func debugHeaders(s string, o Options) (string, int) {
 	if out, ok := debugHeader(s, o); ok {
 		return out, 1
 	}
-	segs := strings.Split(s, jsonNewline)
+	segs := splitJSONNewlines(s)
 	hits := 0
 	for i, seg := range segs {
 		if out, ok := debugHeader(seg, o); ok {
@@ -30,6 +30,24 @@ func debugHeaders(s string, o Options) (string, int) {
 		}
 	}
 	return strings.Join(segs, jsonNewline), hits
+}
+
+// splitJSONNewlines splits s at each \n escape, skipping an escaped backslash
+// followed by n (\\n).
+func splitJSONNewlines(s string) []string {
+	var segs []string
+	start := 0
+	for i := 0; i+1 < len(s); i++ {
+		if s[i] != '\\' {
+			continue
+		}
+		if s[i+1] == 'n' {
+			segs = append(segs, s[start:i])
+			start = i + 2
+		}
+		i++
+	}
+	return append(segs, s[start:])
 }
 
 // debugHeader redacts s when it is one header line whose value is redacted.

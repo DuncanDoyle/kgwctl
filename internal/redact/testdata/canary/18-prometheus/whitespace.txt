@@ -1,0 +1,4 @@
+   # HELP kgateway_xds_pushes_total Pushes. Debug Bearer kgwctl-canary-18-indent
+	# TYPE kgateway_xds_pushes_total counter
+kgateway_xds_pushes_total{gateway="gw",auth=	"Bearer kgwctl-canary-18-tab"} 4
+  # note basic a2d3Y3RsLWNhbmFyeS0xOC1iYXNpYw==

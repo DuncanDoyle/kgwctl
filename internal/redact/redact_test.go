@@ -156,7 +156,8 @@ func TestKeyNamePluralAndNested(t *testing.T) {
 			t.Errorf("reference name %q lost:\n%s", s, out)
 		}
 	}
-	for _, loc := range []string{"apiKeys[]", "tokens[]", "password.value", "secret.value", "clientSecrets[].data"} {
+	// apiKeys, tokens and clientSecrets are not schema fields, so they show as [key].
+	for _, loc := range []string{"[key][]", "password.value", "secret.value", "[key][].data"} {
 		if !hasFinding(fs, redact.RuleKeyName, loc) {
 			t.Errorf("no key-name finding at %q: %+v", loc, fs)
 		}

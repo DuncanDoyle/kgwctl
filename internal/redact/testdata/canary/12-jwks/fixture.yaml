@@ -11,7 +11,7 @@ cases:
       - {value: kgwctl-canary-12-extra, rule: jwks, location: "spec.jwt.providers[].jwks.local.inline[key]"}
       - {value: kgwctl-canary-12-shape, rule: jwks, location: "spec.jwt.providers[].jwks.local.inline"}
       - {value: kgwctl-canary-12-invalid, rule: jwks, location: "spec.jwt.providers[].jwks.local.inline"}
-    keep: [rsa-1, ec-1, ed-1, AQAB, P-256, Ed25519, f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU, 11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo, https://issuer.example.com]
+    keep: [jwt, rsa-1, ec-1, ed-1, AQAB, P-256, Ed25519, f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU, 11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo, https://issuer.example.com]
   - name: config-dump
     type: config-dump
     input: config_dump.json

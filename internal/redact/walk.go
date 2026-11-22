@@ -2,7 +2,6 @@ package redact
 
 import (
 	"bytes"
-	"regexp"
 	"strings"
 )
 
@@ -65,14 +64,13 @@ var objectMapFields = map[string]bool{
 	"extraAnnotations": true, "data": true, "stringData": true, "binaryData": true,
 }
 
-// fieldRe is a key shown literally in a location; anything else is [key].
-var fieldRe = regexp.MustCompile(`^[a-z@][A-Za-z0-9_]{0,63}$`)
-
 type walker struct {
 	mode mode
-	kind string
-	opts Options
-	rec  *recorder
+	// kind is the kind of the Kubernetes object being walked; base is that
+	// object's location prefix, "" or "items[]." for a List member.
+	kind, base string
+	opts       Options
+	rec        *recorder
 }
 
 // walk redacts n in place; key is the member key that holds n.
@@ -81,15 +79,41 @@ func (w *walker) walk(n *node, at, key string, z zone) {
 	case kindObject:
 		w.object(n, at, key, z)
 	case kindArray:
+		list := w.mode == modeObject && key == "items" && at == w.base+"items"
 		for _, e := range n.elems {
 			if e.kind == kindString {
 				w.str(e, at+"[]", key, z, false, false)
+				continue
+			}
+			if k, _ := e.get("kind"); list && k != "" {
+				// A List member gets its own kind's rules.
+				sub := *w
+				sub.kind, sub.base = k, at+"[]."
+				sub.walk(e, at+"[]", key, z&^(zMapKeys|zHeaderMap))
 				continue
 			}
 			w.walk(e, at+"[]", key, z&^(zMapKeys|zHeaderMap))
 		}
 	case kindString:
 		w.str(n, at, key, z, false, false)
+	case kindLiteral:
+		w.literal(n, at, key, z)
+	}
+}
+
+// literal redacts a number or boolean that is a credential or a sensitive
+// pair's value; null stays.
+func (w *walker) literal(n *node, at, key string, z zone) {
+	if string(n.lit) == "null" {
+		return
+	}
+	switch {
+	case z&zPair != 0:
+		n.kind = kindString
+		w.set(n, RuleHeaderPair, at)
+	case sensitiveKey(key), z&zKeyName != 0 && !refKey(key):
+		n.kind = kindString
+		w.set(n, RuleKeyName, at)
 	}
 }
 
@@ -128,10 +152,7 @@ func (w *walker) object(n *node, at, key string, z zone) {
 
 // loc is the location of member key of the object at at.
 func (w *walker) loc(at, key string, z zone) string {
-	if z&(zMapKeys|zMapAll) != 0 || !fieldRe.MatchString(key) {
-		return at + "[key]"
-	}
-	if _, hits := patternPass(key); hits > 0 {
+	if z&(zMapKeys|zMapAll) != 0 || !schemaFields[key] {
 		return at + "[key]"
 	}
 	return joinLoc(at, key)
@@ -219,7 +240,7 @@ func (w *walker) str(n *node, at, key string, z zone, pairValue, envValue bool) 
 		w.set(n, RuleHeaderPair, at)
 	case z&zBasicAuth != 0 && key == "users":
 		w.basicAuth(n, at)
-	case w.mode == modeObject && w.kind == "DirectResponse" && at == "spec.body":
+	case w.mode == modeObject && w.kind == "DirectResponse" && at == w.base+"spec.body":
 		w.set(n, RuleField, at)
 	case w.mode == modeObject && key == "inline" && strings.HasSuffix(at, "jwks.local.inline"):
 		w.jwks(n, at, false)

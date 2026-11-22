@@ -16,7 +16,7 @@ cases:
       - value: kgwctl-canary-10-tp
         rule: header-value
         location: spec.headerModifiers.request.set[].value
-    keep: [x-tenant-key]
+    keep: [tenant-header, x-tenant-key]
   - name: debug-log
     type: text
     input: envoy.log

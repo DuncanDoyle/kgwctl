@@ -14,4 +14,4 @@ cases:
       - value: kgwctl-canary-03-match
         rule: header-pair
         location: spec.rules[].matches[].headers[].value
-    keep: [Authorization, x-api-key, x-served-by, api.example.com, svc-a]
+    keep: [route-a, Authorization,x-api-key, x-served-by, api.example.com, svc-a]

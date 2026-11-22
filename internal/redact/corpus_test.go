@@ -9,12 +9,14 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/yaml"
 
 	"github.com/DuncanDoyle/kgwctl/internal/redact"
@@ -116,6 +118,48 @@ func TestCorpusNoLeaks(t *testing.T) {
 				r := runCase(t, filepath.Join(corpusDir, dir), c)
 				checkCase(t, c, r)
 			})
+		}
+	}
+}
+
+// TestCorpusKeepsUsefulContent requires every successful case to name content
+// that must survive, so a redactor that empties its input fails the corpus.
+func TestCorpusKeepsUsefulContent(t *testing.T) {
+	for dir, f := range loadCorpus(t) {
+		for _, c := range f.Cases {
+			if c.ExpectError != "" {
+				continue
+			}
+			useful := false
+			for _, k := range c.Keep {
+				if strings.Trim(strings.ReplaceAll(k, redact.Marker, ""), ` '":,`) != "" {
+					useful = true
+				}
+			}
+			if !useful {
+				t.Errorf("%s/%s: keep names no content beyond the marker", dir, c.Name)
+			}
+			if c.Type != "object" {
+				continue
+			}
+			in, err := os.ReadFile(filepath.Join(corpusDir, dir, c.Input))
+			if err != nil {
+				t.Fatal(err)
+			}
+			u := objectFromYAML(t, in)
+			names := []string{u.GetName()}
+			if u.IsList() {
+				names = nil
+				_ = u.EachListItem(func(o runtime.Object) error {
+					names = append(names, o.(*unstructured.Unstructured).GetName())
+					return nil
+				})
+			}
+			for _, n := range names {
+				if !slices.Contains(c.Keep, n) {
+					t.Errorf("%s/%s: keep lacks the object name %q", dir, c.Name, n)
+				}
+			}
 		}
 	}
 }

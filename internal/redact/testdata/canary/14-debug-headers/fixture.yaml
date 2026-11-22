@@ -34,3 +34,10 @@ cases:
       - {value: kgwctl-canary-14-json-cookie, rule: debug-header, location: "line:1"}
     keep:
       - "\\n':authority', 'api.example.com'\\n':method', 'GET'\\n'x-tenant-key', '[redacted]'\\n'cookie', '[redacted]'\"}"
+  - name: envoy-json-escaped
+    type: text
+    input: envoy-json-escaped.log
+    canaries:
+      - {value: kgwctl-canary-14-esc, rule: debug-header, location: "line:1"}
+    keep:
+      - "\\n':method', 'GET'\\n'x-tenant-key', '[redacted]'\"}"

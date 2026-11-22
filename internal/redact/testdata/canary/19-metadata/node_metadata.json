@@ -1,0 +1,17 @@
+{
+  "configs": [
+    {
+      "@type": "type.googleapis.com/envoy.admin.v3.BootstrapConfigDump",
+      "bootstrap": {
+        "node": {
+          "id": "gw-7d9f.team-a",
+          "cluster": "gw.team-a",
+          "metadata": {
+            "role": "kgateway-kube-gateway-api~team-a~gw",
+            "teamblue_canary19node": "Bearer kgwctl-canary-19-node"
+          }
+        }
+      }
+    }
+  ]
+}

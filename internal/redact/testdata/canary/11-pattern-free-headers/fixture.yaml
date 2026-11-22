@@ -24,7 +24,7 @@ cases:
       - value: kgwctl-canary-11-tunnel
         rule: header-value
         location: spec.tunnel.headers[].value
-    keep: [x-proxy-tenant]
+    keep: [egress, x-proxy-tenant]
   - name: listenerpolicy
     type: object
     input: listenerpolicy.yaml
@@ -35,4 +35,4 @@ cases:
       - value: kgwctl-canary-11-early
         rule: header-value
         location: spec.default.httpSettings.earlyRequestHeaderModifier.set[].value
-    keep: [x-collector-tenant]
+    keep: [access-logs, x-collector-tenant, x-tenant-key]

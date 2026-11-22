@@ -16,4 +16,4 @@ cases:
       - value: kgwctl-canary-07-deploy
         rule: field
         location: spec.template.spec.containers[].env[].value
-    keep: [LICENSE, KGW_XDS_SERVICE_PORT, "9977"]
+    keep: [kgateway, LICENSE,KGW_XDS_SERVICE_PORT, "9977"]

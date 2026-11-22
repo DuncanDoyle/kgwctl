@@ -32,7 +32,9 @@ deferred:
     task: "4.1.4"                # the task that replays it
 ```
 
-A case passes when no canary appears in the output (raw or standard base64), no Finding location holds a canary, and each canary with a `rule` has a Finding with that rule and location. Map keys appear in locations as `[key]`, array elements as `[]`, text lines as `line:<n>`.
+A case passes when no canary appears in the output (raw or standard base64), no Finding location holds a canary, each canary with a `rule` has a Finding with that rule and location, and every `keep` string survives. Only fixed schema field names appear literally in locations; every other key appears as `[key]`, array elements as `[]`, text lines as `line:<n>`.
+
+Every case without `expectError` lists `keep` content beyond the marker, and an object case keeps each object's name (each member's for a List), so a redactor that empties its input fails.
 
 ## Replayed later
 

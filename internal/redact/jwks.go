@@ -86,16 +86,35 @@ func projectJWKS(s string, rec *recorder) (string, bool) {
 	return string(bytes.TrimSuffix(b.Bytes(), []byte("\n"))), true
 }
 
+// stringOrStrings decodes a string or an array of strings. encoding/json
+// takes null as an empty string, so null is refused at both levels.
 func stringOrStrings(raw json.RawMessage) (any, bool) {
-	var s string
-	if json.Unmarshal(raw, &s) == nil {
+	if s, ok := jsonString(raw); ok {
 		return s, true
 	}
-	var ss []string
-	if json.Unmarshal(raw, &ss) == nil && ss != nil {
-		return ss, true
+	var elems []json.RawMessage
+	if json.Unmarshal(raw, &elems) != nil || elems == nil {
+		return nil, false
 	}
-	return nil, false
+	ss := make([]string, len(elems))
+	for i, e := range elems {
+		s, ok := jsonString(e)
+		if !ok {
+			return nil, false
+		}
+		ss[i] = s
+	}
+	return ss, true
+}
+
+// jsonString decodes raw when it is a JSON string, not null.
+func jsonString(raw json.RawMessage) (string, bool) {
+	var s string
+	t := bytes.TrimSpace(raw)
+	if len(t) == 0 || t[0] != '"' || json.Unmarshal(t, &s) != nil {
+		return "", false
+	}
+	return s, true
 }
 
 // jwks applies JWKS to an inline JWKS string, or to base64 inline_bytes.

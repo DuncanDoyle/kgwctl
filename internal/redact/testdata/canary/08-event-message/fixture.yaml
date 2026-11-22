@@ -8,4 +8,4 @@ cases:
       - value: kgwctl-canary-08-msg
         rule: pattern
         location: message
-    keep: ["upstream rejected Authorization: Bearer [redacted]", route-a]
+    keep: ["upstream rejected Authorization: Bearer [redacted]", route-a, route-a.17f3]
