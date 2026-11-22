@@ -576,3 +576,71 @@ func TestErrorsFooterKeepsCollectorsWithPlaceholder(t *testing.T) {
 		t.Errorf("errors.txt lost the collector error:\n%s", eb)
 	}
 }
+
+func TestErrorTextRedactedBeforeCut(t *testing.T) {
+	h := newHarness(t, mustLimits(t, 32<<20), redact.Options{}, "")
+	err := errors.New(`password="dummy-first dummy-second ` + strings.Repeat("x", 16<<10) + `"`)
+	h.w.Sink("c").Error(pb.Path{"x", "a.json"}, pb.Source{}, err)
+	h.w.Seal()
+	a := h.finish(t, Manifest{}, "c")
+	bundletest.AssertNoCanary(t, a, []string{"dummy-first", "dummy-second"})
+}
+
+func TestObjectMultilineIndentBounded(t *testing.T) {
+	h := newHarness(t, mustLimits(t, 32<<20), redact.Options{}, "")
+	var v any = strings.Repeat("x\n", 20_000)
+	for range 1500 {
+		v = map[string]any{"f": v}
+	}
+	obj := map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"name": "s"}, "spec": v}
+	var err error
+	n := allocated(func() {
+		err = h.w.Sink("c").Object(pb.Path{"x", "s.yaml"}, &unstructured.Unstructured{Object: obj}, pb.Source{})
+	})
+	if !errors.Is(err, pb.ErrBudget) || n > 32<<20 {
+		t.Errorf("err = %v, allocated %d bytes", err, n)
+	}
+}
+
+func TestRunSealPanicAborts(t *testing.T) {
+	p := t.TempDir() + "/out.tar.gz"
+	f, err := CreateFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := mustLimits(t, MinSize)
+	dir := t.TempDir()
+	sp, err := NewSpool(dir, l.RAM, l.MaxSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var broken atomic.Bool
+	clock := func() time.Time {
+		if broken.Load() {
+			panic("clock gone")
+		}
+		return t0
+	}
+	w := NewWriter(f, sp, "root", l, redact.Options{}, "", clock)
+	c := fake("c", func(_ context.Context, s pb.Sink) error {
+		err := s.Text(pb.Path{"logs", "a.log"}, strings.NewReader("x\n"), pb.Source{})
+		broken.Store(true) // the seal is the next clock read
+		return err
+	})
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Errorf("Run panicked: %v", r)
+			}
+		}()
+		if _, err := Run(context.Background(), []pb.Collector{c}, runEnv(), w, Manifest{}, RunOptions{}); err == nil {
+			t.Error("Run succeeded")
+		}
+	}()
+	if _, err := CreateFile(p); err != nil {
+		t.Errorf("output file left behind: %v", err)
+	}
+	if d := spoolDir(t, dir); d != "" {
+		t.Errorf("spool left behind: %s", d)
+	}
+}

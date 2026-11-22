@@ -200,24 +200,17 @@ func (w *Writer) Log(line string) {
 	w.runLogN += int64(len(s)) + 1
 }
 
-const (
-	// maxErrCache bounds the error text cache.
-	maxErrCache = 4096
-	// maxErrInput bounds the error text redacted; the record keeps 512 bytes.
-	maxErrInput = 16 << 10
-)
+// maxErrCache bounds the error text cache.
+const maxErrCache = 4096
 
 // errorText renders err for the manifest and errors.txt: a remote error as
-// its status only, anything else through the error text redactor. Long text
-// is cut at a blank before redaction, so a cut token is dropped, not shown.
+// its status only, anything else through the error text redactor, which
+// redacts the whole text before it cuts.
 func (w *Writer) errorText(err error) string {
 	if redact.IsRemote(err) {
 		return redact.RemoteError(err)
 	}
 	msg := err.Error()
-	if len(msg) > maxErrInput {
-		msg = msg[:max(strings.LastIndexAny(msg[:maxErrInput], " \t\r\n"), 0)]
-	}
 	key := sha256.Sum256([]byte(msg))
 	w.errMu.Lock()
 	s, ok := w.errCache[key]
@@ -609,7 +602,7 @@ func (w *Writer) Finalize(order []string, m Manifest) (err error) {
 	defer func() { err = errors.Join(err, w.sp.Remove()) }()
 	defer func() {
 		if r := recover(); r != nil {
-			err = errors.Join(fmt.Errorf("bundle: finalize panicked: %s", redact.ErrorText(fmt.Errorf("%v", r), w.server)), w.dest.Abort())
+			err = errors.Join(w.panicErr(r), w.dest.Abort())
 		}
 	}()
 	w.Seal()
@@ -1092,8 +1085,9 @@ func (w *Writer) degraded() map[string]bool {
 // indentCost is a lower bound on the indentation YAML gives v: each map
 // entry and sequence element on its own line costs its column. A map nests
 // two columns deeper; a sequence nests two deeper only inside a sequence.
-// shared means v's first child shares its parent's line ("- - x"). It stops
-// past limit.
+// A multi-line string is a block scalar: each line sits two columns deeper.
+// shared means v's first child shares its parent's line ("- - x"). It
+// stops past limit.
 func indentCost(v any, col int64, shared bool, limit int64) int64 {
 	var n int64
 	switch v := v.(type) {
@@ -1103,7 +1097,9 @@ func indentCost(v any, col int64, shared bool, limit int64) int64 {
 			if !(shared && i == 0) {
 				n += col
 			}
-			switch e.(type) {
+			switch e := e.(type) {
+			case string:
+				n += blockCost(e, col)
 			case map[string]any:
 				n += indentCost(e, col+2, false, limit-n)
 			case []any:
@@ -1119,7 +1115,9 @@ func indentCost(v any, col int64, shared bool, limit int64) int64 {
 			if !(shared && i == 0) {
 				n += col
 			}
-			switch e.(type) {
+			switch e := e.(type) {
+			case string:
+				n += blockCost(e, col)
 			case map[string]any, []any:
 				n += indentCost(e, col+2, true, limit-n)
 			}
@@ -1129,4 +1127,26 @@ func indentCost(v any, col int64, shared bool, limit int64) int64 {
 		}
 	}
 	return n
+}
+
+// blockCost is the indentation of s as a block scalar under column col.
+func blockCost(s string, col int64) int64 { return int64(strings.Count(s, "\n")) * (col + 2) }
+
+func (w *Writer) panicErr(r any) error {
+	return fmt.Errorf("bundle: finalize panicked: %s", redact.ErrorText(fmt.Errorf("%v", r), w.server))
+}
+
+// sealOrAbort seals like Seal. A panic while sealing aborts the destination,
+// removes the spool and is returned as an error; the writer is then done.
+func (w *Writer) sealOrAbort() (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			w.mu.Lock()
+			w.finalized = true
+			w.mu.Unlock()
+			err = errors.Join(w.panicErr(r), w.dest.Abort(), w.sp.Remove())
+		}
+	}()
+	w.Seal()
+	return nil
 }

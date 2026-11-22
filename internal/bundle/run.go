@@ -125,7 +125,9 @@ func Run(ctx context.Context, cs []pb.Collector, env pb.Env, w *Writer, m Manife
 	case <-dctx.Done():
 	}
 	cancel()
-	w.Seal()
+	if err := w.sealOrAbort(); err != nil {
+		return Manifest{}, err
+	}
 
 	late := w.Late()
 	mu.Lock()
