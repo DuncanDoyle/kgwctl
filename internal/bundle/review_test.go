@@ -9,6 +9,7 @@ import (
 	"io"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -425,5 +426,153 @@ func TestRunLogCap(t *testing.T) {
 	rl, _ := a.File(pb.RunLogFile)
 	if int64(len(rl)) > l.RunLog || !strings.HasSuffix(string(rl), "\n[kgwctl: truncated: size cap]\n") {
 		t.Errorf("run.log %d bytes, cap %d, no marker", len(rl), l.RunLog)
+	}
+}
+
+func TestErrorCacheBounded(t *testing.T) {
+	h := newHarness(t, mustLimits(t, 32<<20), redact.Options{}, "")
+	s := h.w.Sink("c")
+	for i := range 4 {
+		s.Error(pb.Path{"e", fmt.Sprintf("e-%d.json", i)}, pb.Source{}, errors.New(fmt.Sprint(i)+strings.Repeat("e ", 128<<10)))
+	}
+	var kept int
+	for k := range h.w.errCache {
+		kept += len(k)
+	}
+	if kept > 4096 {
+		t.Errorf("error cache keeps %d key bytes", kept)
+	}
+}
+
+func TestTextFindingsCapped(t *testing.T) {
+	h := newHarness(t, mustLimits(t, 32<<20), redact.Options{}, "")
+	var in bytes.Buffer
+	for range 5000 {
+		in.WriteString("Bearer x\n")
+	}
+	p := pb.Path{"logs", "a.log"}
+	if err := h.w.Sink("c").Text(p, &in, pb.Source{}); err != nil {
+		t.Fatal(err)
+	}
+	h.w.Seal()
+	a := h.finish(t, Manifest{}, "c")
+	var red struct {
+		Files []struct {
+			Findings        []redact.Finding `json:"findings"`
+			FindingsOmitted int              `json:"findingsOmitted"`
+		} `json:"files"`
+	}
+	rb, _ := a.File(pb.RedactionsFile)
+	if err := json.Unmarshal(rb, &red); err != nil || len(red.Files) != 1 {
+		t.Fatalf("redactions.json: %v", err)
+	}
+	if f := red.Files[0]; len(f.Findings) != 4096 || f.FindingsOmitted != 904 {
+		t.Errorf("findings %d, omitted %d", len(f.Findings), f.FindingsOmitted)
+	}
+	if it := itemByPath(h.w.Items(), p.String()); len(it) != 1 || it[0].Redactions != 5000 {
+		t.Errorf("item %+v", it)
+	}
+}
+
+func TestObjectSequenceIndentBounded(t *testing.T) {
+	h := newHarness(t, mustLimits(t, 32<<20), redact.Options{}, "")
+	var v any = "v"
+	for range 6000 {
+		v = []any{v, nil}
+	}
+	obj := map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"name": "s"}, "f": v}
+	var err error
+	n := allocated(func() {
+		err = h.w.Sink("c").Object(pb.Path{"x", "s.yaml"}, &unstructured.Unstructured{Object: obj}, pb.Source{})
+	})
+	if !errors.Is(err, pb.ErrBudget) || n > 32<<20 {
+		t.Errorf("err = %v, allocated %d bytes", err, n)
+	}
+}
+
+func TestFinalizeSealPanicAborts(t *testing.T) {
+	p := t.TempDir() + "/out.tar.gz"
+	f, err := CreateFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := mustLimits(t, 32<<20)
+	dir := t.TempDir()
+	sp, err := NewSpool(dir, l.RAM, l.MaxSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var broken atomic.Bool
+	clock := func() time.Time {
+		if broken.Load() {
+			panic("clock gone")
+		}
+		return t0
+	}
+	w := NewWriter(f, sp, "root", l, redact.Options{}, "", clock)
+	if err := w.Sink("c").Text(pb.Path{"logs", "a.log"}, strings.NewReader("x\n"), pb.Source{}); err != nil {
+		t.Fatal(err)
+	}
+	broken.Store(true)
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Errorf("Finalize panicked: %v", r)
+			}
+		}()
+		if err := w.Finalize([]string{"c"}, Manifest{}); err == nil {
+			t.Error("Finalize succeeded")
+		}
+	}()
+	if _, err := CreateFile(p); err != nil {
+		t.Errorf("output file left behind: %v", err)
+	}
+	if d := spoolDir(t, dir); d != "" {
+		t.Errorf("spool left behind: %s", d)
+	}
+}
+
+// nameCancels cancels the run on its second Name call, the one runOne logs.
+type nameCancels struct {
+	fakeCollector
+	names  atomic.Int32
+	cancel func()
+}
+
+func (n *nameCancels) Name() string {
+	if n.names.Add(1) == 2 {
+		n.cancel()
+	}
+	return n.name
+}
+
+func TestRunNoCollectWhenNameCancels(t *testing.T) {
+	h := newHarness(t, mustLimits(t, MinSize), redact.Options{}, "")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	c := &nameCancels{fakeCollector: fakeCollector{name: "c", collect: func(context.Context, pb.Sink) error { return nil }}, cancel: cancel}
+	_ = c.Name() // Run reads the name first
+	reported := false
+	runOne(ctx, c, runEnv(), h.w, fixedNow, func(pb.CollectorStatus, error, time.Duration) { reported = true })
+	if c.called.Load() || reported {
+		t.Errorf("Collect called %v, reported %v after cancel", c.called.Load(), reported)
+	}
+}
+
+func TestErrorsFooterKeepsCollectorsWithPlaceholder(t *testing.T) {
+	l := smallLimits()
+	l.Manifest = 2048
+	h := newHarness(t, l, redact.Options{}, "")
+	for i := range 40 {
+		group := fmt.Sprintf("g%d.", i) + strings.Repeat("a", 200) + ".io"
+		if err := h.w.Sink("c").Exclude(schema.GroupKind{Group: group, Kind: "Route"}, pb.ExcludeScope); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h.w.Seal()
+	m := Manifest{Collectors: []CollectorEntry{{Name: "c", Status: pb.CollectorFailed, Error: "boom"}}}
+	a := h.finish(t, m, "c")
+	if eb, _ := a.File(pb.ErrorsFile); !strings.Contains(string(eb), "c: failed: boom") {
+		t.Errorf("errors.txt lost the collector error:\n%s", eb)
 	}
 }

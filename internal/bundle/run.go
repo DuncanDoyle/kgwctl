@@ -145,9 +145,17 @@ func Run(ctx context.Context, cs []pb.Collector, env pb.Env, w *Writer, m Manife
 	return w.Committed(), nil
 }
 
-// runOne runs c, turning a panic into an error, and reports the outcome.
+// runOne runs c, turning a panic into an error, and reports the outcome. It
+// never calls Collect once ctx has ended.
 func runOne(ctx context.Context, c pb.Collector, env pb.Env, w *Writer, now func() time.Time, report func(pb.CollectorStatus, error, time.Duration)) {
-	w.Log("collector " + c.Name() + " start")
+	name := c.Name()
+	w.Log("collector " + name + " start")
+	s := w.Sink(name)
+	// Checked after all setup, right before Collect: nothing starts once
+	// collection has ended, and the collector stays timeout.
+	if ctx.Err() != nil {
+		return
+	}
 	t0 := now()
 	err := func() (err error) {
 		defer func() {
@@ -155,7 +163,7 @@ func runOne(ctx context.Context, c pb.Collector, env pb.Env, w *Writer, now func
 				err = fmt.Errorf("panic: %v", r)
 			}
 		}()
-		return c.Collect(ctx, env, w.Sink(c.Name()))
+		return c.Collect(ctx, env, s)
 	}()
 	d := now().Sub(t0)
 	switch {

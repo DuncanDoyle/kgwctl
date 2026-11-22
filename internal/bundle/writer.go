@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -107,7 +108,7 @@ type Writer struct {
 
 	// errCache holds error text already redacted, as collectors repeat errors.
 	errMu    sync.Mutex
-	errCache map[string]string
+	errCache map[[sha256.Size]byte]string // keyed by a hash, so no raw text stays
 }
 
 // record is one item outcome; e holds the staged body of an ok item.
@@ -116,7 +117,40 @@ type record struct {
 	seq       int
 	item      Item
 	findings  []redact.Finding
+	fomit     int // distinct findings past maxFileFindings
 	e         *entry
+}
+
+// maxFileFindings caps the distinct findings kept per item.
+const maxFileFindings = 4096
+
+// findingSet sums findings per rule and location as they arrive, keeping at
+// most maxFileFindings entries; total counts every redaction.
+type findingSet struct {
+	list    []redact.Finding
+	idx     map[redact.Finding]int
+	omitted int
+	total   int
+}
+
+func (s *findingSet) add(fs []redact.Finding) {
+	for _, f := range fs {
+		s.total += f.Count
+		k := redact.Finding{Rule: f.Rule, Location: f.Location}
+		if i, ok := s.idx[k]; ok {
+			s.list[i].Count += f.Count
+			continue
+		}
+		if len(s.list) >= maxFileFindings {
+			s.omitted++
+			continue
+		}
+		if s.idx == nil {
+			s.idx = map[redact.Finding]int{}
+		}
+		s.idx[k] = len(s.list)
+		s.list = append(s.list, f)
+	}
 }
 
 // call is one Sink write in flight.
@@ -129,11 +163,10 @@ type call struct {
 	text      bool
 	e         entry
 	lines     int
-	findings  []redact.Finding // of the staged lines
-	fidx      map[redact.Finding]int
-	late      bool    // in flight at Seal; the result is discarded
-	kept      *record // a text item kept at Seal
-	dropErr   error   // staging failed mid-stream
+	found     findingSet // of the staged lines, or the structured body
+	late      bool       // in flight at Seal; the result is discarded
+	kept      *record    // a text item kept at Seal
+	dropErr   error      // staging failed mid-stream
 }
 
 // NewWriter returns a writer that stages into sp and writes a tar.gz with
@@ -167,29 +200,38 @@ func (w *Writer) Log(line string) {
 	w.runLogN += int64(len(s)) + 1
 }
 
-// maxErrCache bounds the error text cache.
-const maxErrCache = 4096
+const (
+	// maxErrCache bounds the error text cache.
+	maxErrCache = 4096
+	// maxErrInput bounds the error text redacted; the record keeps 512 bytes.
+	maxErrInput = 16 << 10
+)
 
 // errorText renders err for the manifest and errors.txt: a remote error as
-// its status only, anything else through the error text redactor.
+// its status only, anything else through the error text redactor. Long text
+// is cut at a blank before redaction, so a cut token is dropped, not shown.
 func (w *Writer) errorText(err error) string {
 	if redact.IsRemote(err) {
 		return redact.RemoteError(err)
 	}
 	msg := err.Error()
+	if len(msg) > maxErrInput {
+		msg = msg[:max(strings.LastIndexAny(msg[:maxErrInput], " \t\r\n"), 0)]
+	}
+	key := sha256.Sum256([]byte(msg))
 	w.errMu.Lock()
-	s, ok := w.errCache[msg]
+	s, ok := w.errCache[key]
 	w.errMu.Unlock()
 	if ok {
 		return s
 	}
-	s = redact.ErrorText(err, w.server)
+	s = redact.ErrorText(errors.New(msg), w.server)
 	w.errMu.Lock()
 	if w.errCache == nil {
-		w.errCache = map[string]string{}
+		w.errCache = map[[sha256.Size]byte]string{}
 	}
 	if len(w.errCache) < maxErrCache {
-		w.errCache[msg] = s
+		w.errCache[key] = s
 	}
 	w.errMu.Unlock()
 	return s
@@ -320,7 +362,7 @@ func (w *Writer) duplicate(c *call) error {
 }
 
 // stage records c as an ok item with its staged body; the caller holds w.mu.
-func (w *Writer) stage(c *call, fs []redact.Finding, reason string) (*record, error) {
+func (w *Writer) stage(c *call, reason string) (*record, error) {
 	if w.keys[c.collector][c.key] {
 		return nil, w.duplicate(c)
 	}
@@ -330,8 +372,11 @@ func (w *Writer) stage(c *call, fs []redact.Finding, reason string) (*record, er
 	w.keys[c.collector][c.key] = true
 	it := c.item(w)
 	it.Status, it.Reason = pb.ItemOK, reason
+	it.Redactions = c.found.total
 	e := c.e
-	return w.addRecord(c.collector, it, fs, &e), nil
+	r := w.addRecord(c.collector, it, nil, &e)
+	r.findings, r.fomit = c.found.list, c.found.omitted
+	return r, nil
 }
 
 // fail records a write that produced no item; the caller holds w.mu.
@@ -369,7 +414,8 @@ func (w *Writer) finish(c *call, o outcome) error {
 		}
 		return w.fail(c, pb.ItemFailed, ReasonStaging, err)
 	}
-	_, err := w.stage(c, o.findings, "")
+	c.found.add(o.findings)
+	_, err := w.stage(c, "")
 	return err
 }
 
@@ -418,24 +464,8 @@ func (l lineSink) WriteLine(b []byte, fs []redact.Finding) error {
 		return errStop
 	}
 	c.lines++
-	c.addFindings(fs)
+	c.found.add(fs)
 	return nil
-}
-
-// addFindings sums fs into c.findings per rule and location.
-func (c *call) addFindings(fs []redact.Finding) {
-	for _, f := range fs {
-		k := redact.Finding{Rule: f.Rule, Location: f.Location}
-		if i, ok := c.fidx[k]; ok {
-			c.findings[i].Count += f.Count
-			continue
-		}
-		if c.fidx == nil {
-			c.fidx = map[redact.Finding]int{}
-		}
-		c.fidx[k] = len(c.findings)
-		c.findings = append(c.findings, f)
-	}
 }
 
 // finishText closes a text write: it appends a truncation line when the
@@ -462,7 +492,13 @@ func (w *Writer) finishText(c *call, res redact.TextResult) error {
 			return w.fail(c, pb.ItemFailed, ReasonStaging, err)
 		}
 	}
-	_, err := w.stage(c, res.Findings, reason)
+	// Line findings arrived with the lines; only the open-PEM finding is new.
+	for _, f := range res.Findings {
+		if f.Rule == redact.RulePEMTail {
+			c.found.add([]redact.Finding{f})
+		}
+	}
+	_, err := w.stage(c, reason)
 	return err
 }
 
@@ -481,7 +517,7 @@ func (w *Writer) Seal() {
 	for c := range w.calls {
 		w.late[c.collector]++
 		if c.text && c.lines > 0 && c.dropErr == nil && w.sp.add(&c.e, []byte(truncation(ReasonSealed)+"\n"), true) == nil {
-			c.kept, _ = w.stage(c, c.findings, "truncated: "+ReasonSealed)
+			c.kept, _ = w.stage(c, "truncated: "+ReasonSealed)
 			c.late = c.kept == nil // a duplicate, already recorded by stage
 			continue
 		}
@@ -569,16 +605,22 @@ func (w *Writer) sortRecords() {
 // footer encoding error or a panic, which it returns as an error, it aborts
 // the destination. It has no timer: it writes at most MaxSize of tar content.
 func (w *Writer) Finalize(order []string, m Manifest) (err error) {
+	// Cleanup and recovery come first, so a panic in Seal is covered too.
+	defer func() { err = errors.Join(err, w.sp.Remove()) }()
+	defer func() {
+		if r := recover(); r != nil {
+			err = errors.Join(fmt.Errorf("bundle: finalize panicked: %s", redact.ErrorText(fmt.Errorf("%v", r), w.server)), w.dest.Abort())
+		}
+	}()
 	w.Seal()
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	defer func() { err = errors.Join(err, w.sp.Remove()) }()
 	if w.finalized {
 		return errors.New("bundle: writer already finalized")
 	}
 	w.finalized = true
 	w.order = slices.Clone(order)
-	if err := w.safeCommit(m); err != nil {
+	if err := w.commit(m); err != nil {
 		return errors.Join(err, w.dest.Abort())
 	}
 	return nil
@@ -590,16 +632,6 @@ func (w *Writer) Committed() Manifest {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.committed
-}
-
-// safeCommit runs commit, turning a panic into an error.
-func (w *Writer) safeCommit(m Manifest) (err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			err = fmt.Errorf("bundle: finalize panicked: %s", redact.ErrorText(fmt.Errorf("%v", r), w.server))
-		}
-	}()
-	return w.commit(m)
 }
 
 // footer names in archive order, with their caps.
@@ -690,13 +722,15 @@ func (w *Writer) commit(m Manifest) error {
 	w.place(end)
 
 	m = w.prepare(m, end)
+	// errors.txt reads the full collector list, which manifest bounding may cut.
+	cols := m.Collectors
 	m, mb, err := w.manifestFooter(m)
 	if err != nil {
 		return err
 	}
 	files := map[string][]byte{
 		pb.ManifestFile:   mb,
-		pb.ErrorsFile:     w.errorsFooter(m),
+		pb.ErrorsFile:     w.errorsFooter(cols),
 		pb.RedactionsFile: w.redactionsFooter(),
 		pb.RunLogFile:     textFooter(w.runLog, w.runLogCut, w.lim.RunLog),
 	}
@@ -840,12 +874,12 @@ func (l *lineBuf) bytes() []byte {
 // errorsFooter is one line for a placeholder manifest, per failed collector,
 // per collector with uncounted items, then per item that is not ok or
 // skipped, built within the cap.
-func (w *Writer) errorsFooter(m Manifest) []byte {
+func (w *Writer) errorsFooter(cols []CollectorEntry) []byte {
 	lb := newLineBuf(w.lim.Errors)
 	if w.placeholder {
 		lb.add("bundle: " + pb.ManifestFile + ": placeholder: " + ReasonSizeCap)
 	}
-	for _, c := range m.Collectors {
+	for _, c := range cols {
 		if c.Status == pb.CollectorFailed || c.Status == pb.CollectorTimeout {
 			lb.add(fmt.Sprintf("%s: %s: %s", c.Name, c.Status, c.Error))
 		}
@@ -904,7 +938,7 @@ func (w *Writer) redactionsFooter() []byte {
 			omitted++
 			continue
 		}
-		if enc := encodeFile(redactedFile{Path: r.item.Path, Findings: r.findings}, !first); fits(enc) {
+		if enc := encodeFile(redactedFile{Path: r.item.Path, Findings: r.findings, FindingsOmitted: r.fomit}, !first); fits(enc) {
 			b.Write(enc)
 			first = false
 			continue
@@ -912,7 +946,7 @@ func (w *Writer) redactionsFooter() []byte {
 		// Keep the longest prefix of this file's findings that fits, then stop.
 		full = true
 		part := func(k int) []byte {
-			return encodeFile(redactedFile{Path: r.item.Path, Findings: r.findings[:k], FindingsOmitted: len(r.findings) - k}, !first)
+			return encodeFile(redactedFile{Path: r.item.Path, Findings: r.findings[:k], FindingsOmitted: len(r.findings) - k + r.fomit}, !first)
 		}
 		if k := sort.Search(len(r.findings)+1, func(k int) bool { return !fits(part(k)) }) - 1; k > 0 {
 			b.Write(part(k))
@@ -952,7 +986,7 @@ func (s *sink) Object(p pb.Path, u *unstructured.Unstructured, src pb.Source) er
 	if err != nil {
 		return s.w.finish(c, outcome{status: pb.ItemFailed, reason: s.w.errorText(err), err: err})
 	}
-	if indentCost(obj.Object, 0, s.w.lim.Other) > s.w.lim.Other {
+	if indentCost(obj.Object, 0, false, s.w.lim.Other) > s.w.lim.Other {
 		return s.w.finish(c, outcome{status: pb.ItemDropped, reason: ReasonSizeCap, err: fmt.Errorf("%w: %s", pb.ErrBudget, ReasonSizeCap)})
 	}
 	body, err := yaml.Marshal(obj.Object)
@@ -1055,20 +1089,41 @@ func (w *Writer) degraded() map[string]bool {
 	return out
 }
 
-// indentCost is a lower bound on the indentation YAML gives v: two bytes per
-// map nesting level on every nested map entry. It stops past limit.
-func indentCost(v any, depth, limit int64) int64 {
+// indentCost is a lower bound on the indentation YAML gives v: each map
+// entry and sequence element on its own line costs its column. A map nests
+// two columns deeper; a sequence nests two deeper only inside a sequence.
+// shared means v's first child shares its parent's line ("- - x"). It stops
+// past limit.
+func indentCost(v any, col int64, shared bool, limit int64) int64 {
 	var n int64
 	switch v := v.(type) {
 	case map[string]any:
+		i := 0
 		for _, e := range v {
-			if n += 2*depth + indentCost(e, depth+1, limit-n); n > limit {
+			if !(shared && i == 0) {
+				n += col
+			}
+			switch e.(type) {
+			case map[string]any:
+				n += indentCost(e, col+2, false, limit-n)
+			case []any:
+				n += indentCost(e, col, false, limit-n)
+			}
+			if n > limit {
 				return n
 			}
+			i++
 		}
 	case []any:
-		for _, e := range v {
-			if n += indentCost(e, depth, limit-n); n > limit {
+		for i, e := range v {
+			if !(shared && i == 0) {
+				n += col
+			}
+			switch e.(type) {
+			case map[string]any, []any:
+				n += indentCost(e, col+2, true, limit-n)
+			}
+			if n > limit {
 				return n
 			}
 		}
