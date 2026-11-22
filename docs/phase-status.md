@@ -36,16 +36,16 @@ Features within the approved design (r6).
 Design changes without a decisions.md entry and owner approval.
 
 ### Queue
-- [ ] Task 4.1.1 `pkg/bundle` contract ← CURRENT
-- [ ] Task 4.1.2 Manifest schema
-- [ ] Task 4.1.3 Redactors and canary corpus
-- [ ] Task 4.1.4 Writer
+- [x] Task 4.1.1 `pkg/bundle` contract (44b4484)
+- [x] Task 4.1.2 Manifest schema (d561090..63f839c)
+- [x] Task 4.1.3 Redactors and canary corpus (28ad7ca..22a0958)
+- [ ] Task 4.1.4 Writer ← CURRENT
 - [ ] Task 4.1.5 Runner
 - [ ] Task 4.1.6 Threat model
 
 ## Program
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
-- Read 2026-11-22 at kgateway-tooling `43b6b53`. Phase 4 waits on no edge. The program session is redefining E7 (policy semantics stay with the controller) and asked the bundle to capture per-replica convergence inputs (§5 of the design).
+- Read 2026-11-22 at kgateway-tooling `841f508` (main after the owner-approved history rewrite; E7 text merged, P-008, P-009, E13, E14). Phase 4 waits on no edge. The program session asked the bundle to capture per-replica convergence inputs (§5 of the design).
 - Consumed: E1 and E11 — xdsview `v0.4.3` (kgwctl#1, kgwctl#10).
 - Waiting on: E7 (Phase 6). E6 (xdsview#32) before Phase 7.
 - Consumers: none
@@ -56,7 +56,7 @@ Design changes without a decisions.md entry and owner approval.
 - `--only`, `--exclude`, `--fail-on`, repeatable `-n`, controller logs (D-015).
 - A narrow `pkg/cli` facade for vendor cluster commands (D-015).
 - Phase 3 (reviews/3.4-codex.md P3-4): a test that cancels an established capture through a CONNECT or SOCKS5 proxy, when Phase 4 reuses the capture.
-- E13: when xdsview v0.5.0 is tagged, bump it and update the `proxy routes` text and JSON goldens (certainty added). In docs, call `effectiveChain` the runtime filter chain; the JSON field keeps its name.
+- E13: xdsview v0.5.0 is tagged (2026-11-22); bump it and update the `proxy routes` text and JSON goldens (certainty added). In docs, call `effectiveChain` the runtime filter chain; the JSON field keeps its name.
 
 ## Notes
 - GitHub repo: https://github.com/DuncanDoyle/kgwctl (`kgwctl` remains a working name, D-006).
