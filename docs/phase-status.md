@@ -13,35 +13,21 @@ Status: design
 - [x] Q3 Cross-model review of design + plan: 5 rounds (reviews/design-codex.md, -r2 to -r4 + triage); r5 at f4d2102
 - [x] Q4 Owner go-ahead on design r5 and §12 items 1–6 (2026-11-22); D-025, D-026 accepted
 - [x] Q5 Design r6 (owner additions: ownership and discovery-scope filters, `--skip logs`): Codex reviews r5–r9 + triage (reviews/design-codex-r5.md … -r9.md); no open P1/P2
-- [ ] Q6 Sub-phase 4.1 (contract, redaction, writer, runner, threat model) ← CURRENT
+- [x] Q6 Sub-phase 4.1 (contract, redaction, writer, runner, threat model) — phase-4.1-complete.md; Codex reviews 4.1-codex.md … -r4.md
+- [ ] Q7 Sub-phase 4.2 (command, guard, scope, inventory, Envoy transport, cluster-state collectors) ← CURRENT
+- [ ] Q8 Sub-phase 4.3 (logs, metrics, Envoy capture, RBAC and partial runs); split internal/bundle/writer.go first
+- [ ] Q9 Sub-phase 4.4 (extension point, README, live check)
 
 ### Exit gates
 - [ ] tests/vet pass
 - [ ] all queue items done or deferred
-- [ ] design+plan cross-model review + triage
+- [x] design+plan cross-model review + triage
 - [ ] phase cross-model review + triage
 - [ ] decisions.md / design / plan in sync with code
 - [ ] phase-4-complete.md written, roadmap updated, tracked items closed
 
 ## Sub-phase
-Sub-phase: 4.1 — Contract, redaction, writer
-Kind: planned
-Base: 40a50b6
-Brief: docs/phases/phase-4/phase-4.1-brief.md
-
-### Allowed work
-Features within the approved design (r6).
-
-### Not allowed
-Design changes without a decisions.md entry and owner approval.
-
-### Queue
-- [x] Task 4.1.1 `pkg/bundle` contract (44b4484)
-- [x] Task 4.1.2 Manifest schema (d561090..63f839c)
-- [x] Task 4.1.3 Redactors and canary corpus (28ad7ca..22a0958)
-- [ ] Task 4.1.4 Writer ← CURRENT
-- [ ] Task 4.1.5 Runner
-- [ ] Task 4.1.6 Threat model
+none (4.1 closed 2026-11-22: docs/phases/phase-4/phase-4.1-complete.md)
 
 ## Program
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
@@ -63,3 +49,4 @@ Design changes without a decisions.md entry and owner approval.
 - 2026-11-06 Phase 1 closed: docs/phases/phase-1/phase-1-complete.md.
 - 2026-11-20 Phase 2 closed: docs/phases/phase-2/phase-2-complete.md.
 - 2026-11-21 Phase 3 closed: docs/phases/phase-3/phase-3-complete.md.
+- 2026-11-22 Sub-phase 4.1 closed: docs/phases/phase-4/phase-4.1-complete.md.
