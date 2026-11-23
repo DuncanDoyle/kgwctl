@@ -39,6 +39,8 @@ type bundleTestHooks struct {
 	Dialer proxydump.Dialer
 	// Logs replaces the Pod log source.
 	Logs collect.LogSource
+	// Scraper replaces the pods/proxy metrics scraper.
+	Scraper collect.Scraper
 }
 
 // collectorDeps are what built-in collectors read beyond Env; zero values
@@ -49,12 +51,14 @@ type collectorDeps struct {
 	res    *load.Result
 	dialer proxydump.Dialer
 	logs   collect.LogSource
+	scrape collect.Scraper
 }
 
 // builtinCollectors are the collectors every build has, in registration order.
 func builtinCollectors(reg *extension.Registry, build BuildInfo, d collectorDeps, hooks bundleTestHooks) []pb.Collector {
 	return []pb.Collector{collect.Resources(reg), collect.Workloads(), collect.Install(),
-		collect.Version(build, d.res, d.dialer), newCheckCollector(d.f, d.rc, reg, build, hooks.Check), collect.Logs(d.logs)}
+		collect.Version(build, d.res, d.dialer), newCheckCollector(d.f, d.rc, reg, build, hooks.Check), collect.Logs(d.logs),
+		collect.ControllerMetrics(d.scrape), collect.ProxyMetrics(d.scrape)}
 }
 
 // newBundleCmd builds the bundle command (phase 4 design §3). extra are the
@@ -217,7 +221,14 @@ func newBundleCmd(reg *extension.Registry, build BuildInfo, extra []pb.Collector
 			if logs == nil {
 				logs = collect.KubeLogSource(kube)
 			}
-			cs = append(builtinCollectors(reg, build, collectorDeps{f: f, rc: grc, res: res, dialer: dialer, logs: logs}, hooks), extra...)
+			scrape := hooks.Scraper
+			if scrape == nil {
+				// grc is guarded once, so a refused connection keeps the guard's cause.
+				if scrape, err = collect.StatusScraper(grc); err != nil {
+					return usageErr(err)
+				}
+			}
+			cs = append(builtinCollectors(reg, build, collectorDeps{f: f, rc: grc, res: res, dialer: dialer, logs: logs, scrape: scrape}, hooks), extra...)
 			m, err = ib.Run(cmd.Context(), cs, env, w, m, ib.RunOptions{Skip: skipSet, Deadline: time.Now().Add(timeout)})
 			if err != nil {
 				return &ExitError{Code: 2, Err: fmt.Errorf("write bundle: %w", err)}
