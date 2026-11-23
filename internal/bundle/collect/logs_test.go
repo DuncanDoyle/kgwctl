@@ -308,6 +308,33 @@ func TestLogsReread(t *testing.T) {
 	}
 }
 
+// TestLogsRequestTimeoutMidStream: through the real log source, a stream cut
+// by its request timeout keeps its lines and is labelled timeout, not read error.
+func TestLogsRequestTimeoutMidStream(t *testing.T) {
+	const line = "2026-11-22T10:00:01Z hello\n"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, line)
+		w.(http.Flusher).Flush()
+		<-r.Context().Done() // hold the stream open until the client gives up
+	}))
+	t.Cleanup(srv.Close)
+	logKube, err := kubernetes.NewForConfig(&rest.Config{Host: srv.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rs := []pb.Replica{replica("gw", "gw-0", pb.RoleProxy, pb.IdentityAnnotation, corev1.PodRunning, pb.Container{Name: "envoy"})}
+	env := pb.Env{Kube: podsOf(rs...), Window: pb.Window{Since: logSince}, Replicas: rs, RequestTimeout: time.Second}
+	m, a := runLogs(t, context.Background(), env, collect.KubeLogSource(logKube))
+
+	p := "proxies/gw/gw-0/logs/envoy.log"
+	if it := manifestItem(t, m, p); it.Status != pb.ItemOK || it.Reason != "truncated: timeout" {
+		t.Errorf("item %+v, want ok and truncated: timeout", it)
+	}
+	if b, _ := a.File(p); string(b) != line+"[kgwctl: truncated: timeout]\n" {
+		t.Errorf("log = %q", b)
+	}
+}
+
 // deleteOnEOF deletes pod on its first read and then reports EOF.
 type deleteOnEOF struct {
 	kube *kubefake.Clientset

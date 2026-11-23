@@ -35,6 +35,7 @@ const (
 	ReasonInvalidJSON   = "invalid JSON"
 	ReasonNotPrometheus = "not Prometheus text"
 	ReasonSealed        = "sealed"
+	ReasonTimeout       = "timeout"
 	ReasonInvalidSource = "invalid source"
 	ReasonInvalidExcl   = "invalid exclusion"
 	ReasonPathConflict  = "path conflict"

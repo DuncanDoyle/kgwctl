@@ -410,6 +410,28 @@ func TestProxyAdminHungReplica(t *testing.T) {
 	}
 }
 
+// TestProxyAdminTimeoutMidText: a stats body cut by the request timeout stays
+// ok with a timeout marker, and the replica gets no further request.
+func TestProxyAdminTimeoutMidText(t *testing.T) {
+	rs := []pb.Replica{proxyReplica("slow", corev1.PodRunning, true)}
+	d := &fakeAdmin{reply: func(pod, target string) adminReply {
+		if target == "/stats" {
+			return adminReply{raw: "HTTP/1.1 200 OK\r\nContent-Length: 4096\r\n\r\nserver.live: 1\n", err: context.DeadlineExceeded}
+		}
+		return adminBodies(pod, target)
+	}}
+	m, a := runProxyAdmin(t, pb.Env{Kube: podsOf(rs...), Replicas: rs}, d, false)
+	if it := manifestItem(t, m, "proxies/gw/slow/stats.txt"); it.Status != pb.ItemOK || it.Reason != "truncated: timeout" {
+		t.Errorf("stats item %+v, want ok and truncated: timeout", it)
+	}
+	if b, _ := a.File("proxies/gw/slow/stats.txt"); string(b) != "server.live: 1\n[kgwctl: truncated: timeout]\n" {
+		t.Errorf("stats.txt = %q", b)
+	}
+	if it := manifestItem(t, m, "proxies/gw/slow/certs.json"); it.Status != pb.ItemTimeout {
+		t.Errorf("certs item %+v, want timeout without a request", it)
+	}
+}
+
 // TestProxyAdminUnstarted: a run that ends before any capture starts
 // sends no request.
 func TestProxyAdminUnstarted(t *testing.T) {

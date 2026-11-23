@@ -82,7 +82,10 @@ func (s *sink) Text(ctx context.Context, p pb.Path, r io.Reader, src pb.Source) 
 		limit = s.w.lim.Log
 	}
 	// The reader's error, if any, is recorded as a truncation; errStop is ours.
-	res, _ := redact.Text(r, lineSink{s.w, c}, limit-markerReserve, s.w.ro)
+	res, err := redact.Text(r, lineSink{s.w, c}, limit-markerReserve, s.w.ro)
+	if res.Reason == redact.ReasonReadError && errors.Is(err, context.DeadlineExceeded) {
+		res.Reason = ReasonTimeout // the item's request timeout cut the stream
+	}
 	return s.w.finishText(c, res)
 }
 
