@@ -52,13 +52,15 @@ type collectorDeps struct {
 	dialer proxydump.Dialer
 	logs   collect.LogSource
 	scrape collect.Scraper
+	// noEndpoints is --no-endpoints: no EDS config dump and no clusters capture.
+	noEndpoints bool
 }
 
 // builtinCollectors are the collectors every build has, in registration order.
 func builtinCollectors(reg *extension.Registry, build BuildInfo, d collectorDeps, hooks bundleTestHooks) []pb.Collector {
 	return []pb.Collector{collect.Resources(reg), collect.Workloads(), collect.Install(),
 		collect.Version(build, d.res, d.dialer), newCheckCollector(d.f, d.rc, reg, build, hooks.Check), collect.Logs(d.logs),
-		collect.ControllerMetrics(d.scrape), collect.ProxyMetrics(d.scrape)}
+		collect.ControllerMetrics(d.scrape), collect.ProxyMetrics(d.scrape), collect.ProxyAdmin(d.dialer, d.noEndpoints)}
 }
 
 // newBundleCmd builds the bundle command (phase 4 design §3). extra are the
@@ -160,8 +162,6 @@ func newBundleCmd(reg *extension.Registry, build BuildInfo, extra []pb.Collector
 			if err != nil {
 				return usageErr(err)
 			}
-			_ = noEndpoints // 4.3.x collectors read it through Env.
-
 			res, err := loadBundle(cmd, f, reg, grc)
 			if err != nil {
 				return &ExitError{Code: 2, Err: loadError(cmd.Context(), err, rc.Host)}
@@ -227,7 +227,7 @@ func newBundleCmd(reg *extension.Registry, build BuildInfo, extra []pb.Collector
 					return usageErr(err)
 				}
 			}
-			cs = append(builtinCollectors(reg, build, collectorDeps{f: f, rc: grc, res: res, dialer: dialer, logs: logs, scrape: scrape}, hooks), extra...)
+			cs = append(builtinCollectors(reg, build, collectorDeps{f: f, rc: grc, res: res, dialer: dialer, logs: logs, scrape: scrape, noEndpoints: noEndpoints}, hooks), extra...)
 			m, err = ib.Run(cmd.Context(), cs, env, w, m, ib.RunOptions{Skip: skipSet, Deadline: time.Now().Add(timeout)})
 			if err != nil {
 				return &ExitError{Code: 2, Err: fmt.Errorf("write bundle: %w", err)}
