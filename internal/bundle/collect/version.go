@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"regexp"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/DuncanDoyle/snellius/pkg/engine"
@@ -68,30 +69,20 @@ func Version(build view.BuildInfo, res *load.Result, d proxydump.Dialer) pb.Coll
 func (versionCollector) Name() string { return "version" }
 
 // Collect implements pb.Collector.
+// version.json is written with whatever finished: a hung replica costs its own
+// entry, never the file (design §3).
 func (c versionCollector) Collect(ctx context.Context, env pb.Env, s pb.Sink) error {
-	vf := VersionFile{Client: c.build, Installs: c.installs(env.Scope), Observed: []ObservedEnvoy{}}
-	if sv, err := env.Discovery.ServerVersion(); err != nil {
+	vf := VersionFile{Client: c.build, Installs: c.installs(env.Scope, s), Observed: []ObservedEnvoy{}}
+	if sv, err := serverVersion(ctx, env); err != nil {
 		s.Error(pb.Path{pb.ClusterDir}, pb.Source{}, err)
 	} else {
 		vf.Server = sv
 	}
-	for _, r := range env.Replicas {
-		if r.Role != pb.RoleProxy {
-			continue
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		o := ObservedEnvoy{Namespace: r.Namespace, Pod: r.Pod, Status: pb.ItemSkipped}
-		// Terminating and unready replicas are still captured (design §8.2).
-		if r.Identity != pb.IdentityUnverified && r.Phase == corev1.PodRunning {
-			var err error
-			if o, err = c.capture(ctx, env, s, r); err != nil {
-				return err
-			}
-		}
-		vf.Observed = append(vf.Observed, o)
+	obs, err := c.observe(ctx, env, s)
+	if err != nil {
+		return err
 	}
+	vf.Observed = obs
 	b, err := json.Marshal(vf)
 	if err != nil {
 		return err
@@ -99,15 +90,130 @@ func (c versionCollector) Collect(ctx context.Context, env pb.Env, s pb.Sink) er
 	return sealed(s.JSON(pb.Path{pb.ClusterDir, pb.VersionFile}, bytes.NewReader(b), pb.Source{}))
 }
 
-// installs returns the version view's entries for the scope's installs.
-func (c versionCollector) installs(sc pb.Scope) []view.InstallVersion {
+// serverVersion reads /version, bounded by RequestTimeout.
+func serverVersion(ctx context.Context, env pb.Env) (*version.Info, error) {
+	rctx, cancel := requestContext(ctx, env.RequestTimeout)
+	defer cancel()
+	rc := env.Discovery.RESTClient()
+	if rc == nil {
+		// A client without REST access (a fake) is bounded by waiting only.
+		return proxydump.Await(rctx, env.Discovery.ServerVersion, nil)
+	}
+	b, err := rc.Get().AbsPath("/version").Do(rctx).Raw()
+	if err != nil {
+		return nil, err
+	}
+	var v version.Info
+	if err := json.Unmarshal(b, &v); err != nil {
+		return nil, fmt.Errorf("decode server version: %w", err)
+	}
+	return &v, nil
+}
+
+// captureWorkers bounds concurrent server-info captures, as the runner bounds collectors.
+const captureWorkers = 8
+
+// observe captures the proxy replicas with bounded concurrency. Captures stop
+// early enough to leave time for version.json; a replica not started by
+// then is timeout. It returns only ErrSealed.
+func (c versionCollector) observe(ctx context.Context, env pb.Env, s pb.Sink) ([]ObservedEnvoy, error) {
+	var proxies []pb.Replica
+	for _, r := range env.Replicas {
+		if r.Role == pb.RoleProxy {
+			proxies = append(proxies, r)
+		}
+	}
+	out := make([]ObservedEnvoy, len(proxies))
+	started := make([]bool, len(proxies))
+	var todo []int
+	for i, r := range proxies {
+		out[i] = ObservedEnvoy{Namespace: r.Namespace, Pod: r.Pod, Status: pb.ItemSkipped}
+		// Terminating and unready replicas are still captured (design §8.2).
+		if r.Identity != pb.IdentityUnverified && r.Phase == corev1.PodRunning {
+			out[i].Status = pb.ItemTimeout
+			todo = append(todo, i)
+		}
+	}
+	cctx, cancel := captureContext(ctx)
+	defer cancel()
+	var (
+		mu       sync.Mutex
+		sealErr  error
+		wg       sync.WaitGroup
+		jobs     = make(chan int)
+		workers  = min(captureWorkers, len(todo))
+		fitsNext = func() bool {
+			d, ok := cctx.Deadline()
+			return cctx.Err() == nil && (!ok || env.RequestTimeout <= 0 || time.Until(d) >= env.RequestTimeout)
+		}
+	)
+	for range workers {
+		wg.Go(func() {
+			for i := range jobs {
+				if !fitsNext() {
+					continue
+				}
+				mu.Lock()
+				started[i] = true
+				mu.Unlock()
+				o, err := c.capture(cctx, env, s, proxies[i])
+				mu.Lock()
+				out[i] = o
+				if errors.Is(err, pb.ErrSealed) {
+					sealErr = err
+				}
+				mu.Unlock()
+			}
+		})
+	}
+feed:
+	for _, i := range todo {
+		select {
+		case jobs <- i:
+		case <-cctx.Done():
+			break feed
+		}
+	}
+	close(jobs)
+	wg.Wait()
+	if sealErr != nil {
+		return nil, sealErr
+	}
+	for _, i := range todo {
+		if !started[i] {
+			r := proxies[i]
+			s.Error(pb.Path{pb.ProxiesDir, r.Namespace, r.Pod, pb.ServerInfoFile},
+				pb.Source{Namespace: r.Namespace, Pod: r.Pod, UID: r.UID, Operation: pb.OpServerInfo},
+				fmt.Errorf("%s: not started before the deadline: %w", pb.OpServerInfo, context.DeadlineExceeded))
+		}
+	}
+	return out, nil
+}
+
+// captureContext ends captures before ctx's deadline, keeping a reserve of a
+// tenth of the time left, at most a second, to write version.json.
+func captureContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	d, ok := ctx.Deadline()
+	if !ok {
+		return context.WithCancel(ctx)
+	}
+	return context.WithDeadline(ctx, d.Add(-min(time.Second, time.Until(d)/10)))
+}
+
+// installs returns the version view's entries for the scope's installs; a
+// failure is an error at cluster/.
+func (c versionCollector) installs(sc pb.Scope, s pb.Sink) []view.InstallVersion {
 	if c.res == nil {
 		return nil
 	}
 	// Every detected install, as `version` sees them; the scope's are kept below.
-	f, _ := view.NewFilter(c.res, view.Scope{AllControllers: true})
+	f, warns := view.NewFilter(c.res, view.Scope{AllControllers: true})
+	for _, w := range warns {
+		s.Error(pb.Path{pb.ClusterDir}, pb.Source{}, errors.New(w))
+	}
 	v, err := view.Version(c.build, c.res, f)
 	if err != nil {
+		s.Error(pb.Path{pb.ClusterDir}, pb.Source{}, err)
 		return nil
 	}
 	ids := map[string]bool{}
@@ -146,7 +252,7 @@ func (c versionCollector) capture(ctx context.Context, env pb.Env, s pb.Sink, r 
 	if err != nil {
 		err = adminError(pb.OpServerInfo, err)
 		s.Error(p, src, err)
-		o.Status = itemStatus(err)
+		o.Status = ib.ItemStatus(err)
 		return o, nil
 	}
 	// The re-read gets its own request bound (design §8.2).
@@ -208,15 +314,4 @@ func adminError(op pb.Op, err error) error {
 		return fmt.Errorf("%s: admin endpoint returned %d %s", op, code, http.StatusText(code))
 	}
 	return fmt.Errorf("%s: request failed", op)
-}
-
-// itemStatus mirrors the writer's status for an error.
-func itemStatus(err error) pb.ItemStatus {
-	switch {
-	case apierrors.IsForbidden(err):
-		return pb.ItemDenied
-	case errors.Is(err, context.DeadlineExceeded), apierrors.IsTimeout(err), apierrors.IsServerTimeout(err):
-		return pb.ItemTimeout
-	}
-	return pb.ItemFailed
 }

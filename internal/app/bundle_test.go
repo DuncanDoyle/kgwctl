@@ -89,13 +89,14 @@ func readManifest(t *testing.T, a bundletest.Archive) manifestDoc {
 
 var bundleNow = time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 
-// runBundle runs `bundle args` against kubeconfig with extra as downstream collectors.
+// runBundle runs `bundle args` against kubeconfig with extra as downstream
+// collectors. The version and check collectors are skipped; their tests use runBundleWith.
 func runBundle(t *testing.T, kubeconfig string, extra []pb.Collector, args ...string) result {
 	t.Helper()
 	var out, errb bytes.Buffer
 	cfg := app.Config{Build: testBuild, Out: &out, Err: &errb, Now: testNow, Collectors: extra}
 	root := app.NewRootWithBundleHooks(cfg, app.BundleTestHooks{Now: func() time.Time { return bundleNow }})
-	code := run(root, append([]string{"--kubeconfig", kubeconfig, "bundle"}, args...)...)
+	code := run(root, append([]string{"--kubeconfig", kubeconfig, "bundle", "--skip", "version,check"}, args...)...)
 	return result{code: code, stdout: out.String(), stderr: errb.String()}
 }
 
@@ -353,7 +354,7 @@ func TestBundleInterrupt(t *testing.T) {
 	var errb bytes.Buffer
 	cfg := app.Config{Build: testBuild, Out: &bytes.Buffer{}, Err: &errb, Now: testNow, Collectors: []pb.Collector{blocker}}
 	root := app.NewRootWithBundleHooks(cfg, app.BundleTestHooks{Now: func() time.Time { return bundleNow }})
-	root.SetArgs([]string{"--kubeconfig", env.Kubeconfig, "bundle", "-o", out})
+	root.SetArgs([]string{"--kubeconfig", env.Kubeconfig, "bundle", "--skip", "version,check", "-o", out})
 	if err := root.ExecuteContext(ctx); err != nil {
 		t.Fatalf("err %v, stderr %q; want success", err, errb.String())
 	}

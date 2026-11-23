@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -73,7 +74,8 @@ func proxyPods(t *testing.T, names ...string) string {
 
 func proxyPodYAML(name string) string {
 	return "apiVersion: v1\nkind: Pod\nmetadata:\n  name: " + name + "\n  namespace: kgateway-system\n" +
-		"  labels: {kgateway: kube-gateway, gateway.networking.k8s.io/gateway-name: http}\n" +
+		"  labels: {kgateway: kube-gateway, app.kubernetes.io/component: proxy, app.kubernetes.io/name: http,\n" +
+		"    app.kubernetes.io/instance: http, gateway.networking.k8s.io/gateway-name: http}\n" +
 		"  annotations: {gateway.kgateway.dev/gateway-full-name: http}\n" +
 		"spec: {containers: [{name: kgateway-proxy, image: cr.kgateway.dev/kgateway-dev/envoy-wrapper:v2.5.0}]}\n" +
 		"status: {phase: Running}\n"
@@ -129,6 +131,7 @@ type versionDoc struct {
 	} `json:"server"`
 	Installs []struct {
 		ID, Controller string
+		Proxies        []struct{ Gateway, Version string }
 	} `json:"installs"`
 	Observed []struct {
 		Namespace, Pod, Version, Status string
@@ -169,19 +172,52 @@ func readItems(t *testing.T, a bundletest.Archive) itemsDoc {
 }
 
 // TestVersionFile: version.json holds the discovery server version, the
-// install's image tags and one observed entry per proxy replica; a denied
-// replica has no version, a replaced Pod is recorded as changed, and kubelet
-// error text never reaches the archive. The production port-forwarder's
-// denial is denied too.
+// install's controller and proxy image tags and one observed entry per proxy
+// replica; a denied replica has no version, a replaced Pod is recorded as
+// changed, a terminating one is captured, a label-only one is never dialled,
+// and kubelet error text never reaches the archive. The production
+// port-forwarder's denial is denied too.
 func TestVersionFile(t *testing.T) {
 	const canary = "kgwctl-canary-kubelet-stream"
-	env := newEnv(t, testenv.Options{Fixtures: []string{healthyFixture, proxyPods(t, "http-a", "http-b", "http-denied", "http-err", "http-replaced")}})
+	// A label-only Pod is unverified; a Pod held by a finalizer is deleted below, so it is terminating.
+	// The proxy Deployment gives the install its proxy image tag.
+	extra := filepath.Join(t.TempDir(), "extra.yaml")
+	unverified := strings.Replace(proxyPodYAML("http-unverified"), "  annotations: {gateway.kgateway.dev/gateway-full-name: http}\n", "", 1)
+	terminating := strings.Replace(proxyPodYAML("http-terminating"), "  labels:", "  finalizers: [example.com/hold]\n  labels:", 1)
+	const labels = "{app.kubernetes.io/name: http, app.kubernetes.io/instance: http, gateway.networking.k8s.io/gateway-name: http}"
+	deployment := "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: http\n  namespace: kgateway-system\n" +
+		"  labels: {app.kubernetes.io/managed-by: kgateway, app.kubernetes.io/component: proxy, app.kubernetes.io/name: http,\n" +
+		"    app.kubernetes.io/instance: http, gateway.networking.k8s.io/gateway-name: http}\n" +
+		"spec:\n  replicas: 1\n  selector: {matchLabels: " + labels + "}\n" +
+		"  template:\n    metadata: {labels: " + labels + "}\n" +
+		"    spec: {containers: [{name: kgateway-proxy, image: cr.kgateway.dev/kgateway-dev/envoy-wrapper:v2.5.0}]}\n"
+	if err := os.WriteFile(extra, []byte(unverified+"---\n"+terminating+"---\n"+deployment), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := newEnv(t, testenv.Options{Fixtures: []string{healthyFixture, proxyPods(t, "http-a", "http-b", "http-denied", "http-err", "http-replaced"), extra}})
 	kube, err := kubernetes.NewForConfig(env.Admin)
 	if err != nil {
 		t.Fatal(err)
 	}
+	pods := kube.CoreV1().Pods("kgateway-system")
+	if err := pods.Delete(t.Context(), "http-terminating", metav1.DeleteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		patch := []byte(`{"metadata":{"finalizers":null}}`)
+		_, _ = pods.Patch(context.Background(), "http-terminating", types.MergePatchType, patch, metav1.PatchOptions{})
+	})
+	var (
+		mu     sync.Mutex
+		dialed = map[string]bool{}
+	)
 	admin := fakeAdmin{serve: func(pod types.NamespacedName) (string, error) {
+		mu.Lock()
+		dialed[pod.Name] = true
+		mu.Unlock()
 		switch pod.Name {
+		case "http-terminating":
+			return serverInfo("ddd/1.36.1/Clean/RELEASE/BoringSSL"), nil
 		case "http-a":
 			return serverInfo("aaa/1.36.1/Clean/RELEASE/BoringSSL"), nil
 		case "http-b":
@@ -204,7 +240,7 @@ func TestVersionFile(t *testing.T) {
 		return serverInfo("ccc/1.36.1/Clean/RELEASE/BoringSSL"), nil
 	}}
 
-	a := archiveWith(t, env.Kubeconfig, nil, app.BundleTestHooks{Dialer: admin, Check: fastHooks(metricsScraper{})})
+	a := archiveWith(t, env.Kubeconfig, nil, app.BundleTestHooks{Dialer: admin}, "--skip", "check")
 	v := readVersion(t, a)
 	if v.Server == nil || v.Server.GitVersion == "" {
 		t.Errorf("server version missing: %+v", v.Server)
@@ -213,18 +249,28 @@ func TestVersionFile(t *testing.T) {
 		t.Errorf("client %q, want %q", v.Client.Version, testBuild.Version)
 	}
 	if len(v.Installs) != 1 || v.Installs[0].Controller != "2.5.0" {
-		t.Errorf("installs %+v, want the controller image tag 2.5.0", v.Installs)
+		t.Fatalf("installs %+v, want the controller image tag 2.5.0", v.Installs)
+	}
+	if !slices.ContainsFunc(v.Installs[0].Proxies, func(p struct{ Gateway, Version string }) bool {
+		return p.Gateway == "kgateway-system/http" && p.Version == "2.5.0"
+	}) {
+		t.Errorf("proxies %+v, want kgateway-system/http at image tag 2.5.0", v.Installs[0].Proxies)
+	}
+	if dialed["http-unverified"] {
+		t.Error("the unverified Pod was dialled")
 	}
 	got := map[string]string{}
 	for _, o := range v.Observed {
 		got[o.Pod] = o.Status + " " + o.Version
 	}
 	want := map[string]string{
-		"http-a":        "ok aaa/1.36.1/Clean/RELEASE/BoringSSL",
-		"http-b":        "ok bbb/1.37.0/Clean/RELEASE/BoringSSL",
-		"http-denied":   "denied ",
-		"http-err":      "failed ",
-		"http-replaced": "ok ccc/1.36.1/Clean/RELEASE/BoringSSL",
+		"http-a":           "ok aaa/1.36.1/Clean/RELEASE/BoringSSL",
+		"http-b":           "ok bbb/1.37.0/Clean/RELEASE/BoringSSL",
+		"http-denied":      "denied ",
+		"http-err":         "failed ",
+		"http-replaced":    "ok ccc/1.36.1/Clean/RELEASE/BoringSSL",
+		"http-terminating": "ok ddd/1.36.1/Clean/RELEASE/BoringSSL",
+		"http-unverified":  "skipped ",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("observed %v, want %v", got, want)
@@ -248,12 +294,12 @@ func TestVersionFile(t *testing.T) {
 
 	// The production port-forwarder through the guard: a 403 upgrade is denied.
 	hits := env.Proxies[0].Rule(testenv.Match{Resource: "pods", Subresource: "portforward"}, testenv.Action{Status: http.StatusForbidden, Body: []byte(canary)})
-	a = archiveWith(t, env.Kubeconfig, nil, app.BundleTestHooks{Check: fastHooks(metricsScraper{})})
+	a = archiveWith(t, env.Kubeconfig, nil, app.BundleTestHooks{}, "--skip", "check")
 	if hits.N() == 0 {
 		t.Fatal("no port-forward request reached the API server")
 	}
 	for _, o := range readVersion(t, a).Observed {
-		if o.Status != "denied" || o.Version != "" {
+		if o.Pod != "http-unverified" && (o.Status != "denied" || o.Version != "") {
 			t.Errorf("production dialer: %+v, want denied without a version", o)
 		}
 	}
@@ -300,7 +346,7 @@ func TestCheckCollectorMatchesCheck(t *testing.T) {
 	if r.stdout == "" {
 		t.Fatalf("check printed nothing; exit %d, stderr %q", r.code, r.stderr)
 	}
-	a := archiveWith(t, env.Kubeconfig, reg, app.BundleTestHooks{Check: fastHooks(metricsScraper{})}, "-n", "kgateway-system")
+	a := archiveWith(t, env.Kubeconfig, reg, app.BundleTestHooks{Check: fastHooks(metricsScraper{})}, "-n", "kgateway-system", "--skip", "version")
 	got, ok := a.File("check/check.json")
 	if !ok {
 		t.Fatal("archive lacks check/check.json")
@@ -317,12 +363,27 @@ func TestCheckCollectorDenialBody(t *testing.T) {
 	env := newEnv(t, testenv.Options{Fixtures: []string{healthyFixture}})
 	body := []byte(`{"kind":"Status","apiVersion":"v1","status":"Failure","code":403,"reason":"Forbidden","message":"` + canary + `"}`)
 	hits := env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindAcquire, Resource: httpRoutes}, testenv.Action{Status: http.StatusForbidden, Body: body})
-	a := archiveWith(t, env.Kubeconfig, nil, app.BundleTestHooks{Check: fastHooks(metricsScraper{})})
+	a := archiveWith(t, env.Kubeconfig, nil, app.BundleTestHooks{Check: fastHooks(metricsScraper{})}, "--skip", "version")
 	if hits.N() == 0 {
 		t.Fatal("the rule never applied")
 	}
-	fileHas(t, a, "check/check.json", "403 Forbidden")
-	fileHas(t, a, "errors.txt", "403 Forbidden")
+	// The check collector writes no error line for an incomplete input: its
+	// record is check.json's incomplete entry. errors.txt's line is the resources collector's.
+	b, _ := a.File("check/check.json")
+	var doc struct {
+		Item struct {
+			Incomplete []struct{ Input, State, Reason string } `json:"incomplete"`
+		} `json:"item"`
+	}
+	if err := json.Unmarshal(b, &doc); err != nil {
+		t.Fatalf("check.json: %v\n%s", err, b)
+	}
+	if !slices.ContainsFunc(doc.Item.Incomplete, func(in struct{ Input, State, Reason string }) bool {
+		return strings.HasPrefix(in.Input, "httproutes") && in.State == "denied" && strings.Contains(in.Reason, "403 Forbidden")
+	}) {
+		t.Errorf("check.json incomplete %+v, want httproutes denied with 403 Forbidden", doc.Item.Incomplete)
+	}
+	fileHas(t, a, "errors.txt", "resources/gateway.networking.k8s.io/HTTPRoute", "403 Forbidden")
 	if _, ok := a.File("run.log"); !ok {
 		t.Error("archive lacks run.log")
 	}
@@ -333,7 +394,7 @@ func TestCheckCollectorDenialBody(t *testing.T) {
 // install's discovery selector leaves out, with KGWUI-004.
 func TestCheckCollectorUnwatchedRoute(t *testing.T) {
 	env := newEnv(t, testenv.Options{Fixtures: []string{ownershipFixture(t)}})
-	a := archiveWith(t, env.Kubeconfig, nil, app.BundleTestHooks{Check: fastHooks(metricsScraper{})})
+	a := archiveWith(t, env.Kubeconfig, nil, app.BundleTestHooks{Check: fastHooks(metricsScraper{})}, "--skip", "version")
 	b, _ := a.File("check/check.json")
 	var doc struct {
 		Item struct {
@@ -414,7 +475,7 @@ func TestBundleMetadataCanaries(t *testing.T) {
 func TestBundleRegistryAlias(t *testing.T) {
 	env := newEnv(t, testenv.Options{Fixtures: []string{healthyFixture}})
 	reg := extension.New(extension.WithKinds(kinds.Descriptor{Kind: "Secret", Resource: "secrets", Versions: []string{"v1"}, Namespaced: true}))
-	a := archiveWith(t, env.Kubeconfig, reg, app.BundleTestHooks{Check: fastHooks(metricsScraper{})})
+	a := archiveWith(t, env.Kubeconfig, reg, app.BundleTestHooks{Check: fastHooks(metricsScraper{})}, "--skip", "version")
 	if slices.ContainsFunc(env.Proxies[0].Requests(), func(r string) bool { return strings.Contains(r, "/secrets") }) {
 		t.Error("a secrets request reached the API server")
 	}

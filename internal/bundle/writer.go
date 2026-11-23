@@ -230,7 +230,9 @@ func (w *Writer) errorText(err error) string {
 	return s
 }
 
-func itemStatus(err error) pb.ItemStatus {
+// ItemStatus is the item status the Sink records for err: denied on a 403,
+// timeout on a deadline or timeout status, else failed.
+func ItemStatus(err error) pb.ItemStatus {
 	switch {
 	case apierrors.IsForbidden(err):
 		return pb.ItemDenied
@@ -416,7 +418,7 @@ func (w *Writer) finish(c *call, o outcome) error {
 func (w *Writer) structured(c *call, r io.Reader, limit int64, fn func([]byte, redact.Options) ([]byte, []redact.Finding, error)) error {
 	body, err := io.ReadAll(io.LimitReader(r, limit+1))
 	if err != nil {
-		return w.finish(c, outcome{status: itemStatus(err), reason: w.errorText(err), err: err})
+		return w.finish(c, outcome{status: ItemStatus(err), reason: w.errorText(err), err: err})
 	}
 	if int64(len(body)) > limit {
 		return w.finish(c, outcome{status: pb.ItemDropped, reason: ReasonSizeCap, err: fmt.Errorf("%w: %s", pb.ErrBudget, ReasonSizeCap)})
@@ -1040,7 +1042,7 @@ func (s *sink) Error(p pb.Path, src pb.Source, err error) {
 	if s.w.sealed {
 		return
 	}
-	s.w.addRecord(s.name, Item{Path: path, CapturedAt: s.w.now(), Source: safeSource(src), Status: itemStatus(err), Reason: text}, nil, nil)
+	s.w.addRecord(s.name, Item{Path: path, CapturedAt: s.w.now(), Source: safeSource(src), Status: ItemStatus(err), Reason: text}, nil, nil)
 }
 
 func (s *sink) Exclude(gk schema.GroupKind, reason pb.ExcludeReason) error {

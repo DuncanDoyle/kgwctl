@@ -21,6 +21,8 @@ type recordSink struct {
 	mu       sync.Mutex
 	objects  map[string]*unstructured.Unstructured
 	errs     []error
+	errPaths []string
+	json     map[string][]byte
 	excluded map[schema.GroupKind]map[pb.ExcludeReason]int
 }
 
@@ -38,13 +40,26 @@ func (s *recordSink) Object(p pb.Path, u *unstructured.Unstructured, _ pb.Source
 	return nil
 }
 func (*recordSink) ConfigDump(pb.Path, io.Reader, pb.Source) error { return nil }
-func (*recordSink) JSON(pb.Path, io.Reader, pb.Source) error       { return nil }
+func (s *recordSink) JSON(p pb.Path, r io.Reader, _ pb.Source) error {
+	b, err := io.ReadAll(r)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.json == nil {
+		s.json = map[string][]byte{}
+	}
+	s.json[p.String()] = b
+	return nil
+}
 func (*recordSink) Prometheus(pb.Path, io.Reader, pb.Source) error { return nil }
 func (*recordSink) Text(pb.Path, io.Reader, pb.Source) error       { return nil }
-func (s *recordSink) Error(_ pb.Path, _ pb.Source, err error) {
+func (s *recordSink) Error(p pb.Path, _ pb.Source, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.errs = append(s.errs, err)
+	s.errPaths = append(s.errPaths, p.String())
 }
 func (s *recordSink) Exclude(gk schema.GroupKind, r pb.ExcludeReason) error {
 	s.mu.Lock()
