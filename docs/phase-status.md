@@ -3,8 +3,10 @@
 ## Phase
 Phase: 4 — Support bundle
 Base: 38acaa0
+Author: anthropic (claude-opus-5-5 controller; Claude subagent implementers)
+Advisory: none
 Docs: docs/phases/phase-4/
-Status: design
+Status: implementing; sub-phase 4.2 open
 
 ### Queue
 - [x] Q1 Phase 4 design (`design.md`) r1, with research notes (prior art, reuse, threats) — not committed, in .agents-tmp/
@@ -27,7 +29,23 @@ Status: design
 - [ ] phase-4-complete.md written, roadmap updated, tracked items closed
 
 ## Sub-phase
-none (4.1 closed 2026-11-22: docs/phases/phase-4/phase-4.1-complete.md)
+Sub-phase: 4.2 — Command, scope, transport, cluster state
+Kind: planned
+Base: b4a586d
+Brief: docs/phases/phase-4/phase-4.2-brief.md
+
+### Allowed work
+Features within the approved design (r6): plan Tasks 4.2.1–4.2.5.
+
+### Not allowed
+Design changes without a decisions.md entry and owner approval.
+
+### Queue
+- [ ] T1 Task 4.2.1 Command, flags, destination, exit codes (incl. 4.1 P4-1 `<apiserver>` placeholder) ← CURRENT
+- [ ] T2 Task 4.2.2 Request guard, scope and inventory (`Scope.Excluded` interim loop; Snellius v0.9.0)
+- [ ] T3 Task 4.2.3 `proxydump` operations (incl. Phase 3 CONNECT/SOCKS5 cancel test)
+- [ ] T4 Task 4.2.4 Resources, workloads, install (incl. 4.1 P4-1 long file names)
+- [ ] T5 Task 4.2.5 Version and `check` collectors
 
 ## Program
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
