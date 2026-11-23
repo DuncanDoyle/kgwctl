@@ -99,6 +99,7 @@ kgwctl-bundle-<ts>/
   resources/<group>/<kind>/<namespace|_cluster>/<name>.yaml
   workloads/<namespace>/{deployments,pods,services,events}.yaml
   install/<namespace>/<deployment>.yaml   # labels, images, KGW_* env (redacted)
+  install/_cluster/<gatewayclass>.yaml    # kept GatewayClasses
   controller/<namespace>/<pod>/
     logs/<container>.log, <container>.previous.log
     metrics.txt            # /metrics on the install's metrics port
@@ -250,6 +251,7 @@ Built once, after scope resolution and before any collector. Logs, metrics, admi
 ### 8.4 Paths
 - `Path` is a list of components joined under the archive root.
 - A component is a constant from `pkg/bundle` or a name in Kubernetes grammar (DNS-1123 subdomain or label, or kind), optionally with one fixed file extension; `ValidatePath` enforces this. Each is 1–255 bytes. `_` appears only in constants. A path has at most 8 components.
+- A name whose file component would exceed 255 bytes is cut, then gets `-` plus the first 12 hex characters of the SHA-256 of the full name, then the extension. The full name stays in the object.
 - The grammar cannot prove a name came from the API. Collectors must pass real Kubernetes names, never captured data.
 - Paths are resolved at commit, in commit order: the first to commit wins. A later path equal to it ignoring case, or that is a file or directory prefix of it (`a/b` and `a/b/c`), is dropped and recorded. An item dropped by the budget claims no path. An exact repeat within one collector is rejected when it begins. The four root footer names are reserved.
 - Cluster-scoped objects use `_cluster` as the namespace component. Kubernetes namespaces cannot contain `_`.

@@ -16,8 +16,8 @@ Status: implementing; sub-phase 4.2 open
 - [x] Q4 Owner go-ahead on design r5 and §12 items 1–6 (2026-11-22); D-025, D-026 accepted
 - [x] Q5 Design r6 (owner additions: ownership and discovery-scope filters, `--skip logs`): Codex reviews r5–r9 + triage (reviews/design-codex-r5.md … -r9.md); no open P1/P2
 - [x] Q6 Sub-phase 4.1 (contract, redaction, writer, runner, threat model) — phase-4.1-complete.md; Codex reviews 4.1-codex.md … -r4.md
-- [ ] Q7 Sub-phase 4.2 (command, guard, scope, inventory, Envoy transport, cluster-state collectors) ← CURRENT
-- [ ] Q8 Sub-phase 4.3 (logs, metrics, Envoy capture, RBAC and partial runs); split internal/bundle/writer.go first
+- [x] Q7 Sub-phase 4.2 (command, guard, scope, inventory, Envoy transport, cluster-state collectors) — phase-4.2-complete.md
+- [ ] Q8 Sub-phase 4.3 (logs, metrics, Envoy capture, RBAC and partial runs); split internal/bundle/writer.go first; settle P4-2 before Task 4.3.1 ← CURRENT
 - [ ] Q9 Sub-phase 4.4 (extension point, README, live check)
 
 ### Exit gates
@@ -29,23 +29,7 @@ Status: implementing; sub-phase 4.2 open
 - [ ] phase-4-complete.md written, roadmap updated, tracked items closed
 
 ## Sub-phase
-Sub-phase: 4.2 — Command, scope, transport, cluster state
-Kind: planned
-Base: b4a586d
-Brief: docs/phases/phase-4/phase-4.2-brief.md
-
-### Allowed work
-Features within the approved design (r6): plan Tasks 4.2.1–4.2.5.
-
-### Not allowed
-Design changes without a decisions.md entry and owner approval.
-
-### Queue
-- [ ] T1 Task 4.2.1 Command, flags, destination, exit codes (incl. 4.1 P4-1 `<apiserver>` placeholder) ← CURRENT
-- [ ] T2 Task 4.2.2 Request guard, scope and inventory (`Scope.Excluded` interim loop; Snellius v0.9.0)
-- [ ] T3 Task 4.2.3 `proxydump` operations (incl. Phase 3 CONNECT/SOCKS5 cancel test)
-- [ ] T4 Task 4.2.4 Resources, workloads, install (incl. 4.1 P4-1 long file names)
-- [ ] T5 Task 4.2.5 Version and `check` collectors
+none (4.2 closed 2026-11-23: docs/phases/phase-4/phase-4.2-complete.md)
 
 ## Program
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
@@ -69,3 +53,4 @@ Design changes without a decisions.md entry and owner approval.
 - 2026-11-20 Phase 2 closed: docs/phases/phase-2/phase-2-complete.md.
 - 2026-11-21 Phase 3 closed: docs/phases/phase-3/phase-3-complete.md.
 - 2026-11-22 Sub-phase 4.1 closed: docs/phases/phase-4/phase-4.1-complete.md.
+- 2026-11-23 Sub-phase 4.2 closed: docs/phases/phase-4/phase-4.2-complete.md. Gates at 6376149 plus docs: `make test` (race, envtest) exit 0 (internal/app 211 s); `go vet ./...` and gofmt clean; `go mod tidy -diff` empty.
