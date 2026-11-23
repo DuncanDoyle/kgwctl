@@ -147,7 +147,7 @@ Per replica, the manifest keeps pod identity, restart counts and capture times n
 | `proxy-admin` | each proxy replica's allowlisted Envoy admin operations (§6.3) | `pods/portforward` (optional Role, D-021) | on |
 
 - A 403 gives each affected item the status `denied`, and the run continues. `errors.txt` ends with grant lines, one per grant and namespace, whichever collectors hit it. A reader-only user gets resources, workloads, install, version without observed Envoy versions, and `check`.
-- Metrics use the Snellius `ctrlmetrics.PodProxyScraper` (one GET, no redirects). The guard classifies a pods/proxy 502/503 first: it reads at most 4 KiB of the body for "connection refused" and sets a typed `Refused` marker, then replaces the body (§7.1). The body is never stored. A 403 stays typed. Proxy metrics always try 9091. Item status: `denied` on 403; `disabled` only when the connection is refused and the Pod declares no 9091 port; `failed` otherwise.
+- Metrics use one guarded `pods/proxy` GET per replica, with no redirects. Snellius `ctrlmetrics.PodProxyScraper` v0.8.2 closes a non-200 body unread, which loses the guard's cause. The guard classifies a pods/proxy 502/503 first: it reads at most 4 KiB of the body for "connection refused" and sets a typed `Refused` marker, then replaces the body (§7.1). The body is never stored. A 403 stays typed. Proxy metrics always try 9091. Item status: `denied` on 403; `disabled` only when the connection is refused and the Pod declares no 9091 port; `failed` otherwise.
 - No model is shared between collectors.
 
 ### 6.1 Secrets, ConfigMaps and Helm values

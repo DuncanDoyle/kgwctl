@@ -48,7 +48,7 @@ A support engineer's first command on a cluster they troubleshoot: what is wrong
 - `proxy dump`: one replica's raw config dump, for tickets and `--file`.
 
 ### Phase 4 — Support bundle
-**Status:** Not started
+**Status:** In progress — sub-phases 4.1, 4.2 and 4.3 closed; 4.4 (extension point, README, live check) next
 **Docs:** `docs/phases/phase-4/`
 **Waits on:** none — Phase 3 delivered proxy access (`internal/proxydump` `Fetch`/`FetchGateway`: pod identity, per-capture errors, deadline; D-021)
 

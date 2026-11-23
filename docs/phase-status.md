@@ -6,7 +6,7 @@ Base: 38acaa0
 Author: anthropic (claude-opus-5-5 controller; Claude subagent implementers)
 Advisory: none
 Docs: docs/phases/phase-4/
-Status: implementing; sub-phase 4.3 open
+Status: implementing; 4.1–4.3 closed, 4.4 next
 
 ### Queue
 - [x] Q1 Phase 4 design (`design.md`) r1, with research notes (prior art, reuse, threats) — not committed, in .agents-tmp/
@@ -17,8 +17,8 @@ Status: implementing; sub-phase 4.3 open
 - [x] Q5 Design r6 (owner additions: ownership and discovery-scope filters, `--skip logs`): Codex reviews r5–r9 + triage (reviews/design-codex-r5.md … -r9.md); no open P1/P2
 - [x] Q6 Sub-phase 4.1 (contract, redaction, writer, runner, threat model) — phase-4.1-complete.md; Codex reviews 4.1-codex.md … -r4.md
 - [x] Q7 Sub-phase 4.2 (command, guard, scope, inventory, Envoy transport, cluster-state collectors) — phase-4.2-complete.md
-- [ ] Q8 Sub-phase 4.3 (logs, metrics, Envoy capture, RBAC and partial runs); split internal/bundle/writer.go first; settle P4-2 before Task 4.3.1 ← CURRENT
-- [ ] Q9 Sub-phase 4.4 (extension point, README, live check)
+- [x] Q8 Sub-phase 4.3 (writer split, Sink contract D-027, logs, metrics, Envoy capture, RBAC and partial runs) — phase-4.3-complete.md
+- [ ] Q9 Sub-phase 4.4 (extension point, README, live check) ← CURRENT (not started)
 
 ### Exit gates
 - [ ] tests/vet pass
@@ -29,24 +29,7 @@ Status: implementing; sub-phase 4.3 open
 - [ ] phase-4-complete.md written, roadmap updated, tracked items closed
 
 ## Sub-phase
-Sub-phase: 4.3 — Logs, metrics, Envoy
-Kind: planned
-Base: dd98ce7
-Brief: docs/phases/phase-4/phase-4.3-brief.md
-
-### Allowed work
-Features within the approved design (r6): plan Tasks 4.3.1–4.3.4, the `writer.go` split (no behaviour change), and the P4-2 Sink contract change once decisions.md records it and the owner approves.
-
-### Not allowed
-Design changes without a decisions.md entry and owner approval.
-
-### Queue
-- [x] T0 Split internal/bundle/writer.go into files, behaviour unchanged — a19f675
-- [ ] T0b P4-2: Sink re-reads Pods, `Sink.Omit`, context on write methods (D-027, approved 2026-11-23) ← CURRENT
-- [ ] T1 Task 4.3.1 Logs (incl. 4.1 P3-3 pem-tail)
-- [ ] T2 Task 4.3.2 Controller and proxy metrics (Refused cause: own call, not the Snellius scraper's)
-- [ ] T3 Task 4.3.3 Envoy capture (incl. kubelet error text canary from 4.2.3; `--no-endpoints` wiring)
-- [ ] T4 Task 4.3.4 RBAC and partial runs
+Sub-phase: none open — 4.3 closed 2026-11-23; 4.4 next (owner to confirm start)
 
 ## Program
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
@@ -71,3 +54,4 @@ Design changes without a decisions.md entry and owner approval.
 - 2026-11-21 Phase 3 closed: docs/phases/phase-3/phase-3-complete.md.
 - 2026-11-22 Sub-phase 4.1 closed: docs/phases/phase-4/phase-4.1-complete.md.
 - 2026-11-23 Sub-phase 4.2 closed: docs/phases/phase-4/phase-4.2-complete.md. Gates at 6376149 plus docs: `make test` (race, envtest) exit 0 (internal/app 211 s); `go vet ./...` and gofmt clean; `go mod tidy -diff` empty.
+- 2026-11-23 Sub-phase 4.3 closed: docs/phases/phase-4/phase-4.3-complete.md. Gates at bb63cac plus close docs: `make test` (race, envtest) exit 0, 16 packages (internal/app 226 s); `make lint` and `go mod tidy -diff` clean.
