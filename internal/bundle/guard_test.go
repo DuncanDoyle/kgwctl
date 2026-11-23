@@ -155,6 +155,38 @@ func TestGuardSanitizesBodies(t *testing.T) {
 	}
 }
 
+// TestGuardTwice: a config guarded twice keeps the refused cause and still
+// replaces bodies.
+func TestGuardTwice(t *testing.T) {
+	const canary = "kgwctl-canary-guard-twice"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		if strings.Contains(r.URL.Path, "/pods/refused") {
+			io.WriteString(w, "dial tcp 10.1.2.3:9091: connect: connection refused "+canary)
+			return
+		}
+		io.WriteString(w, canary)
+	}))
+	t.Cleanup(srv.Close)
+	kube, err := kubernetes.NewForConfig(Guard(Guard(&rest.Config{Host: srv.URL})))
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := func(pod string) error {
+		return kube.CoreV1().RESTClient().Get().Namespace("team-a").Resource("pods").Name(pod + ":9091").
+			SubResource("proxy").Suffix("metrics").Do(context.Background()).Error()
+	}
+	for pod, refused := range map[string]bool{"refused": true, "plain": false} {
+		err := proxy(pod)
+		if Refused(err) != refused || statusCode(err) != 503 {
+			t.Errorf("%s: got %v (code %d, refused %t), want 503 with refused %t", pod, err, statusCode(err), Refused(err), refused)
+		}
+		if strings.Contains(fmt.Sprintf("%v %#v", err, err), canary) {
+			t.Errorf("%s: error carries the body: %v", pod, err)
+		}
+	}
+}
+
 // TestGuardPassesRedirects: 3xx responses, 304 included, pass untouched.
 func TestGuardPassesRedirects(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

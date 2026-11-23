@@ -30,7 +30,8 @@ var refusedPhrase = []byte("connect: connection refused")
 // Guard returns a copy of cfg whose transport refuses every request for core
 // secrets and configmaps with pb.ErrForbiddenKind, unsent, and replaces each
 // 4xx and 5xx response body with a Status holding only code, reason and the
-// refused cause (design §6.1, §7.1). Bodies are never stored.
+// refused cause (design §6.1, §7.1). Bodies are never stored. Guarding a
+// guarded config is safe: the inner guard's body and cause pass through.
 func Guard(cfg *rest.Config) *rest.Config {
 	c := rest.CopyConfig(cfg)
 	c.Wrap(func(rt http.RoundTripper) http.RoundTripper { return &guard{next: rt} })
@@ -38,6 +39,12 @@ func Guard(cfg *rest.Config) *rest.Config {
 }
 
 type guard struct{ next http.RoundTripper }
+
+// guardedBody is a body the guard wrote; a server cannot forge its type, so
+// an outer guard passes it through and Guard is idempotent.
+type guardedBody struct{ *bytes.Reader }
+
+func (guardedBody) Close() error { return nil }
 
 // WrappedRoundTripper lets client-go find the inner transport.
 func (g *guard) WrappedRoundTripper() http.RoundTripper { return g.next }
@@ -55,6 +62,10 @@ func (g *guard) RoundTrip(req *http.Request) (*http.Response, error) {
 	if err != nil || resp.StatusCode < 400 {
 		return resp, err
 	}
+	// An inner guard already replaced the body; keep its refused cause.
+	if _, ok := resp.Body.(guardedBody); ok {
+		return resp, nil
+	}
 	var refused bool
 	if res == "pods" && sub == "proxy" && (resp.StatusCode == http.StatusBadGateway || resp.StatusCode == http.StatusServiceUnavailable) {
 		head, _ := io.ReadAll(io.LimitReader(resp.Body, refusedScan))
@@ -62,7 +73,7 @@ func (g *guard) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	_ = resp.Body.Close()
 	body := statusBody(resp.StatusCode, refused)
-	resp.Body = io.NopCloser(bytes.NewReader(body))
+	resp.Body = guardedBody{bytes.NewReader(body)}
 	resp.ContentLength = int64(len(body))
 	resp.Header = resp.Header.Clone()
 	if resp.Header == nil {

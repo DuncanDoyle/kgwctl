@@ -223,7 +223,6 @@ func newBundleCmd(reg *extension.Registry, build BuildInfo, extra []pb.Collector
 			}
 			scrape := hooks.Scraper
 			if scrape == nil {
-				// grc is guarded once, so a refused connection keeps the guard's cause.
 				if scrape, err = collect.StatusScraper(grc); err != nil {
 					return usageErr(err)
 				}

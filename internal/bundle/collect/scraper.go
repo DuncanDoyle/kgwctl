@@ -54,8 +54,7 @@ const statusScan = 4 << 10
 type statusScraper struct{ rc *rest.RESTClient }
 
 // StatusScraper scrapes through pods/proxy with one GET and no redirects.
-// cfg must be guarded (ib.Guard) and not guarded twice, so a refused
-// connection keeps the guard's cause; a non-200 is an *HTTPStatusError.
+// cfg must be guarded (ib.Guard); a non-200 is an *HTTPStatusError.
 func StatusScraper(cfg *rest.Config) (Scraper, error) {
 	kube, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
