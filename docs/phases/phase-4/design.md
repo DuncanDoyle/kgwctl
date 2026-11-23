@@ -201,7 +201,7 @@ One mandatory stage sits in the archive writer. A collector hands the Sink typed
 ### 7.1 Metadata and errors
 - **Remote errors** (Kubernetes API, pods/proxy, port-forward, Envoy) are recorded as the HTTP status and the Kubernetes reason and code only, with the operation for non-Kubernetes errors. Only canonical `metav1.StatusReason` values are shown; any other reason gives `request failed (<code>)`. Response bodies never reach an error. This holds for client-go's log-stream errors, `proxydump`'s port-forward status errors in every command (`proxy dump` keys its RBAC hint on the typed Forbidden, so its messages stay the same), and the `check` collector, which sanitizes errors before the reused check path flattens them into `Input.Reason`.
 - **Other error text**, including panic values, passes `view.Redactor` and the text pattern pass, then is cut at 512 bytes; the whole text is redacted before the cut, and text over 64 KiB is replaced by `[error text too long]`, before it reaches the manifest, `errors.txt`, `run.log` or stderr. Stack traces never enter the archive.
-- **Names:** the archive root has no context name. Path components come only from validated Kubernetes names or constants (§8.4). `Source.Operation` is an operation code. The Sink rejects a `Source.Identity` or exclusion reason outside its constants and records the failure without the value. Flag values follow §5.
+- **Names:** the archive root has no context name. Path components come only from validated Kubernetes names or constants (§8.4). `Source.Operation` is an operation code. The Sink rejects a caller-set `Source.Identity` (D-027) and an exclusion or omission reason outside its constants, and records the failure without the value. Flag values follow §5.
 
 ### 7.2 Limitations (README and threat model)
 - Pattern redaction of logs and free text is best effort. It misses secrets in custom formats, application log formats, and base64-encoded or compressed content.
@@ -335,4 +335,4 @@ Where a triage ruling left room, the design takes the safer reading:
 10. The guard on every client replaces non-2xx bodies with a code-and-reason `Status` before client-go or Snellius flattens them. That is how `check` and load errors are sanitized (r4, row 1).
 11. The guard's `Refused` marker is a fixed cause type in the canonical `Status` it writes (`kgwctl.kgateway.dev/ConnectionRefused`), which the scraper reads back as `HTTPStatusError.Refused` (r5).
 12. The full metadata canaries and the registry-alias test run in the task that wires `check` (4.2.5). The exact request set runs once all collectors exist (4.3.4) (r4, row 4).
-13. For a streamed log, the re-read runs after `Sink.Text` returns. An outcome other than `verified` is recorded through `Sink.Error` with that `Source` (r5).
+13. The Sink runs the re-read once a streamed log is read and records the outcome in the item's `Source.Identity`, with no error line (D-027, superseding r5).
