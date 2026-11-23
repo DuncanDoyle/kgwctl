@@ -240,7 +240,8 @@ func TestVersionFile(t *testing.T) {
 		return serverInfo("ccc/1.36.1/Clean/RELEASE/BoringSSL"), nil
 	}}
 
-	a := archiveWith(t, env.Kubeconfig, nil, app.BundleTestHooks{Dialer: admin}, "--skip", "check")
+	// proxy-admin is skipped: its dials would also replace http-replaced.
+	a := archiveWith(t, env.Kubeconfig, nil, app.BundleTestHooks{Dialer: admin}, "--skip", "check,proxy-admin")
 	v := readVersion(t, a)
 	if v.Server == nil || v.Server.GitVersion == "" {
 		t.Errorf("server version missing: %+v", v.Server)
