@@ -206,3 +206,14 @@ An unknown operation fails before a stream opens, and redirects are refused. `pr
 Downstream collectors are trusted in-process code. The Sink and the guard protect against their mistakes, not against malice.
 **Alternatives:** Redaction per collector — a downstream collector could skip it. Header redaction by name — misses a Secret-backed custom header. Hashing values — low-entropy secrets can be guessed offline.
 **Consequences:** Redaction is tested on the extracted archive with a canary corpus per artifact class. Its limits are documented in docs/bundle-threat-model.md and the README.
+
+## D-027 — The Sink re-reads Pods and records intentional omissions (2026-11-23, phase 4) — accepted by the owner 2026-11-23
+**Context:** Review item P4-2 (4.2). A collector sets `Source.Identity` before it writes, so a streamed capture (logs, metrics) cannot report the re-read that §8.2 requires after the read ends. A capture skipped on purpose (Pod not running, no install, no metrics port) has no way to be recorded except as an error.
+**Decision:**
+- Every Sink write method takes a leading `context.Context`, e.g. `Text(ctx, Path, io.Reader, Source) error`.
+- When `Source.Pod` is set, `Namespace` and the expected `UID` are required. After the content is read, also when it was cut, the Sink re-reads the Pod with the guarded client, bounded by `--request-timeout` and the capture context, and publishes the outcome with the item under the writer lock. A write that already failed is not re-read. `Source.Identity` is output only; a value passed in is rejected.
+- `Omit(Path, Source, OmitReason) error` records an item that was not captured on purpose. The reasons are fixed: `not running` and `no install` give `skipped`, `no metrics port` gives `disabled`. An omission has no archive member, size, redactions entry or `errors.txt` line, claims no path and does not degrade its collector. After the seal it returns `ErrSealed`.
+- At the seal a pending re-read result is discarded. Pod text kept by the seal gets `reread-failed`.
+- `verified`, `changed`, `gone` and `reread-failed` are metadata. None makes an item or collector fail.
+**Alternatives:** An item handle with a one-shot `SetIdentity`: collectors can forget it, and a failed write has no handle. A path-based `Identity` amendment plus `Outcome`: a wrong path can amend another item, and the writer needs an amendment index.
+**Consequences:** `pkg/bundle.Sink` changes before any release; the 4.2 collectors and `examples/downstream` move to it in the same task. One GET per Pod capture, on the collector's own worker. Design §5 and §8.1–§8.4 updated.

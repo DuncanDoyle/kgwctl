@@ -124,6 +124,9 @@ The core group is written as `core`. Member names follow §8.4. The four root fi
 - the replica inventory (§8.2);
 - per collector: name, status (`ok`, `partial`, `failed`, `skipped`, `timeout`), duration, redacted error and a count of `late` results;
 - per item: path, size, content type, capture time, source (namespace, pod, UID, container, operation code, identity outcome per §8.2), status (`ok`, `skipped`, `denied`, `disabled`, `failed`, `timeout`, `dropped`) and redaction count.
+- per omitted item (D-027): path, source, status `skipped` (`not running`, `no install`) or `disabled` (`no metrics port`) and that reason; no size, member or redactions. Omitted items past the list bound count toward the items' omitted count.
+
+The identity outcome is metadata: `changed`, `gone` and `reread-failed` never make an item or collector fail.
 
 Flags are recorded by name. Values appear only for enum, numeric, duration and boolean flags: `-A`, `--all-controllers`, `--since`, `--tail`, `--timeout`, `--request-timeout`, `--max-size`, `--no-endpoints`. All others, including `-n`, `--install`, `--skip`, `-o`, `--kubeconfig`, `--context` and `--redact-header`, appear by name only. The scope carries the validated namespace and install names.
 
@@ -223,6 +226,8 @@ One mandatory stage sits in the archive writer. A collector hands the Sink typed
 
 A collector is `Name() string` and `Collect(ctx, Env, Sink) error`. `Env` gives guarded clients, the `Scope`, the window, the inventory, the clock, the per-item timeout and `Keep(obj) ExcludeReason`, the §3.2 ownership and scope filter, so downstream collectors filter the same way. A collector reports each left-out object with `Sink.Exclude(groupKind, reason)`; counts are frozen at the seal like other Sink calls.
 
+Every Sink write method takes a leading `context.Context` (D-027). `Sink.Omit(Path, Source, OmitReason)` records a capture left out on purpose, with a fixed reason (§5). It validates the path, writes nothing to the archive and returns `ErrSealed` after the seal, like `Exclude`.
+
 ### 8.2 Replica inventory
 Built once, after scope resolution and before any collector. Logs, metrics, admin captures and `version` read it; none lists Pods itself.
 
@@ -233,7 +238,7 @@ Built once, after scope resolution and before any collector. Logs, metrics, admi
   - Only Gateways the §3.2 ownership and scope filters keep get proxies captured, unless `--all-controllers` is set.
 - **Each `Replica`** holds namespace, pod, UID, role, owner (install or Gateway `<ns>/<name>`), identity (`annotation`, `selector`, `unverified`), ready, terminating, phase, containers with restart counts (init included), start time, metrics port and whether the Pod declares it.
 - Unready, terminating and restarting replicas stay in. A Pod that is not `Running` skips metrics and admin (`skipped: not running`) but still gets logs.
-- **Identity check:** after each log, metrics, version or admin capture the Pod is read again. The outcome goes in the item's `Source.Identity`: `verified` (same UID), `changed`, `gone` or `reread-failed`.
+- **Identity check (D-027):** after each log, metrics, version or admin capture the Sink reads the Pod again, once the content is read, also when it was cut. The collector passes namespace, pod and expected UID in `Source`; the Sink sets `Source.Identity` to `verified` (same UID), `changed`, `gone` or `reread-failed`. The GET uses the guarded client, bounded by `--request-timeout` and the capture context, and runs on the collector's worker. A write that already failed is not re-read.
 
 ### 8.3 Staging, budget, sealing and finalization
 - **Item caps:** logs 10 MiB, config dump 64 MiB, metrics 8 MiB, others 16 MiB. A text item over its cap is cut at a line boundary (§3). A structured item over its cap is dropped with an error.
@@ -242,7 +247,7 @@ Built once, after scope resolution and before any collector. Logs, metrics, admi
 - **Commit and budget:** one writer goroutine owns the tar and gzip streams. Items commit in a fixed order: collector registration order, then path. `--max-size` (minimum `32Mi`) covers items and footers together: items get `--max-size` minus the footer reserve, applied in that order, so the kept set does not depend on timing. Items past it are `dropped: size budget`. Each item keeps at most 4096 distinct findings, summed per rule and location as they arrive; the rest are counted as omitted in `redactions.json`.
 - **Footers** have a reserve inside `--max-size`, the sum of their caps, at most a quarter of `--max-size`: at the default, `manifest.json` 4 MiB, `redactions.json` 4 MiB, `errors.txt` 1 MiB, `run.log` 1 MiB, scaled down for smaller sizes. Every manifest list (items, replicas, collectors) is bounded and records an omitted count. Footers are built within their caps. A manifest still over its cap after the minimal fallback is replaced by a fixed placeholder, noted in `errors.txt`. A text footer is cut with a marker. At most 4096 items per collector that are not `ok` are recorded; the rest are counted as omitted.
 - **Bounded encoding:** JSON and config dumps whose indented form would pass the item cap are written compact. An object is encoded as a YAML stream that stops once it passes the cap; the item is `dropped: size cap`. A text item reserves spool room for its truncation line.
-- **Seal:** at the collection deadline the run context is cancelled and all staged state is frozen. Sink calls still in flight at that moment are counted per collector as `late`; their results are not written, except that a text item keeps its staged lines with a marker. Collectors still running are `timeout`. A collector not yet started is never started; it is `timeout` too.
+- **Seal:** at the collection deadline the run context is cancelled and all staged state is frozen. Sink calls still in flight at that moment are counted per collector as `late`; their results are not written, except that a text item keeps its staged lines with a marker. A pending identity re-read is discarded, and a kept Pod text item gets `reread-failed`. The item and its identity are published together under the writer lock. Collectors still running are `timeout`. A collector not yet started is never started; it is `timeout` too.
 - **Result:** `Run` returns the manifest as written to `manifest.json`: post-budget item statuses, collector status after commit (`partial` when an item did not commit), redacted and bounded.
 - **Finalization:** the deadline guarantee covers collection. Finalization is not cancellable; it is bounded by sizes, since it writes at most `--max-size` in total. A stalled stdout reader can still hold the process; this is documented.
 - **Failure:** a tar, gzip, write, close or footer encoding error, or a panic while sealing or finalizing, is fatal: exit 2. A file output is closed and removed. `Run` returns the commit error.
@@ -253,7 +258,7 @@ Built once, after scope resolution and before any collector. Logs, metrics, admi
 - A component is a constant from `pkg/bundle` or a name in Kubernetes grammar (DNS-1123 subdomain or label, or kind), optionally with one fixed file extension; `ValidatePath` enforces this. Each is 1–255 bytes. `_` appears only in constants. A path has at most 8 components.
 - A name whose file component would exceed 255 bytes is cut, then gets `-` plus the first 12 hex characters of the SHA-256 of the full name, then the extension. The full name stays in the object.
 - The grammar cannot prove a name came from the API. Collectors must pass real Kubernetes names, never captured data.
-- Paths are resolved at commit, in commit order: the first to commit wins. A later path equal to it ignoring case, or that is a file or directory prefix of it (`a/b` and `a/b/c`), is dropped and recorded. An item dropped by the budget claims no path. An exact repeat within one collector is rejected when it begins. The four root footer names are reserved.
+- Paths are resolved at commit, in commit order: the first to commit wins. A later path equal to it ignoring case, or that is a file or directory prefix of it (`a/b` and `a/b/c`), is dropped and recorded. An item dropped by the budget claims no path, nor does an omission (D-027), whose path is still validated. An exact repeat within one collector is rejected when it begins. The four root footer names are reserved.
 - Cluster-scoped objects use `_cluster` as the namespace component. Kubernetes namespaces cannot contain `_`.
 - All entries are regular files with mode `0644` inside the `0600` archive.
 

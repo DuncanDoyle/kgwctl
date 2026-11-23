@@ -41,8 +41,8 @@ Features within the approved design (r6): plan Tasks 4.3.1–4.3.4, the `writer.
 Design changes without a decisions.md entry and owner approval.
 
 ### Queue
-- [ ] T0 Split internal/bundle/writer.go into files, behaviour unchanged ← CURRENT
-- [ ] T0b P4-2: Sink post-capture identity and intentional outcomes — decisions.md entry, owner approval, then implement
+- [x] T0 Split internal/bundle/writer.go into files, behaviour unchanged — a19f675
+- [ ] T0b P4-2: Sink re-reads Pods, `Sink.Omit`, context on write methods (D-027, approved 2026-11-23) ← CURRENT
 - [ ] T1 Task 4.3.1 Logs (incl. 4.1 P3-3 pem-tail)
 - [ ] T2 Task 4.3.2 Controller and proxy metrics (Refused cause: own call, not the Snellius scraper's)
 - [ ] T3 Task 4.3.3 Envoy capture (incl. kubelet error text canary from 4.2.3; `--no-endpoints` wiring)
