@@ -60,7 +60,7 @@ func (installCollector) Collect(ctx context.Context, env pb.Env, s pb.Sink) erro
 			continue
 		}
 		u.SetGroupVersionKind(deploymentsGVR.GroupVersion().WithKind("Deployment"))
-		if err := sealed(s.Object(p, u, src)); err != nil {
+		if err := sealed(s.Object(ctx, p, u, src)); err != nil {
 			return err
 		}
 	}
@@ -85,7 +85,7 @@ func (installCollector) Collect(ctx context.Context, env pb.Env, s pb.Sink) erro
 			s.Error(pb.Path{pb.InstallDir, pb.Cluster}, src, err)
 			continue
 		}
-		if err := sealed(s.Object(pb.Path{pb.InstallDir, pb.Cluster, f}, u, src)); err != nil {
+		if err := sealed(s.Object(ctx, pb.Path{pb.InstallDir, pb.Cluster, f}, u, src)); err != nil {
 			return err
 		}
 	}

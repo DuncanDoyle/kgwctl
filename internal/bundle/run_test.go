@@ -42,7 +42,7 @@ func fake(name string, fn func(ctx context.Context, s pb.Sink) error) *fakeColle
 
 func text(p string, body string) func(context.Context, pb.Sink) error {
 	return func(_ context.Context, s pb.Sink) error {
-		return s.Text(pb.Path{"x", p}, strings.NewReader(body), pb.Source{})
+		return s.Text(bg, pb.Path{"x", p}, strings.NewReader(body), pb.Source{})
 	}
 }
 
@@ -224,7 +224,7 @@ func TestRunCommitOrder(t *testing.T) {
 				<-gates[i+1]
 			}
 			defer close(gates[i])
-			return s.Text(pb.Path{n, "f.log"}, strings.NewReader(n+"\n"), pb.Source{})
+			return s.Text(bg, pb.Path{n, "f.log"}, strings.NewReader(n+"\n"), pb.Source{})
 		}))
 	}
 	m, err := Run(context.Background(), cs, runEnv(), h.w, Manifest{}, RunOptions{Workers: 3})
@@ -298,7 +298,7 @@ func TestRunErrorCanaries(t *testing.T) {
 		fake("panics", func(context.Context, pb.Sink) error { panic(fmt.Errorf("token=%s", canaries[1])) }),
 		fake("malformed", func(_ context.Context, s pb.Sink) error {
 			body := `{"password": "` + canaries[2] + `", "broken": `
-			return s.JSON(pb.Path{"x", "a.json"}, strings.NewReader(body), pb.Source{})
+			return s.JSON(bg, pb.Path{"x", "a.json"}, strings.NewReader(body), pb.Source{})
 		}),
 		fake("long", func(context.Context, pb.Sink) error {
 			return errors.New("Authorization: Bearer " + canaries[3] + " " + strings.Repeat("e", 2048))

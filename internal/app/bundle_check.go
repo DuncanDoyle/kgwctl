@@ -53,7 +53,7 @@ func (c checkCollector) Collect(ctx context.Context, _ pb.Env, s pb.Sink) error 
 		s.Error(p, src, err)
 		return nil
 	}
-	if err := s.JSON(p, &b, src); errors.Is(err, pb.ErrSealed) {
+	if err := s.JSON(ctx, p, &b, src); errors.Is(err, pb.ErrSealed) {
 		return err
 	}
 	return nil

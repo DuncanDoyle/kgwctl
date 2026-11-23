@@ -62,7 +62,7 @@ func (workloads) Collect(ctx context.Context, env pb.Env, s pb.Sink) error {
 			}
 		}
 		for _, ns := range slices.Sorted(maps.Keys(byNS)) {
-			if err := writeList(env, s, wk, ns, byNS[ns]); err != nil {
+			if err := writeList(ctx, env, s, wk, ns, byNS[ns]); err != nil {
 				return err
 			}
 		}
@@ -71,7 +71,7 @@ func (workloads) Collect(ctx context.Context, env pb.Env, s pb.Sink) error {
 }
 
 // writeList writes objs as one v1 List; Events outside the window are left out.
-func writeList(env pb.Env, s pb.Sink, wk workloadKind, ns string, objs []unstructured.Unstructured) error {
+func writeList(ctx context.Context, env pb.Env, s pb.Sink, wk workloadKind, ns string, objs []unstructured.Unstructured) error {
 	items := []any{}
 	for i := range objs {
 		u := &objs[i]
@@ -83,7 +83,7 @@ func writeList(env pb.Env, s pb.Sink, wk workloadKind, ns string, objs []unstruc
 	}
 	l := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "List", "metadata": map[string]any{}, "items": items}}
 	// The Sink validates ns and records a failure itself.
-	return sealed(s.Object(pb.Path{pb.WorkloadsDir, ns, wk.file}, l, pb.Source{Namespace: ns, Operation: pb.OpList}))
+	return sealed(s.Object(ctx, pb.Path{pb.WorkloadsDir, ns, wk.file}, l, pb.Source{Namespace: ns, Operation: pb.OpList}))
 }
 
 // inWindow reports whether an Event's latest of lastTimestamp, eventTime and

@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"k8s.io/client-go/kubernetes"
+
 	"github.com/DuncanDoyle/kgwctl/internal/redact"
 	pb "github.com/DuncanDoyle/kgwctl/pkg/bundle"
 )
@@ -72,6 +74,10 @@ type Writer struct {
 	server string
 	now    func() time.Time
 
+	// pods re-reads a Pod after its capture, bounded by podTimeout (design §8.2).
+	pods       kubernetes.Interface
+	podTimeout time.Duration
+
 	mu          sync.Mutex
 	sealed      bool
 	sealedAt    time.Time
@@ -82,6 +88,8 @@ type Writer struct {
 	keys        map[string]map[string]bool // collector -> staged paths
 	failN       map[string]int             // records that are not ok, per collector
 	failOmit    map[string]int             // such records past maxFailRecords
+	omitN       map[string]int             // omission records, per collector
+	omitOver    map[string]int             // omissions past maxFailRecords
 	committed   Manifest
 	placeholder bool // manifest.json is the placeholder
 	calls       map[*call]struct{}
@@ -105,7 +113,13 @@ func NewWriter(d Dest, sp *Spool, root string, l Limits, ro redact.Options, serv
 		dest: d, sp: sp, root: root, lim: l, ro: ro, server: server, now: now,
 		keys: map[string]map[string]bool{}, calls: map[*call]struct{}{},
 		late: map[string]int{}, excl: map[Exclusion]int{}, failN: map[string]int{}, failOmit: map[string]int{},
+		omitN: map[string]int{}, omitOver: map[string]int{},
 	}
+}
+
+// usePods sets the guarded client and request timeout of Pod re-reads.
+func (w *Writer) usePods(kube kubernetes.Interface, timeout time.Duration) {
+	w.pods, w.podTimeout = kube, timeout
 }
 
 // Sink returns the Sink for one collector.
@@ -130,8 +144,9 @@ func (w *Writer) Log(line string) {
 
 // Seal freezes staged state at the collection deadline. Every call in flight
 // is counted as late for its collector. A text item with staged lines keeps
-// them with a truncation line; any other late result is not written. Exclude
-// counts are frozen. Later Sink calls return ErrSealed.
+// them, with a truncation line unless it was fully read; a kept Pod item gets
+// reread-failed, as its pending re-read is discarded. Any other late result
+// is not written. Exclude counts are frozen. Later Sink calls return ErrSealed.
 func (w *Writer) Seal() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -142,8 +157,15 @@ func (w *Writer) Seal() {
 	w.sealedAt = w.now()
 	for c := range w.calls {
 		w.late[c.collector]++
-		if c.text && c.lines > 0 && c.dropErr == nil && w.sp.add(&c.e, []byte(truncation(ReasonSealed)+"\n"), true) == nil {
-			c.kept, _ = w.stage(c, "truncated: "+ReasonSealed)
+		keep, reason := c.text && c.done, c.doneReason
+		if !keep && c.text && c.lines > 0 && c.dropErr == nil && w.sp.add(&c.e, []byte(truncation(ReasonSealed)+"\n"), true) == nil {
+			keep, reason = true, "truncated: "+ReasonSealed
+		}
+		if keep {
+			if c.src.Pod != "" {
+				c.src.Identity = pb.IdentityRereadFailed
+			}
+			c.kept, _ = w.stage(c, reason)
 			c.late = c.kept == nil // a duplicate, already recorded by stage
 			continue
 		}
@@ -239,14 +261,14 @@ func (w *Writer) Committed() Manifest {
 }
 
 // degraded returns the collectors with at least one item that is neither ok
-// nor skipped; the caller holds w.mu.
+// nor skipped, omissions aside; the caller holds w.mu.
 func (w *Writer) degraded() map[string]bool {
 	out := map[string]bool{}
 	for c := range w.failOmit {
 		out[c] = true
 	}
 	for _, r := range w.records {
-		if s := r.item.Status; s != pb.ItemOK && s != pb.ItemSkipped {
+		if s := r.item.Status; !r.omit && s != pb.ItemOK && s != pb.ItemSkipped {
 			out[r.collector] = true
 		}
 	}

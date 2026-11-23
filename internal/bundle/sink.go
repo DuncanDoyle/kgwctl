@@ -2,6 +2,7 @@ package bundle
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -22,8 +23,8 @@ type sink struct {
 	name string
 }
 
-func (s *sink) Object(p pb.Path, u *unstructured.Unstructured, src pb.Source) error {
-	c, err := s.w.begin(s.name, p, ContentObject, src, false)
+func (s *sink) Object(ctx context.Context, p pb.Path, u *unstructured.Unstructured, src pb.Source) error {
+	c, err := s.w.begin(ctx, s.name, p, ContentObject, src, false)
 	if err != nil {
 		return err
 	}
@@ -45,24 +46,24 @@ func (s *sink) Object(p pb.Path, u *unstructured.Unstructured, src pb.Source) er
 	return s.w.finish(c, outcome{body: body, findings: fs})
 }
 
-func (s *sink) ConfigDump(p pb.Path, r io.Reader, src pb.Source) error {
-	c, err := s.w.begin(s.name, p, ContentConfigDump, src, false)
+func (s *sink) ConfigDump(ctx context.Context, p pb.Path, r io.Reader, src pb.Source) error {
+	c, err := s.w.begin(ctx, s.name, p, ContentConfigDump, src, false)
 	if err != nil {
 		return err
 	}
 	return s.w.structured(c, r, s.w.lim.ConfigDump, redact.ConfigDump)
 }
 
-func (s *sink) JSON(p pb.Path, r io.Reader, src pb.Source) error {
-	c, err := s.w.begin(s.name, p, ContentJSON, src, false)
+func (s *sink) JSON(ctx context.Context, p pb.Path, r io.Reader, src pb.Source) error {
+	c, err := s.w.begin(ctx, s.name, p, ContentJSON, src, false)
 	if err != nil {
 		return err
 	}
 	return s.w.structured(c, r, s.w.lim.Other, redact.JSON)
 }
 
-func (s *sink) Prometheus(p pb.Path, r io.Reader, src pb.Source) error {
-	c, err := s.w.begin(s.name, p, ContentPrometheus, src, false)
+func (s *sink) Prometheus(ctx context.Context, p pb.Path, r io.Reader, src pb.Source) error {
+	c, err := s.w.begin(ctx, s.name, p, ContentPrometheus, src, false)
 	if err != nil {
 		return err
 	}
@@ -71,8 +72,8 @@ func (s *sink) Prometheus(p pb.Path, r io.Reader, src pb.Source) error {
 
 // Text stages redacted lines as they are read; a log (.log) is capped at the
 // log cap, other text at the other cap.
-func (s *sink) Text(p pb.Path, r io.Reader, src pb.Source) error {
-	c, err := s.w.begin(s.name, p, ContentText, src, true)
+func (s *sink) Text(ctx context.Context, p pb.Path, r io.Reader, src pb.Source) error {
+	c, err := s.w.begin(ctx, s.name, p, ContentText, src, true)
 	if err != nil {
 		return err
 	}
@@ -83,6 +84,26 @@ func (s *sink) Text(p pb.Path, r io.Reader, src pb.Source) error {
 	// The reader's error, if any, is recorded as a truncation; errStop is ours.
 	res, _ := redact.Text(r, lineSink{s.w, c}, limit-markerReserve, s.w.ro)
 	return s.w.finishText(c, res)
+}
+
+// omitStatus is the item status of each omission reason (D-027).
+var omitStatus = map[pb.OmitReason]pb.ItemStatus{
+	pb.OmitNotRunning: pb.ItemSkipped, pb.OmitNoInstall: pb.ItemSkipped, pb.OmitNoMetricsPort: pb.ItemDisabled,
+}
+
+func (s *sink) Omit(p pb.Path, src pb.Source, reason pb.OmitReason) error {
+	s.w.mu.Lock()
+	defer s.w.mu.Unlock()
+	if s.w.sealed {
+		return pb.ErrSealed
+	}
+	st, ok := omitStatus[reason]
+	if !ok || pb.ValidatePath(p) != nil || src.Identity != "" {
+		// Nothing is recorded, and the rejected values stay out of the error.
+		return fmt.Errorf("%w: omission", pb.ErrInvalidPath)
+	}
+	s.w.addOmission(s.name, Item{Path: p.String(), CapturedAt: s.w.now(), Source: safeSource(src), Status: st, Reason: string(reason)})
+	return nil
 }
 
 func (s *sink) Error(p pb.Path, src pb.Source, err error) {

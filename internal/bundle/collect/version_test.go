@@ -151,6 +151,32 @@ func TestVersionHungReplicas(t *testing.T) {
 	}
 }
 
+// TestVersionLeavesIdentityToSink: a capture passes the Pod and its expected
+// UID and no identity, as the Sink re-reads the Pod; a replica that is not
+// running is an omission, not an error.
+func TestVersionLeavesIdentityToSink(t *testing.T) {
+	disc, replicas, kube := versionFixture(t, 0)
+	replicas = append(replicas, pb.Replica{Namespace: "gw", Pod: "good-pending", UID: "uid-p", Role: pb.RoleProxy,
+		Identity: pb.IdentityAnnotation, Phase: corev1.PodPending})
+	s := newRecordSink()
+	env := pb.Env{Kube: kube, Discovery: disc, Replicas: replicas}
+	if err := collect.Version(view.BuildInfo{Version: "test"}, nil, &hangingAdmin{}).Collect(context.Background(), env, s); err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	want := pb.Source{Namespace: "gw", Pod: "good-a", UID: "uid-good-a", Operation: pb.OpServerInfo}
+	if got := s.srcs["proxies/gw/good-a/server_info.json"]; got != want {
+		t.Errorf("source %+v, want %+v", got, want)
+	}
+	if r := s.omits["proxies/gw/good-pending/server_info.json"]; r != pb.OmitNotRunning || len(s.errs) != 0 {
+		t.Errorf("omission %q, errors %v", r, s.errs)
+	}
+	for _, o := range readVersionFile(t, s, len(replicas)).Observed {
+		if o.Pod == "good-pending" && o.Status != pb.ItemSkipped {
+			t.Errorf("pending replica %s, want skipped", o.Status)
+		}
+	}
+}
+
 // TestVersionCaptureDoesNotFit: when --request-timeout no longer fits before
 // the deadline, no capture starts; version.json is written with every
 // replica timeout.

@@ -67,7 +67,7 @@ func stagedWriter(t *testing.T, d Dest) *Writer {
 		t.Fatal(err)
 	}
 	w := NewWriter(d, sp, "root", l, redact.Options{}, "", fixedNow)
-	if err := w.Sink("c").Text(pb.Path{"logs", "a.log"}, bytes.NewReader(textBody("a", 200)), pb.Source{}); err != nil {
+	if err := w.Sink("c").Text(bg, pb.Path{"logs", "a.log"}, bytes.NewReader(textBody("a", 200)), pb.Source{}); err != nil {
 		t.Fatal(err)
 	}
 	w.Seal()

@@ -71,7 +71,7 @@ func TestSpool(t *testing.T) {
 			t.Fatalf("spool dir mode %v, err %v", st.Mode().Perm(), err)
 		}
 		for i := range 3 {
-			if err := h.w.Sink("c").Text(pb.Path{"logs", fmt.Sprintf("s%d.log", i)}, bytes.NewReader(secretLog(100)), pb.Source{}); err != nil {
+			if err := h.w.Sink("c").Text(bg, pb.Path{"logs", fmt.Sprintf("s%d.log", i)}, bytes.NewReader(secretLog(100)), pb.Source{}); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -109,7 +109,7 @@ func TestSpool(t *testing.T) {
 		w := NewWriter(Stdout(&buf), sp, "root", l, redact.Options{}, "", fixedNow)
 		var dropped int
 		for i := range 8 {
-			err := w.Sink("c").Text(pb.Path{"logs", fmt.Sprintf("s%d.log", i)}, bytes.NewReader(textBody("x", 100)), pb.Source{})
+			err := w.Sink("c").Text(bg, pb.Path{"logs", fmt.Sprintf("s%d.log", i)}, bytes.NewReader(textBody("x", 100)), pb.Source{})
 			if errors.Is(err, pb.ErrBudget) {
 				dropped++
 			} else if err != nil {
@@ -149,7 +149,7 @@ func TestSpool(t *testing.T) {
 			t.Fatal(err)
 		}
 		w := NewWriter(Stdout(failWriter{}), sp, "root", l, redact.Options{}, "", fixedNow)
-		if err := w.Sink("c").Text(pb.Path{"logs", "s.log"}, bytes.NewReader(textBody("x", 300)), pb.Source{}); err != nil {
+		if err := w.Sink("c").Text(bg, pb.Path{"logs", "s.log"}, bytes.NewReader(textBody("x", 300)), pb.Source{}); err != nil {
 			t.Fatal(err)
 		}
 		w.Seal()

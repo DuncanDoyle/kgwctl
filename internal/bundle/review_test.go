@@ -41,7 +41,7 @@ func TestSinkRejectsUnknownEnums(t *testing.T) {
 	const id, reason, remote = "Bearer kgwctl-canary-b1-identity", "kgwctl-canary-b1-reason", "KgwctlCanaryRemoteReason"
 	h := newHarness(t, mustLimits(t, 32<<20), redact.Options{}, "")
 	s := h.w.Sink("c")
-	if err := s.JSON(pb.Path{"x", "a.json"}, strings.NewReader(`{}`), pb.Source{Identity: id}); !errors.Is(err, pb.ErrInvalidPath) {
+	if err := s.JSON(bg, pb.Path{"x", "a.json"}, strings.NewReader(`{}`), pb.Source{Identity: id}); !errors.Is(err, pb.ErrInvalidPath) {
 		t.Errorf("JSON with unknown identity: err = %v", err)
 	}
 	if err := s.Exclude(schema.GroupKind{Kind: "Service"}, reason); !errors.Is(err, pb.ErrInvalidPath) {
@@ -143,7 +143,7 @@ func TestStructuredIndentBounded(t *testing.T) {
 	deep := strings.Repeat("[", 3000) + strings.Repeat("]", 3000)
 	p := pb.Path{"x", "deep.json"}
 	var err error
-	if n := allocated(func() { err = s.ConfigDump(p, strings.NewReader(deep), pb.Source{}) }); n > 32<<20 {
+	if n := allocated(func() { err = s.ConfigDump(bg, p, strings.NewReader(deep), pb.Source{}) }); n > 32<<20 {
 		t.Errorf("ConfigDump allocated %d bytes", n)
 	}
 	if err != nil {
@@ -158,7 +158,7 @@ func TestStructuredIndentBounded(t *testing.T) {
 		cur = next
 	}
 	op := pb.Path{"x", "deep.yaml"}
-	if n := allocated(func() { err = s.Object(op, &unstructured.Unstructured{Object: obj}, pb.Source{}) }); n > 24<<20 { // the redactor's locations cost O(depth²); YAML would add 40 MB
+	if n := allocated(func() { err = s.Object(bg, op, &unstructured.Unstructured{Object: obj}, pb.Source{}) }); n > 24<<20 { // the redactor's locations cost O(depth²); YAML would add 40 MB
 		t.Errorf("Object allocated %d bytes", n)
 	}
 	if !errors.Is(err, pb.ErrBudget) {
@@ -180,7 +180,7 @@ func TestTextMarkerReserved(t *testing.T) {
 	w := NewWriter(Stdout(io.Discard), sp, "root", l, redact.Options{}, "", fixedNow)
 	pr, pw := io.Pipe()
 	done := make(chan error, 1)
-	go func() { done <- w.Sink("c").Text(pb.Path{"x", "a.log"}, pr, pb.Source{}) }()
+	go func() { done <- w.Sink("c").Text(bg, pb.Path{"x", "a.log"}, pr, pb.Source{}) }()
 	// Ten lines fill the spool exactly without a reserve; with one, Text stops
 	// at the tenth. Either way the spool stays within its bound.
 	wrote := make(chan struct{})
@@ -216,7 +216,7 @@ func TestRunReturnsCommittedManifest(t *testing.T) {
 	c := fake("c", func(_ context.Context, s pb.Sink) error {
 		// Nine items fit the spool but not the item budget.
 		for i := range 9 {
-			if err := s.Text(pb.Path{"logs", fmt.Sprintf("big-%02d.log", i)}, bytes.NewReader(textBody(fmt.Sprint(i), 100)), pb.Source{}); err != nil {
+			if err := s.Text(bg, pb.Path{"logs", fmt.Sprintf("big-%02d.log", i)}, bytes.NewReader(textBody(fmt.Sprint(i), 100)), pb.Source{}); err != nil {
 				return err
 			}
 		}
@@ -248,7 +248,7 @@ func TestCommitPathConflicts(t *testing.T) {
 			h := newHarness(t, mustLimits(t, 32<<20), redact.Options{}, "")
 			writes := map[string]pb.Path{"a": {"d", "f"}, "b": {"d", "f", "g.txt"}}
 			for c, p := range writes {
-				if err := h.w.Sink(c).Text(p, strings.NewReader(c+"\n"), pb.Source{}); err != nil {
+				if err := h.w.Sink(c).Text(bg, p, strings.NewReader(c+"\n"), pb.Source{}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -268,7 +268,7 @@ func TestCommitPathConflicts(t *testing.T) {
 				second = pb.Path{"x", "f.txt"}
 			}
 			for _, p := range []pb.Path{first, second} {
-				_ = h.w.Sink("c").Text(p, strings.NewReader(p.String()+"\n"), pb.Source{})
+				_ = h.w.Sink("c").Text(bg, p, strings.NewReader(p.String()+"\n"), pb.Source{})
 			}
 			h.w.Seal()
 			a := h.finish(t, Manifest{}, "c")
@@ -282,15 +282,15 @@ func TestCommitPathConflicts(t *testing.T) {
 		h := newHarness(t, smallLimits(), redact.Options{}, "")
 		// a's three fillers commit first; its d/f.log is then over the budget.
 		for i := range 3 {
-			if err := h.w.Sink("a").Text(pb.Path{"a", fmt.Sprintf("big-%d.log", i)}, bytes.NewReader(textBody("f", 240)), pb.Source{}); err != nil {
+			if err := h.w.Sink("a").Text(bg, pb.Path{"a", fmt.Sprintf("big-%d.log", i)}, bytes.NewReader(textBody("f", 240)), pb.Source{}); err != nil {
 				t.Fatal(err)
 			}
 		}
 		p := pb.Path{"d", "f.log"}
-		if err := h.w.Sink("a").Text(p, bytes.NewReader(textBody("big", 240)), pb.Source{}); err != nil {
+		if err := h.w.Sink("a").Text(bg, p, bytes.NewReader(textBody("big", 240)), pb.Source{}); err != nil {
 			t.Fatal(err)
 		}
-		if err := h.w.Sink("b").Text(p, strings.NewReader("small\n"), pb.Source{}); err != nil {
+		if err := h.w.Sink("b").Text(bg, p, strings.NewReader("small\n"), pb.Source{}); err != nil {
 			t.Fatal(err)
 		}
 		h.w.Seal()
@@ -385,7 +385,7 @@ func TestRunSealAcceptance(t *testing.T) {
 			_, _ = pw.Write([]byte("partial"))
 			cancel()
 		}()
-		err := s.Text(pb.Path{"logs", "a.log"}, pr, pb.Source{})
+		err := s.Text(bg, pb.Path{"logs", "a.log"}, pr, pb.Source{})
 		_ = s.Exclude(route, pb.ExcludeScope) // after the seal: not counted
 		return err
 	})
@@ -452,7 +452,7 @@ func TestTextFindingsCapped(t *testing.T) {
 		in.WriteString("Bearer x\n")
 	}
 	p := pb.Path{"logs", "a.log"}
-	if err := h.w.Sink("c").Text(p, &in, pb.Source{}); err != nil {
+	if err := h.w.Sink("c").Text(bg, p, &in, pb.Source{}); err != nil {
 		t.Fatal(err)
 	}
 	h.w.Seal()
@@ -484,7 +484,7 @@ func TestObjectSequenceIndentBounded(t *testing.T) {
 	obj := map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"name": "s"}, "f": v}
 	var err error
 	n := allocated(func() {
-		err = h.w.Sink("c").Object(pb.Path{"x", "s.yaml"}, &unstructured.Unstructured{Object: obj}, pb.Source{})
+		err = h.w.Sink("c").Object(bg, pb.Path{"x", "s.yaml"}, &unstructured.Unstructured{Object: obj}, pb.Source{})
 	})
 	if !errors.Is(err, pb.ErrBudget) || n > yamlAllocBound {
 		t.Errorf("err = %v, allocated %d bytes", err, n)
@@ -511,7 +511,7 @@ func TestFinalizeSealPanicAborts(t *testing.T) {
 		return t0
 	}
 	w := NewWriter(f, sp, "root", l, redact.Options{}, "", clock)
-	if err := w.Sink("c").Text(pb.Path{"logs", "a.log"}, strings.NewReader("x\n"), pb.Source{}); err != nil {
+	if err := w.Sink("c").Text(bg, pb.Path{"logs", "a.log"}, strings.NewReader("x\n"), pb.Source{}); err != nil {
 		t.Fatal(err)
 	}
 	broken.Store(true)
@@ -596,7 +596,7 @@ func TestObjectMultilineIndentBounded(t *testing.T) {
 	obj := map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"name": "s"}, "spec": v}
 	var err error
 	n := allocated(func() {
-		err = h.w.Sink("c").Object(pb.Path{"x", "s.yaml"}, &unstructured.Unstructured{Object: obj}, pb.Source{})
+		err = h.w.Sink("c").Object(bg, pb.Path{"x", "s.yaml"}, &unstructured.Unstructured{Object: obj}, pb.Source{})
 	})
 	if !errors.Is(err, pb.ErrBudget) || n > yamlAllocBound {
 		t.Errorf("err = %v, allocated %d bytes", err, n)
@@ -624,7 +624,7 @@ func TestRunSealPanicAborts(t *testing.T) {
 	}
 	w := NewWriter(f, sp, "root", l, redact.Options{}, "", clock)
 	c := fake("c", func(_ context.Context, s pb.Sink) error {
-		err := s.Text(pb.Path{"logs", "a.log"}, strings.NewReader("x\n"), pb.Source{})
+		err := s.Text(bg, pb.Path{"logs", "a.log"}, strings.NewReader("x\n"), pb.Source{})
 		broken.Store(true) // the seal is the next clock read
 		return err
 	})
@@ -660,14 +660,14 @@ func TestObjectYAMLStreamBounded(t *testing.T) {
 	big := wrap("x\n" + strings.Repeat("x\u2028", 60_000) + "x")
 	var err error
 	n := allocated(func() {
-		err = s.Object(pb.Path{"x", "big.yaml"}, &unstructured.Unstructured{Object: big}, pb.Source{})
+		err = s.Object(bg, pb.Path{"x", "big.yaml"}, &unstructured.Unstructured{Object: big}, pb.Source{})
 	})
 	if !errors.Is(err, pb.ErrBudget) || n > yamlAllocBound {
 		t.Errorf("big: err = %v, allocated %d bytes", err, n)
 	}
 	// A trailing blank makes go-yaml quote the scalar: it fits.
 	small := wrap(strings.Repeat("x\n", 50_000) + "x ") // a block scalar would be 20 MB
-	if err := s.Object(pb.Path{"x", "small.yaml"}, &unstructured.Unstructured{Object: small}, pb.Source{}); err != nil {
+	if err := s.Object(bg, pb.Path{"x", "small.yaml"}, &unstructured.Unstructured{Object: small}, pb.Source{}); err != nil {
 		t.Errorf("small: %v", err)
 	}
 }

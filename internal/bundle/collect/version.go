@@ -87,7 +87,7 @@ func (c versionCollector) Collect(ctx context.Context, env pb.Env, s pb.Sink) er
 	if err != nil {
 		return err
 	}
-	return sealed(s.JSON(pb.Path{pb.ClusterDir, pb.VersionFile}, bytes.NewReader(b), pb.Source{}))
+	return sealed(s.JSON(ctx, pb.Path{pb.ClusterDir, pb.VersionFile}, bytes.NewReader(b), pb.Source{}))
 }
 
 // serverVersion reads /version, bounded by RequestTimeout.
@@ -129,7 +129,14 @@ func (c versionCollector) observe(ctx context.Context, env pb.Env, s pb.Sink) ([
 	for i, r := range proxies {
 		out[i] = ObservedEnvoy{Namespace: r.Namespace, Pod: r.Pod, Status: pb.ItemSkipped}
 		// Terminating and unready replicas are still captured (design §8.2).
-		if r.Identity != pb.IdentityUnverified && r.Phase == corev1.PodRunning {
+		switch {
+		case r.Identity == pb.IdentityUnverified:
+		case r.Phase != corev1.PodRunning:
+			p := pb.Path{pb.ProxiesDir, r.Namespace, r.Pod, pb.ServerInfoFile}
+			if err := s.Omit(p, pb.Source{Namespace: r.Namespace, Pod: r.Pod, UID: r.UID, Operation: pb.OpServerInfo}, pb.OmitNotRunning); errors.Is(err, pb.ErrSealed) {
+				return nil, err
+			}
+		default:
 			out[i].Status = pb.ItemTimeout
 			todo = append(todo, i)
 		}
@@ -238,8 +245,8 @@ func selected(im engine.InstallModel, sc pb.Scope) bool {
 	return false
 }
 
-// capture fetches r's /server_info, re-reads the Pod and writes the item. It
-// returns only ErrSealed or the context's error.
+// capture fetches r's /server_info and writes the item, which the Sink
+// re-reads the Pod for. It returns only ErrSealed or the context's error.
 func (c versionCollector) capture(ctx context.Context, env pb.Env, s pb.Sink, r pb.Replica) (ObservedEnvoy, error) {
 	o := ObservedEnvoy{Namespace: r.Namespace, Pod: r.Pod}
 	src := pb.Source{Namespace: r.Namespace, Pod: r.Pod, UID: r.UID, Operation: pb.OpServerInfo}
@@ -257,11 +264,8 @@ func (c versionCollector) capture(ctx context.Context, env pb.Env, s pb.Sink, r 
 		o.Status = ib.ItemStatus(err)
 		return o, nil
 	}
-	// The re-read gets its own request bound (design §8.2).
-	rctx, cancel = requestContext(ctx, env.RequestTimeout)
-	src.Identity = ib.Reidentify(rctx, env.Kube, r)
-	cancel()
-	if err := s.JSON(p, bytes.NewReader(body), src); err != nil {
+	// The Sink re-reads the Pod after the write (D-027).
+	if err := s.JSON(ctx, p, bytes.NewReader(body), src); err != nil {
 		if errors.Is(err, pb.ErrSealed) {
 			return o, err
 		}

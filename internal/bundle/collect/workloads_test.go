@@ -23,14 +23,17 @@ type recordSink struct {
 	errs     []error
 	errPaths []string
 	json     map[string][]byte
+	srcs     map[string]pb.Source
+	omits    map[string]pb.OmitReason
 	excluded map[schema.GroupKind]map[pb.ExcludeReason]int
 }
 
 func newRecordSink() *recordSink {
-	return &recordSink{objects: map[string]*unstructured.Unstructured{}, excluded: map[schema.GroupKind]map[pb.ExcludeReason]int{}}
+	return &recordSink{objects: map[string]*unstructured.Unstructured{}, srcs: map[string]pb.Source{},
+		omits: map[string]pb.OmitReason{}, excluded: map[schema.GroupKind]map[pb.ExcludeReason]int{}}
 }
 
-func (s *recordSink) Object(p pb.Path, u *unstructured.Unstructured, _ pb.Source) error {
+func (s *recordSink) Object(_ context.Context, p pb.Path, u *unstructured.Unstructured, _ pb.Source) error {
 	if err := pb.ValidatePath(p); err != nil {
 		return err
 	}
@@ -39,8 +42,8 @@ func (s *recordSink) Object(p pb.Path, u *unstructured.Unstructured, _ pb.Source
 	s.objects[p.String()] = u.DeepCopy()
 	return nil
 }
-func (*recordSink) ConfigDump(pb.Path, io.Reader, pb.Source) error { return nil }
-func (s *recordSink) JSON(p pb.Path, r io.Reader, _ pb.Source) error {
+func (*recordSink) ConfigDump(context.Context, pb.Path, io.Reader, pb.Source) error { return nil }
+func (s *recordSink) JSON(_ context.Context, p pb.Path, r io.Reader, src pb.Source) error {
 	b, err := io.ReadAll(r)
 	if err != nil {
 		return err
@@ -51,10 +54,17 @@ func (s *recordSink) JSON(p pb.Path, r io.Reader, _ pb.Source) error {
 		s.json = map[string][]byte{}
 	}
 	s.json[p.String()] = b
+	s.srcs[p.String()] = src
 	return nil
 }
-func (*recordSink) Prometheus(pb.Path, io.Reader, pb.Source) error { return nil }
-func (*recordSink) Text(pb.Path, io.Reader, pb.Source) error       { return nil }
+func (*recordSink) Prometheus(context.Context, pb.Path, io.Reader, pb.Source) error { return nil }
+func (*recordSink) Text(context.Context, pb.Path, io.Reader, pb.Source) error       { return nil }
+func (s *recordSink) Omit(p pb.Path, _ pb.Source, r pb.OmitReason) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.omits[p.String()] = r
+	return nil
+}
 func (s *recordSink) Error(p pb.Path, _ pb.Source, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

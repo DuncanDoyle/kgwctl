@@ -107,7 +107,9 @@ const (
 	IdentityRereadFailed CaptureIdentity = "reread-failed"
 )
 
-// Source describes where an item or error came from.
+// Source describes where an item or error came from. A write with Pod set
+// must also set Namespace and the Pod's expected UID; the Sink then re-reads
+// the Pod and sets Identity, which is output only.
 type Source struct {
 	Namespace string          `json:"namespace,omitempty"`
 	Pod       string          `json:"pod,omitempty"`
@@ -117,22 +119,47 @@ type Source struct {
 	Identity  CaptureIdentity `json:"identity,omitempty"`
 }
 
+// OmitReason says why a capture was left out on purpose.
+type OmitReason string
+
+// Omission reasons.
+const (
+	// OmitNotRunning means the Pod is not running; the item is skipped.
+	OmitNotRunning OmitReason = "not running"
+	// OmitNoInstall means no install applies; the item is skipped.
+	OmitNoInstall OmitReason = "no install"
+	// OmitNoMetricsPort means the Pod declares no metrics port; the item is disabled.
+	OmitNoMetricsPort OmitReason = "no metrics port"
+)
+
 // Sink receives collector output. Every method that returns an error returns
 // ErrSealed after the collection deadline. Paths must be built from real
 // Kubernetes names and constants (see Path); a write whose path fails
-// ValidatePath, or whose Source.Identity is not a defined CaptureIdentity,
-// returns ErrInvalidPath and is recorded as failed without the bad value.
+// ValidatePath, that sets Source.Identity, or that sets Source.Pod without
+// Namespace and UID, returns ErrInvalidPath and is recorded as failed
+// without the bad value.
+//
+// After the content of a write with Source.Pod is read, also when it was
+// cut, the Sink re-reads the Pod, bounded by ctx and the request timeout,
+// and records the CaptureIdentity with the item. A write that failed is not
+// re-read. The identity never fails the item.
 type Sink interface {
 	// Object writes a Kubernetes object as YAML.
-	Object(p Path, u *unstructured.Unstructured, src Source) error
+	Object(ctx context.Context, p Path, u *unstructured.Unstructured, src Source) error
 	// ConfigDump writes an Envoy config dump.
-	ConfigDump(p Path, r io.Reader, src Source) error
+	ConfigDump(ctx context.Context, p Path, r io.Reader, src Source) error
 	// JSON writes a JSON document.
-	JSON(p Path, r io.Reader, src Source) error
+	JSON(ctx context.Context, p Path, r io.Reader, src Source) error
 	// Prometheus writes Prometheus text.
-	Prometheus(p Path, r io.Reader, src Source) error
+	Prometheus(ctx context.Context, p Path, r io.Reader, src Source) error
 	// Text writes plain text line by line.
-	Text(p Path, r io.Reader, src Source) error
+	Text(ctx context.Context, p Path, r io.Reader, src Source) error
+	// Omit records an item left out on purpose: skipped for OmitNotRunning
+	// and OmitNoInstall, disabled for OmitNoMetricsPort. It writes nothing to
+	// the archive, claims no path and never degrades the collector. An
+	// invalid path, reason or Source.Identity returns ErrInvalidPath and
+	// records nothing.
+	Omit(p Path, src Source, reason OmitReason) error
 	// Error records a failed item. It never fails.
 	Error(item Path, src Source, err error)
 	// Exclude counts a left-out object. It returns ErrSealed after the seal.

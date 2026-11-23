@@ -30,7 +30,7 @@ type ItemStatus string
 const (
 	// ItemOK means the item was written.
 	ItemOK ItemStatus = "ok"
-	// ItemSkipped means the item was not applicable.
+	// ItemSkipped means the item was not applicable or left out on purpose.
 	ItemSkipped ItemStatus = "skipped"
 	// ItemDenied means the API server refused access.
 	ItemDenied ItemStatus = "denied"

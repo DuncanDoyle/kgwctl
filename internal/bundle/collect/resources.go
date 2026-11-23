@@ -185,7 +185,7 @@ func collectKind(ctx context.Context, env pb.Env, s pb.Sink, k kind) error {
 			continue
 		}
 		for i := range items {
-			if err := writeResource(env, s, k, base, &items[i]); err != nil {
+			if err := writeResource(ctx, env, s, k, base, &items[i]); err != nil {
 				return err
 			}
 		}
@@ -194,7 +194,7 @@ func collectKind(ctx context.Context, env pb.Env, s pb.Sink, k kind) error {
 }
 
 // writeResource writes u unless Env.Keep leaves it out, which is counted.
-func writeResource(env pb.Env, s pb.Sink, k kind, base pb.Path, u *unstructured.Unstructured) error {
+func writeResource(ctx context.Context, env pb.Env, s pb.Sink, k kind, base pb.Path, u *unstructured.Unstructured) error {
 	u.SetGroupVersionKind(k.gvr.GroupVersion().WithKind(k.kind))
 	if env.Keep != nil {
 		if r := env.Keep(u); r != pb.ExcludeNone {
@@ -212,7 +212,7 @@ func writeResource(env pb.Env, s pb.Sink, k kind, base pb.Path, u *unstructured.
 		return nil
 	}
 	// The Sink validates ns and records a failure itself.
-	return sealed(s.Object(append(slices.Clone(base), ns, f), u, src))
+	return sealed(s.Object(ctx, append(slices.Clone(base), ns, f), u, src))
 }
 
 // sealed passes on ErrSealed only; the Sink records every other failure.

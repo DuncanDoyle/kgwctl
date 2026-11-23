@@ -1,6 +1,7 @@
 package bundle
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -10,15 +11,18 @@ import (
 )
 
 // begin registers a Sink write after checking the seal, the path, the source
-// identity and exact duplicates within the collector. Case variants and
-// path conflicts are resolved at commit.
-func (w *Writer) begin(collector string, p pb.Path, ctype string, src pb.Source, text bool) (*call, error) {
+// and exact duplicates within the collector. Case variants and path
+// conflicts are resolved at commit. ctx bounds the Pod re-read.
+func (w *Writer) begin(ctx context.Context, collector string, p pb.Path, ctype string, src pb.Source, text bool) (*call, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.sealed {
 		return nil, pb.ErrSealed
 	}
-	c := &call{collector: collector, path: p, ctype: ctype, src: src, text: text}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	c := &call{ctx: ctx, collector: collector, path: p, ctype: ctype, src: src, text: text}
 	if pb.ValidatePath(p) != nil {
 		it := c.item(w)
 		it.Path, it.Status, it.Reason = safePath(p), pb.ItemFailed, ReasonInvalidPath
@@ -26,11 +30,13 @@ func (w *Writer) begin(collector string, p pb.Path, ctype string, src pb.Source,
 		// ValidatePath's error quotes the bad component, so it is not returned.
 		return nil, fmt.Errorf("%w: %s", pb.ErrInvalidPath, safePath(p))
 	}
-	if !identities[src.Identity] {
+	// Identity is output only; a Pod needs its namespace and expected UID for the re-read.
+	if src.Identity != "" || (src.Pod != "" && (src.Namespace == "" || src.UID == "")) {
 		it := c.item(w)
+		it.Source.Identity = ""
 		it.Status, it.Reason = pb.ItemFailed, ReasonInvalidSource
 		w.addRecord(collector, it, nil, nil)
-		return nil, fmt.Errorf("%w: source identity", pb.ErrInvalidPath)
+		return nil, fmt.Errorf("%w: source", pb.ErrInvalidPath)
 	}
 	c.key = p.String()
 	if w.keys[collector][c.key] {
@@ -89,25 +95,62 @@ type outcome struct {
 }
 
 // finish stages a structured write's redacted body, or records its failure.
+// A staged Pod item is re-read first; Seal discards a pending result.
 func (w *Writer) finish(c *call, o outcome) error {
+	w.mu.Lock()
+	err := func() error {
+		switch {
+		case c.late:
+			return pb.ErrSealed
+		case o.status != "":
+			return w.fail(c, o.status, o.reason, o.err)
+		}
+		if err := w.sp.add(&c.e, o.body, false); err != nil {
+			if errors.Is(err, errSpoolFull) {
+				return w.fail(c, pb.ItemDropped, ReasonStaging, fmt.Errorf("%w: %s", pb.ErrBudget, ReasonStaging))
+			}
+			return w.fail(c, pb.ItemFailed, ReasonStaging, err)
+		}
+		c.found.add(o.findings)
+		return nil
+	}()
+	if err != nil {
+		delete(w.calls, c)
+		w.mu.Unlock()
+		return err
+	}
+	src := c.src
+	w.mu.Unlock()
+
+	id := w.reread(c.ctx, src)
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	delete(w.calls, c)
 	if c.late {
+		w.sp.release(&c.e)
 		return pb.ErrSealed
 	}
-	if o.status != "" {
-		return w.fail(c, o.status, o.reason, o.err)
-	}
-	if err := w.sp.add(&c.e, o.body, false); err != nil {
-		if errors.Is(err, errSpoolFull) {
-			return w.fail(c, pb.ItemDropped, ReasonStaging, fmt.Errorf("%w: %s", pb.ErrBudget, ReasonStaging))
-		}
-		return w.fail(c, pb.ItemFailed, ReasonStaging, err)
-	}
-	c.found.add(o.findings)
-	_, err := w.stage(c, "")
+	c.src.Identity = id
+	_, err = w.stage(c, "")
 	return err
+}
+
+// reread returns the capture identity of src's Pod, or "" for no Pod. It
+// runs without w.mu, bounded by ctx and the request timeout (design §8.2).
+func (w *Writer) reread(ctx context.Context, src pb.Source) pb.CaptureIdentity {
+	if src.Pod == "" {
+		return ""
+	}
+	// An unset client or a name that fails validation is never sent.
+	if s := safeSource(src); w.pods == nil || s.Namespace != src.Namespace || s.Pod != src.Pod || s.UID != src.UID {
+		return pb.IdentityRereadFailed
+	}
+	if w.podTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, w.podTimeout)
+		defer cancel()
+	}
+	return Reidentify(ctx, w.pods, pb.Replica{Namespace: src.Namespace, Pod: src.Pod, UID: src.UID})
 }
 
 // structured reads a body up to limit, redacts it with fn and stages it.
@@ -160,8 +203,46 @@ func (l lineSink) WriteLine(b []byte, fs []redact.Finding) error {
 }
 
 // finishText closes a text write: it appends a truncation line when the
-// text was cut and stages it, unless Seal already decided its fate.
+// text was cut, re-reads a Pod and stages it, unless Seal already decided
+// its fate.
 func (w *Writer) finishText(c *call, res redact.TextResult) error {
+	w.mu.Lock()
+	err := func() error {
+		switch {
+		case c.late:
+			w.sp.release(&c.e)
+			return pb.ErrSealed
+		case c.kept != nil:
+			return pb.ErrSealed
+		case errors.Is(c.dropErr, errSpoolFull):
+			return w.fail(c, pb.ItemDropped, ReasonStaging, fmt.Errorf("%w: %s", pb.ErrBudget, ReasonStaging))
+		case c.dropErr != nil:
+			return w.fail(c, pb.ItemFailed, ReasonStaging, c.dropErr)
+		}
+		if res.Truncated {
+			c.doneReason = "truncated: " + res.Reason
+			if err := w.sp.add(&c.e, []byte(truncation(res.Reason)+"\n"), true); err != nil {
+				return w.fail(c, pb.ItemFailed, ReasonStaging, err)
+			}
+		}
+		// Line findings arrived with the lines; only the open-PEM finding is new.
+		for _, f := range res.Findings {
+			if f.Rule == redact.RulePEMTail {
+				c.found.add([]redact.Finding{f})
+			}
+		}
+		c.done = true
+		return nil
+	}()
+	if err != nil {
+		delete(w.calls, c)
+		w.mu.Unlock()
+		return err
+	}
+	src := c.src
+	w.mu.Unlock()
+
+	id := w.reread(c.ctx, src)
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	delete(w.calls, c)
@@ -171,24 +252,8 @@ func (w *Writer) finishText(c *call, res redact.TextResult) error {
 		return pb.ErrSealed
 	case c.kept != nil:
 		return pb.ErrSealed
-	case errors.Is(c.dropErr, errSpoolFull):
-		return w.fail(c, pb.ItemDropped, ReasonStaging, fmt.Errorf("%w: %s", pb.ErrBudget, ReasonStaging))
-	case c.dropErr != nil:
-		return w.fail(c, pb.ItemFailed, ReasonStaging, c.dropErr)
 	}
-	reason := ""
-	if res.Truncated {
-		reason = "truncated: " + res.Reason
-		if err := w.sp.add(&c.e, []byte(truncation(res.Reason)+"\n"), true); err != nil {
-			return w.fail(c, pb.ItemFailed, ReasonStaging, err)
-		}
-	}
-	// Line findings arrived with the lines; only the open-PEM finding is new.
-	for _, f := range res.Findings {
-		if f.Rule == redact.RulePEMTail {
-			c.found.add([]redact.Finding{f})
-		}
-	}
-	_, err := w.stage(c, reason)
+	c.src.Identity = id
+	_, err = w.stage(c, c.doneReason)
 	return err
 }

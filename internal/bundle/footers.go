@@ -32,6 +32,9 @@ func (w *Writer) manifestFooter(m Manifest) (Manifest, []byte, error) {
 	for _, k := range w.failOmit {
 		m.ItemsOmitted += k
 	}
+	for _, k := range w.omitOver {
+		m.ItemsOmitted += k
+	}
 	Bound(&m, w.lim.Manifest)
 	var b bytes.Buffer
 	if err := WriteManifest(&b, m); err != nil {
@@ -76,7 +79,7 @@ func (l *lineBuf) bytes() []byte {
 
 // errorsFooter is one line for a placeholder manifest, per failed collector,
 // per collector with uncounted items, then per item that is not ok or
-// skipped, built within the cap.
+// skipped and not an omission, built within the cap.
 func (w *Writer) errorsFooter(cols []CollectorEntry) []byte {
 	lb := newLineBuf(w.lim.Errors)
 	if w.placeholder {
@@ -96,7 +99,7 @@ func (w *Writer) errorsFooter(cols []CollectorEntry) []byte {
 		lb.add(fmt.Sprintf("%s: %d more items not listed", c, w.failOmit[c]))
 	}
 	for _, r := range w.records {
-		if s := r.item.Status; s != pb.ItemOK && s != pb.ItemSkipped {
+		if s := r.item.Status; !r.omit && s != pb.ItemOK && s != pb.ItemSkipped {
 			if !lb.add(fmt.Sprintf("%s: %s: %s: %s", r.collector, r.item.Path, s, r.item.Reason)) {
 				break
 			}

@@ -38,8 +38,8 @@ func (c stubCollector) Collect(ctx context.Context, _ pb.Env, s pb.Sink) error {
 
 // writeText is a stub collector that writes one small text item at x/<name>.txt.
 func writeText(name string) stubCollector {
-	return stubCollector{name: name, fn: func(_ context.Context, s pb.Sink) error {
-		return s.Text(pb.Path{"x", name + ".txt"}, strings.NewReader("hello\n"), pb.Source{})
+	return stubCollector{name: name, fn: func(ctx context.Context, s pb.Sink) error {
+		return s.Text(ctx, pb.Path{"x", name + ".txt"}, strings.NewReader("hello\n"), pb.Source{})
 	}}
 }
 

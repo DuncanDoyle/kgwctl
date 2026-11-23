@@ -33,8 +33,9 @@ type result struct {
 // sealed, collectors still running are recorded as timeout without being
 // waited for, and the archive is finalized with the collectors in
 // registration order. A collector is never started once collection has
-// ended. Run returns the manifest as written to manifest.json, or the
-// finalization error and the zero Manifest.
+// ended. The writer re-reads Pods with env.Kube, bounded by
+// env.RequestTimeout. Run returns the manifest as written to manifest.json,
+// or the finalization error and the zero Manifest.
 func Run(ctx context.Context, cs []pb.Collector, env pb.Env, w *Writer, m Manifest, o RunOptions) (Manifest, error) {
 	dctx, cancel := context.WithCancel(ctx)
 	if !o.Deadline.IsZero() {
@@ -48,6 +49,8 @@ func Run(ctx context.Context, cs []pb.Collector, env pb.Env, w *Writer, m Manife
 		now = time.Now
 		env.Now = now
 	}
+	// Pod re-reads use the collectors' guarded client and request timeout.
+	w.usePods(env.Kube, env.RequestTimeout)
 	order := make([]string, len(cs))
 	res := make([]result, len(cs))
 	var mu sync.Mutex

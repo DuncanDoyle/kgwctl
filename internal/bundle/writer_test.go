@@ -2,6 +2,7 @@ package bundle
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,10 +14,14 @@ import (
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	kubefake "k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 	"sigs.k8s.io/yaml"
 
 	"github.com/DuncanDoyle/kgwctl/internal/bundle/bundletest"
@@ -27,6 +32,9 @@ import (
 var t0 = time.Date(2026, 11, 22, 10, 0, 0, 0, time.UTC)
 
 func fixedNow() time.Time { return t0 }
+
+// bg is the context of Sink writes whose capture context does not matter.
+var bg = context.Background()
 
 type harness struct {
 	w   *Writer
@@ -110,23 +118,23 @@ func TestWriterCorpusReplay(t *testing.T) {
 			h := newHarness(t, mustLimits(t, 512<<20), redact.Options{ExtraHeaders: fx.ExtraHeaders}, fx.Server)
 			s := h.w.Sink("corpus")
 			p := pb.Path{"corpus", fx.Name + corpusExt[fx.Method]}
-			src := pb.Source{Namespace: "team-a", Pod: "gw-0", Operation: pb.OpCustom}
+			src := pb.Source{Namespace: "team-a", Pod: "gw-0", UID: uid1, Operation: pb.OpCustom}
 			var err error
 			switch fx.Method {
 			case bundletest.MethodObject:
-				err = s.Object(p, objectFromYAML(t, fx.Input), src)
+				err = s.Object(bg, p, objectFromYAML(t, fx.Input), src)
 			case bundletest.MethodConfigDump:
-				err = s.ConfigDump(p, bytes.NewReader(fx.Input), src)
+				err = s.ConfigDump(bg, p, bytes.NewReader(fx.Input), src)
 			case bundletest.MethodJSON:
-				err = s.JSON(p, bytes.NewReader(fx.Input), src)
+				err = s.JSON(bg, p, bytes.NewReader(fx.Input), src)
 			case bundletest.MethodPrometheus:
-				err = s.Prometheus(p, bytes.NewReader(fx.Input), src)
+				err = s.Prometheus(bg, p, bytes.NewReader(fx.Input), src)
 			case bundletest.MethodText:
 				var r io.Reader = bytes.NewReader(fx.Input)
 				if fx.ReadError {
 					r = io.MultiReader(r, failReader{})
 				}
-				err = s.Text(p, r, src)
+				err = s.Text(bg, p, r, src)
 			case bundletest.MethodError:
 				s.Error(p, src, fx.Err)
 			}
@@ -197,10 +205,10 @@ func TestWriterUndeclaredType(t *testing.T) {
 		t.Fatal("sink is an io.Writer")
 	}
 	payload := []byte("raw downstream payload kgwctl-canary-21-raw\n")
-	if err := s.JSON(pb.Path{"x", "raw.json"}, bytes.NewReader(payload), pb.Source{}); !errors.Is(err, redact.ErrInvalidJSON) {
+	if err := s.JSON(bg, pb.Path{"x", "raw.json"}, bytes.NewReader(payload), pb.Source{}); !errors.Is(err, redact.ErrInvalidJSON) {
 		t.Fatalf("JSON err = %v", err)
 	}
-	if err := s.Prometheus(pb.Path{"x", "raw.txt"}, bytes.NewReader(payload), pb.Source{}); !errors.Is(err, redact.ErrNotPrometheus) {
+	if err := s.Prometheus(bg, pb.Path{"x", "raw.txt"}, bytes.NewReader(payload), pb.Source{}); !errors.Is(err, redact.ErrNotPrometheus) {
 		t.Fatalf("Prometheus err = %v", err)
 	}
 	a := h.finish(t, Manifest{}, "downstream")
@@ -246,7 +254,7 @@ func budgetItems() []stagedItem {
 func stageAll(t *testing.T, w *Writer, items []stagedItem) {
 	t.Helper()
 	for _, it := range items {
-		if err := w.Sink(it.collector).Text(it.path, bytes.NewReader(it.body), pb.Source{}); err != nil {
+		if err := w.Sink(it.collector).Text(bg, it.path, bytes.NewReader(it.body), pb.Source{}); err != nil {
 			t.Fatalf("%s: %v", it.path, err)
 		}
 	}
@@ -327,7 +335,7 @@ func TestWriterFooterCaps(t *testing.T) {
 	}
 	doc.WriteByte('}')
 	for i := range 24 {
-		if err := h.w.Sink("c0").JSON(pb.Path{"docs", fmt.Sprintf("d-%02d.json", i)}, bytes.NewReader(doc.Bytes()), pb.Source{}); err != nil {
+		if err := h.w.Sink("c0").JSON(bg, pb.Path{"docs", fmt.Sprintf("d-%02d.json", i)}, bytes.NewReader(doc.Bytes()), pb.Source{}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -375,11 +383,11 @@ func TestWriterItemCaps(t *testing.T) {
 
 	big := io.MultiReader(strings.NewReader(`{"a":"`), io.LimitReader(repeatReader('a'), 70<<20), strings.NewReader(`"}`))
 	dump := pb.Path{"proxies", "ns", "gw", pb.ConfigDumpFile}
-	if err := s.ConfigDump(dump, big, pb.Source{}); !errors.Is(err, pb.ErrBudget) {
+	if err := s.ConfigDump(bg, dump, big, pb.Source{}); !errors.Is(err, pb.ErrBudget) {
 		t.Fatalf("70 MiB config dump: err = %v, want ErrBudget", err)
 	}
 	log := pb.Path{"controller", "ns", "pod", "logs", "c.log"}
-	if err := s.Text(log, bytes.NewReader(textBody("big", 1100)), pb.Source{}); err != nil {
+	if err := s.Text(bg, log, bytes.NewReader(textBody("big", 1100)), pb.Source{}); err != nil {
 		t.Fatal(err)
 	}
 	h.w.Seal()
@@ -423,7 +431,7 @@ func TestWriterSealTextKeepsLines(t *testing.T) {
 	pr, pw := io.Pipe()
 	p := pb.Path{"controller", "ns", "pod", "logs", "c.log"}
 	done := make(chan error, 1)
-	go func() { done <- h.w.Sink("logs").Text(p, pr, pb.Source{}) }()
+	go func() { done <- h.w.Sink("logs").Text(bg, p, pr, pb.Source{}) }()
 
 	if _, err := pw.Write([]byte("line one\nAuthorization: Bearer abc.def-ghi\n")); err != nil {
 		t.Fatal(err)
@@ -481,7 +489,7 @@ func TestWriterLateSampledAtSeal(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			errs[i] = s.JSON(pb.Path{"late", fmt.Sprintf("f%d.json", i)}, sr, pb.Source{})
+			errs[i] = s.JSON(bg, pb.Path{"late", fmt.Sprintf("f%d.json", i)}, sr, pb.Source{})
 		}()
 		<-sr.started
 	}
@@ -499,7 +507,7 @@ func TestWriterLateSampledAtSeal(t *testing.T) {
 			t.Errorf("call %d: err = %v, want ErrSealed", i, err)
 		}
 	}
-	if err := s.JSON(pb.Path{"late", "after.json"}, strings.NewReader(`{}`), pb.Source{}); !errors.Is(err, pb.ErrSealed) {
+	if err := s.JSON(bg, pb.Path{"late", "after.json"}, strings.NewReader(`{}`), pb.Source{}); !errors.Is(err, pb.ErrSealed) {
 		t.Errorf("after seal: err = %v", err)
 	}
 	if n := h.w.Late()["c"]; n != 2 {
@@ -520,17 +528,17 @@ func TestWriterDuplicates(t *testing.T) {
 			writes := map[string]pb.Path{"a": {"x", "f.txt"}, "b": {"X", "F.txt"}}
 			order := []string{first, map[string]string{"a": "b", "b": "a"}[first]}
 			for _, c := range order {
-				if err := h.w.Sink(c).Text(writes[c], strings.NewReader("from "+c+"\n"), pb.Source{}); err != nil {
+				if err := h.w.Sink(c).Text(bg, writes[c], strings.NewReader("from "+c+"\n"), pb.Source{}); err != nil {
 					t.Fatal(err)
 				}
 			}
-			if err := h.w.Sink("a").Text(pb.Path{"x", "f.txt"}, strings.NewReader("again\n"), pb.Source{}); !errors.Is(err, pb.ErrDuplicate) {
+			if err := h.w.Sink("a").Text(bg, pb.Path{"x", "f.txt"}, strings.NewReader("again\n"), pb.Source{}); !errors.Is(err, pb.ErrDuplicate) {
 				t.Errorf("same collector, same path: err = %v", err)
 			}
-			if err := h.w.Sink("a").Text(pb.Path{pb.ErrorsFile}, strings.NewReader("x\n"), pb.Source{}); !errors.Is(err, pb.ErrInvalidPath) {
+			if err := h.w.Sink("a").Text(bg, pb.Path{pb.ErrorsFile}, strings.NewReader("x\n"), pb.Source{}); !errors.Is(err, pb.ErrInvalidPath) {
 				t.Errorf("errors.txt: err = %v", err)
 			}
-			if err := h.w.Sink("a").JSON(pb.Path{"bad", "a:b.json"}, strings.NewReader("{}"), pb.Source{}); !errors.Is(err, pb.ErrInvalidPath) || strings.Contains(err.Error(), "a:b") {
+			if err := h.w.Sink("a").JSON(bg, pb.Path{"bad", "a:b.json"}, strings.NewReader("{}"), pb.Source{}); !errors.Is(err, pb.ErrInvalidPath) || strings.Contains(err.Error(), "a:b") {
 				t.Errorf("bad name: err = %v, want ErrInvalidPath without the value", err)
 			}
 			h.w.Seal()
@@ -579,11 +587,11 @@ func TestWriterRegularEntries(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	must(s.Object(pb.Path{pb.ResourcesDir, "gateway.networking.k8s.io", "HTTPRoute", "ns", "r.yaml"}, u, pb.Source{}))
-	must(s.JSON(pb.Path{pb.ClusterDir, pb.VersionFile}, strings.NewReader(`{"v":"1"}`), pb.Source{}))
-	must(s.Prometheus(pb.Path{"controller", "ns", "p", pb.MetricsFile}, strings.NewReader("# TYPE up gauge\nup 1\n"), pb.Source{}))
-	must(s.ConfigDump(pb.Path{"proxies", "ns", "p", pb.ConfigDumpFile}, strings.NewReader(`{"configs":[]}`), pb.Source{}))
-	must(s.Text(pb.Path{"proxies", "ns", "p", pb.StatsFile}, strings.NewReader("a: 1\n"), pb.Source{}))
+	must(s.Object(bg, pb.Path{pb.ResourcesDir, "gateway.networking.k8s.io", "HTTPRoute", "ns", "r.yaml"}, u, pb.Source{}))
+	must(s.JSON(bg, pb.Path{pb.ClusterDir, pb.VersionFile}, strings.NewReader(`{"v":"1"}`), pb.Source{}))
+	must(s.Prometheus(bg, pb.Path{"controller", "ns", "p", pb.MetricsFile}, strings.NewReader("# TYPE up gauge\nup 1\n"), pb.Source{}))
+	must(s.ConfigDump(bg, pb.Path{"proxies", "ns", "p", pb.ConfigDumpFile}, strings.NewReader(`{"configs":[]}`), pb.Source{}))
+	must(s.Text(bg, pb.Path{"proxies", "ns", "p", pb.StatsFile}, strings.NewReader("a: 1\n"), pb.Source{}))
 	h.w.Seal()
 	a := h.finish(t, Manifest{}, "c")
 	if a.Root != DefaultName(t0) {
@@ -640,7 +648,7 @@ func TestFinalizeBoundedBySize(t *testing.T) {
 	h := newHarness(t, l, redact.Options{}, "")
 	for i := range 12 {
 		p := pb.Path{"logs", fmt.Sprintf("big-%02d.log", i)}
-		if err := h.w.Sink("c").Text(p, bytes.NewReader(textBody(fmt.Sprint(i), 100)), pb.Source{}); err != nil && !errors.Is(err, pb.ErrBudget) {
+		if err := h.w.Sink("c").Text(bg, p, bytes.NewReader(textBody(fmt.Sprint(i), 100)), pb.Source{}); err != nil && !errors.Is(err, pb.ErrBudget) {
 			t.Fatal(err)
 		}
 	}
@@ -682,20 +690,35 @@ func TestWriterRemoteErrorStatusOnly(t *testing.T) {
 func TestWriterSourceValidated(t *testing.T) {
 	h := newHarness(t, mustLimits(t, 32<<20), redact.Options{}, "")
 	bad := pb.Source{Namespace: "ns kgwctl-canary-p2-ns", Pod: "Bearer:kgwctl-canary-p2-pod", Container: "C/kgwctl-canary-p2-c", UID: "kgwctl-canary-p2-uid zz"}
-	good := pb.Source{Namespace: "team-a", Pod: "gw-0.x", Container: "envoy", UID: "0b8a3c1e-5f1d-4b7a-9c2e-1d2f3a4b5c6d"}
+	good := pb.Source{Namespace: "team-a", Pod: "gw-0.x", Container: "envoy", UID: uid1}
+	kube := kubefake.NewClientset(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "team-a", Name: "gw-0.x", UID: uid1}})
+	var gets []string
+	kube.PrependReactor("get", "pods", func(a k8stesting.Action) (bool, runtime.Object, error) {
+		gets = append(gets, a.GetNamespace()+"/"+a.(k8stesting.GetAction).GetName())
+		return false, nil, nil
+	})
+	h.w.usePods(kube, time.Minute)
 	s := h.w.Sink("c")
-	if err := s.JSON(pb.Path{"x", "bad.json"}, strings.NewReader(`{}`), bad); err != nil {
+	if err := s.JSON(bg, pb.Path{"x", "bad.json"}, strings.NewReader(`{}`), bad); err != nil {
 		t.Fatal(err)
 	}
 	s.Error(pb.Path{"x", "err.json"}, bad, errors.New("boom"))
-	if err := s.JSON(pb.Path{"x", "good.json"}, strings.NewReader(`{}`), good); err != nil {
+	if err := s.JSON(bg, pb.Path{"x", "good.json"}, strings.NewReader(`{}`), good); err != nil {
 		t.Fatal(err)
 	}
 	h.w.Seal()
 	a := h.finish(t, Manifest{}, "c")
 	bundletest.AssertNoCanary(t, a, nil)
+	good.Identity = pb.IdentityVerified
 	if it := itemByPath(h.w.Items(), "x/good.json"); len(it) != 1 || it[0].Source != good {
 		t.Errorf("valid source changed: %+v", it)
+	}
+	// An invalid Pod source is never sent in a re-read; its item gets reread-failed.
+	if len(gets) != 1 || gets[0] != "team-a/gw-0.x" {
+		t.Errorf("Pod GETs %q, want only the valid source's", gets)
+	}
+	if it := itemByPath(h.w.Items(), "x/bad.json"); len(it) != 1 || it[0].Source.Identity != pb.IdentityRereadFailed {
+		t.Errorf("bad item %+v, want reread-failed", it)
 	}
 }
 

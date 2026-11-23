@@ -1,6 +1,7 @@
 package bundle
 
 import (
+	"context"
 	"regexp"
 	"strings"
 
@@ -16,6 +17,7 @@ type record struct {
 	findings  []redact.Finding
 	fomit     int // distinct findings past maxFileFindings
 	e         *entry
+	omit      bool // an intentional omission: never degrades or reaches errors.txt
 }
 
 // maxFileFindings caps the distinct findings kept per item.
@@ -52,6 +54,7 @@ func (s *findingSet) add(fs []redact.Finding) {
 
 // call is one Sink write in flight.
 type call struct {
+	ctx       context.Context // bounds the Pod re-read
 	collector string
 	path      pb.Path
 	key       string
@@ -64,6 +67,9 @@ type call struct {
 	late      bool       // in flight at Seal; the result is discarded
 	kept      *record    // a text item kept at Seal
 	dropErr   error      // staging failed mid-stream
+	// done marks a text item fully read and awaiting its re-read, with its reason.
+	done       bool
+	doneReason string
 }
 
 // safePath renders p for a record, with every component that fails
@@ -106,6 +112,18 @@ func (w *Writer) addRecord(collector string, it Item, fs []redact.Finding, e *en
 	r := &record{collector: collector, seq: w.seq, item: it, findings: fs, e: e}
 	w.records = append(w.records, r)
 	return r
+}
+
+// addOmission appends an omission record; the caller holds w.mu. Omissions
+// have their own maxFailRecords bound per collector, apart from failures.
+func (w *Writer) addOmission(collector string, it Item) {
+	if w.omitN[collector] >= maxFailRecords {
+		w.omitOver[collector]++
+		return
+	}
+	w.omitN[collector]++
+	w.seq++
+	w.records = append(w.records, &record{collector: collector, seq: w.seq, item: it, omit: true})
 }
 
 func (c *call) item(w *Writer) Item {
