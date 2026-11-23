@@ -386,7 +386,7 @@ func (f dialerFunc) Dial(ctx context.Context, pod types.NamespacedName, port int
 
 // TestFetchOpUnknown: an operation outside the allowlist fails before a dial.
 func TestFetchOpUnknown(t *testing.T) {
-	for _, op := range []Op{Op(99), Op(-1)} {
+	for _, op := range []Op{Op(0), Op(99), Op(-1)} {
 		var dials atomic.Int32
 		d := dialerFunc(func(context.Context, types.NamespacedName, int) (io.ReadWriteCloser, func(), error) {
 			dials.Add(1)

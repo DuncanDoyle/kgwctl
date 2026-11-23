@@ -372,6 +372,9 @@ func requireOneRequest(t *testing.T, p *spdyPod, target string) {
 	if r := p.reqs[0]; r.Method != http.MethodGet || r.RequestURI != target || r.Proto != "HTTP/1.1" {
 		t.Fatalf("request line = %s %s %s, want GET %s HTTP/1.1", r.Method, r.RequestURI, r.Proto, target)
 	}
+	if len(p.streams) == 0 {
+		t.Fatal("no stream headers recorded")
+	}
 	for _, h := range p.streams {
 		if h.Get(corev1.PortHeader) != "19000" {
 			t.Fatalf("stream headers = %v, want port 19000", p.streams)
