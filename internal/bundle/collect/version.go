@@ -207,10 +207,8 @@ func (c versionCollector) installs(sc pb.Scope, s pb.Sink) []view.InstallVersion
 		return nil
 	}
 	// Every detected install, as `version` sees them; the scope's are kept below.
-	f, warns := view.NewFilter(c.res, view.Scope{AllControllers: true})
-	for _, w := range warns {
-		s.Error(pb.Path{pb.ClusterDir}, pb.Source{}, errors.New(w))
-	}
+	// With AllControllers the filter hides nothing, so its warnings are not failures.
+	f, _ := view.NewFilter(c.res, view.Scope{AllControllers: true})
 	v, err := view.Version(c.build, c.res, f)
 	if err != nil {
 		s.Error(pb.Path{pb.ClusterDir}, pb.Source{}, err)
@@ -251,6 +249,10 @@ func (c versionCollector) capture(ctx context.Context, env pb.Env, s pb.Sink, r 
 	cancel()
 	if err != nil {
 		err = adminError(pb.OpServerInfo, err)
+		// Cut short by the run's end, deadline or Ctrl-C, the capture is timeout (design §3).
+		if ctx.Err() != nil {
+			err = fmt.Errorf("%s: %w", pb.OpServerInfo, context.DeadlineExceeded)
+		}
 		s.Error(p, src, err)
 		o.Status = ib.ItemStatus(err)
 		return o, nil

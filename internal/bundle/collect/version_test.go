@@ -28,12 +28,20 @@ import (
 )
 
 // hangingAdmin serves /server_info for pods named good-*, and holds every
-// other Pod's dial until the capture's context ends.
-type hangingAdmin struct{ dials atomic.Int64 }
+// other Pod's dial until the capture's context ends. busy is closed once
+// workers hung dials are held at the same time.
+type hangingAdmin struct {
+	dials, hung atomic.Int64
+	workers     int64
+	busy        chan struct{}
+}
 
 func (h *hangingAdmin) Dial(ctx context.Context, pod types.NamespacedName, _ int) (io.ReadWriteCloser, func(), error) {
 	h.dials.Add(1)
 	if !strings.HasPrefix(pod.Name, "good-") {
+		if h.hung.Add(1) == h.workers {
+			close(h.busy)
+		}
 		<-ctx.Done()
 		return nil, nil, ctx.Err()
 	}
@@ -49,10 +57,10 @@ func (h *hangingAdmin) Dial(ctx context.Context, pod types.NamespacedName, _ int
 	return client, func() { client.Close() }, nil
 }
 
-// TestVersionHungReplicas: with replicas that hang, version.json is still
-// written before the deadline, with the server version, the good replicas ok
-// and the hung ones timeout; replicas that no longer fit are never dialled.
-func TestVersionHungReplicas(t *testing.T) {
+// versionFixture returns a discovery client serving /version, two good and
+// hung replicas, and a fake clientset holding their Pods.
+func versionFixture(t *testing.T, hung int) (discovery.DiscoveryInterface, []pb.Replica, *kubefake.Clientset) {
+	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/version" {
 			http.NotFound(w, r)
@@ -60,7 +68,7 @@ func TestVersionHungReplicas(t *testing.T) {
 		}
 		fmt.Fprint(w, `{"gitVersion":"v1.36.2"}`)
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 	disc, err := discovery.NewDiscoveryClientForConfig(&rest.Config{Host: srv.URL})
 	if err != nil {
 		t.Fatal(err)
@@ -78,24 +86,15 @@ func TestVersionHungReplicas(t *testing.T) {
 	}
 	add("good-a")
 	add("good-b")
-	const hung = 20
 	for i := range hung {
 		add(fmt.Sprintf("hung-%02d", i))
 	}
-	kube := kubefake.NewClientset(pods...)
+	return disc, replicas, kubefake.NewClientset(pods...)
+}
 
-	// Request bound 150ms, deadline 400ms: two waves of hung captures fit, the rest do not.
-	ctx, cancel := context.WithTimeout(context.Background(), 400*time.Millisecond)
-	defer cancel()
-	d := &hangingAdmin{}
-	s := newRecordSink()
-	env := pb.Env{Kube: kube, Discovery: disc, Replicas: replicas, RequestTimeout: 150 * time.Millisecond}
-	if err := collect.Version(view.BuildInfo{Version: "test"}, nil, d).Collect(ctx, env, s); err != nil {
-		t.Fatalf("Collect: %v", err)
-	}
-	if ctx.Err() != nil {
-		t.Error("Collect returned after the deadline")
-	}
+// readVersionFile returns the version.json s holds, checking the server version and entry count.
+func readVersionFile(t *testing.T, s *recordSink, replicas int) collect.VersionFile {
+	t.Helper()
 	b, ok := s.json["cluster/version.json"]
 	if !ok {
 		t.Fatal("version.json not written")
@@ -107,9 +106,33 @@ func TestVersionHungReplicas(t *testing.T) {
 	if vf.Server == nil || vf.Server.GitVersion != "v1.36.2" {
 		t.Errorf("server %+v", vf.Server)
 	}
-	if len(vf.Observed) != len(replicas) {
-		t.Fatalf("observed %d entries, want %d", len(vf.Observed), len(replicas))
+	if len(vf.Observed) != replicas {
+		t.Fatalf("observed %d entries, want %d", len(vf.Observed), replicas)
 	}
+	return vf
+}
+
+// TestVersionHungReplicas: once every worker holds a hung capture, the run
+// ends (as at its deadline or on Ctrl-C). version.json is still written, with
+// the server version, the good replicas ok and every hung one timeout; the
+// replicas never started are never dialled and each still gets an error item.
+func TestVersionHungReplicas(t *testing.T) {
+	const hung, workers = 20, 8
+	disc, replicas, kube := versionFixture(t, hung)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	d := &hangingAdmin{workers: workers, busy: make(chan struct{})}
+	// All workers held by hung dials means both good captures, queued first, have finished.
+	go func() {
+		<-d.busy
+		cancel()
+	}()
+	s := newRecordSink()
+	env := pb.Env{Kube: kube, Discovery: disc, Replicas: replicas}
+	if err := collect.Version(view.BuildInfo{Version: "test"}, nil, d).Collect(ctx, env, s); err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	vf := readVersionFile(t, s, len(replicas))
 	for _, o := range vf.Observed {
 		want := pb.ItemTimeout
 		if strings.HasPrefix(o.Pod, "good-") {
@@ -119,11 +142,34 @@ func TestVersionHungReplicas(t *testing.T) {
 			t.Errorf("%s: %s, want %s", o.Pod, o.Status, want)
 		}
 	}
-	if n := d.dials.Load(); n >= int64(len(replicas)) {
-		t.Errorf("dialled %d of %d replicas; captures that cannot fit must not start", n, len(replicas))
+	if n := d.dials.Load(); n != 2+workers {
+		t.Errorf("dialled %d replicas, want %d: none starts after the run ends", n, 2+workers)
 	}
 	// Every hung replica has its own error item, dialled or not.
 	if n := strings.Count(strings.Join(s.errPaths, "\n"), "/server_info.json"); n != hung {
 		t.Errorf("%d server_info error items, want %d: %v", n, hung, s.errPaths)
+	}
+}
+
+// TestVersionCaptureDoesNotFit: when --request-timeout no longer fits before
+// the deadline, no capture starts; version.json is written with every
+// replica timeout.
+func TestVersionCaptureDoesNotFit(t *testing.T) {
+	disc, replicas, kube := versionFixture(t, 1)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
+	defer cancel()
+	d := &hangingAdmin{busy: make(chan struct{})}
+	s := newRecordSink()
+	env := pb.Env{Kube: kube, Discovery: disc, Replicas: replicas, RequestTimeout: 2 * time.Hour}
+	if err := collect.Version(view.BuildInfo{Version: "test"}, nil, d).Collect(ctx, env, s); err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	for _, o := range readVersionFile(t, s, len(replicas)).Observed {
+		if o.Status != pb.ItemTimeout {
+			t.Errorf("%s: %s, want timeout", o.Pod, o.Status)
+		}
+	}
+	if n := d.dials.Load(); n != 0 {
+		t.Errorf("dialled %d replicas, want none", n)
 	}
 }
