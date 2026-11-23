@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -34,6 +36,8 @@ type adminReply struct {
 	raw     string
 	err     error
 	dialErr error
+	// hang holds the dial until its context ends.
+	hang bool
 }
 
 // fakeAdmin is a proxydump.Dialer that records each request as
@@ -44,11 +48,15 @@ type fakeAdmin struct {
 	reply func(pod, target string) adminReply
 }
 
-func (f *fakeAdmin) Dial(_ context.Context, pod types.NamespacedName, port int) (io.ReadWriteCloser, func(), error) {
+func (f *fakeAdmin) Dial(ctx context.Context, pod types.NamespacedName, port int) (io.ReadWriteCloser, func(), error) {
 	if port != proxydump.AdminPort {
 		return nil, nil, fmt.Errorf("port %d", port)
 	}
-	if r := f.reply(pod.Name, ""); r.dialErr != nil {
+	if r := f.reply(pod.Name, ""); r.hang {
+		f.record(pod.Name + " dial")
+		<-ctx.Done()
+		return nil, nil, ctx.Err()
+	} else if r.dialErr != nil {
 		f.record(pod.Name + " dial")
 		return nil, nil, r.dialErr
 	}
@@ -135,7 +143,7 @@ var adminFiles = map[string]pb.Op{
 }
 
 // TestProxyAdminPerReplica: two replicas get all four captures, ok and
-// verified; a failing dial gives four failed items and no member; a replica
+// verified; a failing dial gives four failed items, one dial and no member; a replica
 // that is not running gets four skipped items and no request; an unverified
 // one gets nothing. The default sends the EDS config dump and clusters.
 func TestProxyAdminPerReplica(t *testing.T) {
@@ -195,7 +203,7 @@ func TestProxyAdminPerReplica(t *testing.T) {
 	want := []string{
 		"a /certs", "a /clusters", "a /config_dump?include_eds", "a /stats",
 		"b /certs", "b /clusters", "b /config_dump?include_eds", "b /stats",
-		"bad dial", "bad dial", "bad dial", "bad dial",
+		"bad dial",
 	}
 	if got := d.requests(); !slices.Equal(got, want) {
 		t.Errorf("requests %v, want %v", got, want)
@@ -309,42 +317,97 @@ func TestProxyAdminArchive(t *testing.T) {
 
 // TestProxyAdminKubeletCanary: kubelet error-stream text, before the
 // response or in the middle of a body, and a malformed status line reach no
-// member; each capture is failed or cut, never ok with the text.
+// member. A kubelet error fails the tunnel, so the replica gets no further
+// request and its remaining items fail; a text item it cuts stays ok with a
+// read-error marker. A malformed status line fails only its own item.
 func TestProxyAdminKubeletCanary(t *testing.T) {
 	const canary = "kgwctl-canary-kubelet-admin"
 	kubelet := errors.New("port-forward to port 19000 failed: " + canary)
+	// Headers and part of the body, then the error stream ends the read.
+	cut := adminReply{raw: "HTTP/1.1 200 OK\r\nContent-Length: 4096\r\n\r\n{\"configs\":[\nline one\n", err: kubelet}
 	rs := []pb.Replica{
 		proxyReplica("early", corev1.PodRunning, true),
-		proxyReplica("mid", corev1.PodRunning, true),
+		proxyReplica("midjson", corev1.PodRunning, true),
+		proxyReplica("midtext", corev1.PodRunning, true),
 		proxyReplica("malformed", corev1.PodRunning, true),
 	}
 	d := &fakeAdmin{reply: func(pod, target string) adminReply {
-		switch pod {
-		case "early":
+		switch {
+		case pod == "early":
 			return adminReply{err: kubelet}
-		case "mid":
-			// Headers and part of the body, then the error stream ends the read.
-			return adminReply{raw: "HTTP/1.1 200 OK\r\nContent-Length: 4096\r\n\r\n{\"configs\":[\nline one\n", err: kubelet}
-		case "malformed":
+		case pod == "midjson", pod == "midtext" && target == "/stats":
+			return cut
+		case pod == "malformed":
 			// Go quotes the bad status code in its error.
 			return adminReply{raw: "HTTP/1.1 " + canary + " OK\r\nContent-Length: 0\r\n\r\n"}
 		}
 		return adminBodies(pod, target)
 	}}
 	m, a := runProxyAdmin(t, pb.Env{Kube: podsOf(rs...), Replicas: rs}, d, false)
-	for _, pod := range []string{"early", "malformed"} {
+	for _, pod := range []string{"early", "midjson", "malformed"} {
 		for f := range adminFiles {
 			if it := manifestItem(t, m, "proxies/gw/"+pod+"/"+f); it.Status != pb.ItemFailed {
 				t.Errorf("%s/%s: item %+v, want failed", pod, f, it)
 			}
 		}
 	}
-	for _, f := range []string{pb.ConfigDumpFile, pb.CertsFile} {
-		if it := manifestItem(t, m, "proxies/gw/mid/"+f); it.Status != pb.ItemFailed {
-			t.Errorf("mid/%s: item %+v, want failed", f, it)
+	if it := manifestItem(t, m, "proxies/gw/midtext/config_dump.json"); it.Status != pb.ItemOK {
+		t.Errorf("midtext config dump %+v, want ok", it)
+	}
+	stats := manifestItem(t, m, "proxies/gw/midtext/stats.txt")
+	if stats.Status != pb.ItemOK || stats.Reason != "truncated: read error" {
+		t.Errorf("midtext stats %+v, want ok and truncated: read error", stats)
+	}
+	if b, _ := a.File("proxies/gw/midtext/stats.txt"); string(b) != "{\"configs\":[\nline one\n[kgwctl: truncated: read error]\n" {
+		t.Errorf("midtext stats.txt = %q", b)
+	}
+	for _, f := range []string{pb.CertsFile, pb.ClustersFile} {
+		if it := manifestItem(t, m, "proxies/gw/midtext/"+f); it.Status != pb.ItemFailed {
+			t.Errorf("midtext/%s: item %+v, want failed", f, it)
 		}
 	}
+	perPod := map[string]int{}
+	for _, r := range d.requests() {
+		pod, _, _ := strings.Cut(r, " ")
+		perPod[pod]++
+	}
+	if want := map[string]int{"early": 1, "midjson": 1, "midtext": 2, "malformed": 4}; !maps.Equal(perPod, want) {
+		t.Errorf("requests per pod %v, want %v", perPod, want)
+	}
 	bundletest.AssertNoCanary(t, a, []string{canary})
+}
+
+// TestProxyAdminHungReplica: a replica whose dial hangs gets one request;
+// once it times out, its other items are recorded as timeout without another
+// dial (design §3: a hung pod costs one item). Healthy replicas are captured.
+func TestProxyAdminHungReplica(t *testing.T) {
+	rs := []pb.Replica{proxyReplica("hung", corev1.PodRunning, true), proxyReplica("a", corev1.PodRunning, true)}
+	d := &fakeAdmin{reply: func(pod, target string) adminReply {
+		if pod == "hung" {
+			return adminReply{hang: true}
+		}
+		return adminBodies(pod, target)
+	}}
+	// The fake answers healthy requests in memory, well within the timeout.
+	env := pb.Env{Kube: podsOf(rs...), Replicas: rs, RequestTimeout: time.Second}
+	m, _ := runProxyAdmin(t, env, d, false)
+	var hung []string
+	for _, r := range d.requests() {
+		if strings.HasPrefix(r, "hung ") {
+			hung = append(hung, r)
+		}
+	}
+	if !slices.Equal(hung, []string{"hung dial"}) {
+		t.Errorf("hung replica requests %v, want one dial", hung)
+	}
+	for f := range adminFiles {
+		if it := manifestItem(t, m, "proxies/gw/hung/"+f); it.Status != pb.ItemTimeout {
+			t.Errorf("hung/%s: item %+v, want timeout", f, it)
+		}
+		if it := manifestItem(t, m, "proxies/gw/a/"+f); it.Status != pb.ItemOK {
+			t.Errorf("a/%s: item %+v, want ok", f, it)
+		}
+	}
 }
 
 // TestProxyAdminUnstarted: a run that ends before any capture starts
