@@ -6,7 +6,7 @@ Base: 38acaa0
 Author: anthropic (claude-opus-5-5 controller; Claude subagent implementers)
 Advisory: none
 Docs: docs/phases/phase-4/
-Status: implementing; sub-phase 4.2 open
+Status: implementing; sub-phase 4.3 open
 
 ### Queue
 - [x] Q1 Phase 4 design (`design.md`) r1, with research notes (prior art, reuse, threats) — not committed, in .agents-tmp/
@@ -29,7 +29,24 @@ Status: implementing; sub-phase 4.2 open
 - [ ] phase-4-complete.md written, roadmap updated, tracked items closed
 
 ## Sub-phase
-none (4.2 closed 2026-11-23: docs/phases/phase-4/phase-4.2-complete.md)
+Sub-phase: 4.3 — Logs, metrics, Envoy
+Kind: planned
+Base: dd98ce7
+Brief: docs/phases/phase-4/phase-4.3-brief.md
+
+### Allowed work
+Features within the approved design (r6): plan Tasks 4.3.1–4.3.4, the `writer.go` split (no behaviour change), and the P4-2 Sink contract change once decisions.md records it and the owner approves.
+
+### Not allowed
+Design changes without a decisions.md entry and owner approval.
+
+### Queue
+- [ ] T0 Split internal/bundle/writer.go into files, behaviour unchanged ← CURRENT
+- [ ] T0b P4-2: Sink post-capture identity and intentional outcomes — decisions.md entry, owner approval, then implement
+- [ ] T1 Task 4.3.1 Logs (incl. 4.1 P3-3 pem-tail)
+- [ ] T2 Task 4.3.2 Controller and proxy metrics (Refused cause: own call, not the Snellius scraper's)
+- [ ] T3 Task 4.3.3 Envoy capture (incl. kubelet error text canary from 4.2.3; `--no-endpoints` wiring)
+- [ ] T4 Task 4.3.4 RBAC and partial runs
 
 ## Program
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
