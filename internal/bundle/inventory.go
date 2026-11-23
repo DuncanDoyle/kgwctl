@@ -3,6 +3,8 @@ package bundle
 import (
 	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"slices"
 	"strings"
@@ -114,26 +116,27 @@ func Inventory(ctx context.Context, kube kubernetes.Interface, s pb.Scope, gws G
 	return append(out, proxies...), errs
 }
 
-// labelMatches reports whether label names a GatewaySet Gateway in ns: exactly,
-// or as the shortened form of a name over 63 characters ("<prefix>-<hash>").
+// labelMatches reports whether label is the gateway-name label of a GatewaySet Gateway in ns.
 func labelMatches(gws GatewaySet, ns, label string) bool {
 	if label == "" {
 		return false
 	}
-	prefix := label
-	if i := strings.LastIndex(label, "-"); i > 0 && len(label) == maxLabelValue {
-		prefix = label[:i]
-	}
 	for k := range gws {
-		if k.Namespace == ns && (k.Name == label || len(k.Name) > maxLabelValue && strings.HasPrefix(k.Name, prefix)) {
+		if k.Namespace == ns && safeLabelValue(k.Name) == label {
 			return true
 		}
 	}
 	return false
 }
 
-// maxLabelValue is the Kubernetes label value limit the proxy label is shortened to.
-const maxLabelValue = 63
+// safeLabelValue mirrors kgateway's kgateway.gateway.safeLabelValue Helm helper.
+func safeLabelValue(name string) string {
+	if len(name) <= 63 {
+		return name
+	}
+	sum := sha256.Sum256([]byte(name))
+	return strings.TrimSuffix(name[:50], "-") + "-" + hex.EncodeToString(sum[:])[:12]
+}
 
 // replica records p's state; restart counts include init containers.
 func replica(p *corev1.Pod, role pb.Role, owner string, id pb.Identity, port int32) pb.Replica {

@@ -35,13 +35,8 @@ func proxyPod(ns, name, gw string) *corev1.Pod {
 	return p
 }
 
-// shorten mimics the proxy Deployment's label for names over 63 characters.
-func shorten(name string) string {
-	if len(name) <= 63 {
-		return name
-	}
-	return name[:50] + "-0123456789ab"
-}
+// shorten is the proxy Deployment's gateway-name label for name.
+func shorten(name string) string { return safeLabelValue(name) }
 
 func gwKey(ns, name string) types.NamespacedName {
 	return types.NamespacedName{Namespace: ns, Name: name}
@@ -104,24 +99,31 @@ func TestInventoryUnverified(t *testing.T) {
 // TestInventoryUnverifiedShortened: a release without the annotation shortens
 // the label of a long Gateway name; its Pods are still recorded unverified.
 func TestInventoryUnverifiedShortened(t *testing.T) {
-	long := strings.Repeat("g", 70)
-	short := proxyPod("team-a", "short", "")
-	short.Labels[gatewayNameLabel] = shorten(long)
-	stray := proxyPod("team-a", "stray", "")
-	stray.Labels[gatewayNameLabel] = "unrelated"
+	// Labels as kgateway renders them; the first is from its deployer golden output.
+	long := "extremely-long-gateway-name-that-exceeds-the-sixty-three-character-limit-imposed-by-kubernetes-dns-naming-requirements"
+	dashed := strings.Repeat("a", 49) + "-" + strings.Repeat("b", 20) // 50-char prefix ends in '-'
+	labelled := func(name, label string) *corev1.Pod {
+		p := proxyPod("team-a", name, "")
+		p.Labels[gatewayNameLabel] = label
+		return p
+	}
+	short := labelled("short", "extremely-long-gateway-name-that-exceeds-the-sixty-ff41b39ff097")
+	dash := labelled("dashed", strings.Repeat("a", 49)+"-0517873f1a55")
+	stray := labelled("stray", "unrelated")
 	noLabel := proxyPod("team-a", "no-proxy-label", "")
 	delete(noLabel.Labels, ProxyLabel)
-	kube := kubefake.NewClientset(short, stray, noLabel)
-	gws := GatewaySet{gwKey("team-a", long): ""}
+	kube := kubefake.NewClientset(short, dash, stray, noLabel)
+	gws := GatewaySet{gwKey("team-a", long): "", gwKey("team-a", dashed): ""}
 
 	rs, errs := Inventory(context.Background(), kube, pb.Scope{}, gws, nil)
-	if got := podNames(rs); !slices.Equal(got, []string{"team-a/short"}) || len(errs) != 1 || rs[0].Identity != pb.IdentityUnverified {
-		t.Errorf("replicas %+v, errors %v; want short unverified", rs, errs)
+	if got := podNames(rs); !slices.Equal(got, []string{"team-a/dashed", "team-a/short"}) || len(errs) != 2 ||
+		rs[0].Identity != pb.IdentityUnverified || rs[1].Identity != pb.IdentityUnverified {
+		t.Errorf("replicas %+v, errors %v; want dashed and short unverified", rs, errs)
 	}
 	// Within -n an unattributable proxy Pod is reported too; one without the proxy label never is.
 	rs, errs = Inventory(context.Background(), kube, pb.Scope{Namespace: "team-a"}, gws, nil)
-	if got := podNames(rs); !slices.Equal(got, []string{"team-a/short", "team-a/stray"}) || len(errs) != 2 {
-		t.Errorf("-n team-a: replicas %v, errors %v; want short and stray unverified", got, errs)
+	if got := podNames(rs); !slices.Equal(got, []string{"team-a/dashed", "team-a/short", "team-a/stray"}) || len(errs) != 3 {
+		t.Errorf("-n team-a: replicas %v, errors %v; want dashed, short and stray unverified", got, errs)
 	}
 	for _, a := range kube.Actions() {
 		if a.GetResource().Resource != "pods" {
