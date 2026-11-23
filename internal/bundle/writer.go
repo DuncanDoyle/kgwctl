@@ -96,6 +96,7 @@ type Writer struct {
 	calls       map[*call]struct{}
 	late        map[string]int
 	excl        map[Exclusion]int // Count is zero in keys
+	granted     map[grantKey]bool // grants denied items need, per namespace
 	frozen      []Exclusion
 	runLog      []string
 	runLogN     int64

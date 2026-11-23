@@ -96,6 +96,7 @@ func safePath(p pb.Path) string {
 // addRecord appends an item outcome; the caller holds w.mu. Past
 // maxFailRecords for a collector, a record that is not ok is only counted.
 func (w *Writer) addRecord(collector string, it Item, fs []redact.Finding, e *entry) *record {
+	w.noteGrant(it)
 	if it.Status != pb.ItemOK {
 		if w.failN[collector] >= maxFailRecords {
 			w.failOmit[collector]++

@@ -5,17 +5,23 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
@@ -370,5 +376,249 @@ func TestBundleInterrupt(t *testing.T) {
 	}
 	if ents, _ := os.ReadDir(tmp); len(ents) != 0 {
 		t.Errorf("spool left behind: %v", ents)
+	}
+}
+
+// grantLines returns the lines of errors.txt that name a grant to add.
+func grantLines(t *testing.T, a bundletest.Archive) (all, grants []string) {
+	t.Helper()
+	b, ok := a.File("errors.txt")
+	if !ok {
+		t.Fatal("archive lacks errors.txt")
+	}
+	all = strings.Split(strings.TrimSuffix(string(b), "\n"), "\n")
+	for _, l := range all {
+		if strings.HasPrefix(l, "grant: ") {
+			grants = append(grants, l)
+		}
+	}
+	return all, grants
+}
+
+// TestBundleReaderOnly: pods/log and pods/portforward are denied through the
+// real log source and port-forwarder. The run exits 0, every log and admin
+// item is denied, and errors.txt ends with one grant line per grant and
+// namespace, though version and proxy-admin both hit pods/portforward.
+// Metrics need a kubelet, so the scraper is a seam: the reader may use pods/proxy.
+func TestBundleReaderOnly(t *testing.T) {
+	env := newEnv(t, testenv.Options{Fixtures: []string{healthyFixture, proxyPods(t, "http-a")}})
+	logHits := env.Proxies[0].Rule(testenv.Match{Resource: "pods", Subresource: "log"}, testenv.Action{Status: http.StatusForbidden})
+	pfHits := env.Proxies[0].Rule(testenv.Match{Resource: "pods", Subresource: "portforward"}, testenv.Action{Status: http.StatusForbidden})
+	a := archiveWith(t, env.Kubeconfig, nil, app.BundleTestHooks{Check: fastHooks(metricsScraper{}), Scraper: metricsScraper{}})
+	if logHits.N() == 0 || pfHits.N() == 0 {
+		t.Fatalf("rule hits: pods/log %d, pods/portforward %d; want both", logHits.N(), pfHits.N())
+	}
+
+	seen := map[string]int{}
+	for _, it := range readItems(t, a).Item.Items {
+		switch op := it.Source.Operation; op {
+		case "log", "previous-log", "server-info", "config-dump-eds", "stats", "certs", "clusters":
+			seen[op]++
+			if it.Status != "denied" {
+				t.Errorf("%s: %s, want denied", it.Path, it.Status)
+			}
+		}
+	}
+	// The controller and the proxy each have one container; one proxy replica.
+	if want := map[string]int{"log": 2, "server-info": 1, "config-dump-eds": 1, "stats": 1, "certs": 1, "clusters": 1}; !reflect.DeepEqual(seen, want) {
+		t.Errorf("denied items per operation %v, want %v", seen, want)
+	}
+	for _, o := range readVersion(t, a).Observed {
+		if o.Status != "denied" || o.Version != "" {
+			t.Errorf("observed %+v, want denied without a version", o)
+		}
+	}
+
+	all, grants := grantLines(t, a)
+	want := []string{
+		"grant: create pods/portforward in namespace kgateway-system: see the kgwctl-proxy-portforward Role in docs/rbac.yaml",
+		"grant: get pods/log in namespace kgateway-system: see the kgwctl-bundle-logs Role in docs/rbac.yaml",
+	}
+	if !slices.Equal(grants, want) || !slices.Equal(all[len(all)-len(want):], want) {
+		t.Errorf("errors.txt:\n%s\nwant it to end with exactly\n%s", strings.Join(all, "\n"), strings.Join(want, "\n"))
+	}
+	assertMembers(t, a, []string{
+		gwDir + "Gateway/kgateway-system/http.yaml",
+		"workloads/kgateway-system/pods.yaml",
+		"install/kgateway-system/kgateway.yaml",
+		"cluster/version.json",
+		"check/check.json",
+		proxyMetricsPath,
+	}, nil)
+	if ms := membersUnder(a, ""); slices.ContainsFunc(ms, func(m string) bool { return strings.Contains(m, "/logs/") }) {
+		t.Errorf("a denied log has a member: %v", ms)
+	}
+}
+
+// mixedLogs serves every log stream but http-b's, which hangs until its
+// request times out.
+type mixedLogs struct{}
+
+func (mixedLogs) Stream(ctx context.Context, pod types.NamespacedName, _ *corev1.PodLogOptions) (io.ReadCloser, error) {
+	if pod.Name == "http-b" {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	return io.NopCloser(strings.NewReader("2026-01-02T03:04:05Z ready\n")), nil
+}
+
+// TestBundleMixedOutcomes: one replica's log is ok and another's times out
+// (log source seam); its admin capture is denied through the real
+// port-forwarder. The run exits 0 with each status on its item.
+func TestBundleMixedOutcomes(t *testing.T) {
+	env := newEnv(t, testenv.Options{Fixtures: []string{healthyFixture, proxyPods(t, "http-a", "http-b")}})
+	pfHits := env.Proxies[0].Rule(testenv.Match{Resource: "pods", Subresource: "portforward"}, testenv.Action{Status: http.StatusForbidden})
+	a := archiveWith(t, env.Kubeconfig, nil, app.BundleTestHooks{Logs: mixedLogs{}},
+		"--skip", "check,controller-metrics,proxy-metrics", "--request-timeout", "1s")
+	if pfHits.N() == 0 {
+		t.Fatal("no port-forward request reached the API server")
+	}
+	const dir = "proxies/kgateway-system/"
+	want := map[string]string{
+		dir + "http-a/logs/kgateway-proxy.log": "ok",
+		dir + "http-b/logs/kgateway-proxy.log": "timeout",
+		dir + "http-a/stats.txt":               "denied",
+	}
+	got := map[string]string{}
+	for _, it := range readItems(t, a).Item.Items {
+		if _, ok := want[it.Path]; ok {
+			got[it.Path] = it.Status
+		}
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("item statuses %v, want %v", got, want)
+	}
+	fileHas(t, a, dir+"http-a/logs/kgateway-proxy.log", "ready")
+}
+
+// requestKeys returns the distinct "METHOD path" of reqs; a watch keeps its
+// marker, and every other query is dropped.
+func requestKeys(reqs []string) map[string]bool {
+	out := map[string]bool{}
+	for _, r := range reqs {
+		k, q, _ := strings.Cut(r, "?")
+		if strings.Contains("&"+q, "&watch=true") || strings.Contains("&"+q, "&watch=1") {
+			k += " watch"
+		}
+		out[k] = true
+	}
+	return out
+}
+
+// nsOf returns the namespace a request path names, or "" for a cluster-wide one.
+func nsOf(key string) string {
+	_, rest, ok := strings.Cut(key, "/namespaces/")
+	if !ok {
+		return ""
+	}
+	ns, _, _ := strings.Cut(rest, "/")
+	if strings.HasSuffix(ns, " watch") || !strings.Contains(rest, "/") {
+		return "" // the Namespace resource itself
+	}
+	return ns
+}
+
+// TestNamespacedRequestSet: with -n team-a and every collector on its real
+// adapter, the requests match design §3.2. Cluster-wide lists and watches are
+// those of install detection and `check -n team-a`, plus discovery and the
+// cluster-scoped GatewayClass list; collectors read only team-a and the
+// install namespace, and resources list each kind in both.
+func TestNamespacedRequestSet(t *testing.T) {
+	extra := filepath.Join(t.TempDir(), "pods.yaml")
+	ctrl := "apiVersion: v1\nkind: Pod\nmetadata:\n  name: kgateway-0\n  namespace: kgateway-system\n" +
+		"  labels: {kgateway: kgateway, app.kubernetes.io/name: kgateway, app.kubernetes.io/component: controller}\n" +
+		"spec: {containers: [{name: kgateway, image: cr.kgateway.dev/kgateway-dev/kgateway:v2.5.0}]}\nstatus: {phase: Running}\n"
+	proxy := strings.NewReplacer("namespace: kgateway-system", "namespace: team-a", "gateway-full-name: http", "gateway-full-name: gw",
+		"gateway-name: http", "gateway-name: gw").Replace(proxyPodYAML("gw-0"))
+	if err := os.WriteFile(extra, []byte(ctrl+"---\n"+proxy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := newEnv(t, testenv.Options{Fixtures: []string{ownershipFixture(t), extra}})
+	hooks := app.BundleTestHooks{Check: fastHooks(metricsScraper{})}
+	p := env.Proxies[0]
+
+	// Install detection and the inventory alone, then check alone, then the full run.
+	all := "resources,workloads,install,version,check,logs,controller-metrics,proxy-metrics,proxy-admin"
+	archiveWith(t, env.Kubeconfig, nil, hooks, "-n", "team-a", "--skip", all)
+	boot := requestKeys(p.Requests())
+	n := len(p.Requests())
+	if r := runCheck(t, env, nil, hooks.Check, "check", "-n", "team-a"); r.stdout == "" {
+		t.Fatalf("check: exit %d, stderr %q", r.code, r.stderr)
+	}
+	chk := requestKeys(p.Requests()[n:])
+	n = len(p.Requests())
+	archiveWith(t, env.Kubeconfig, nil, hooks, "-n", "team-a")
+	full := requestKeys(p.Requests()[n:])
+
+	want := maps.Clone(boot)
+	maps.Copy(want, chk)
+	const sys, api = "/api/v1/namespaces/kgateway-system/", "/api/v1/namespaces/team-a/"
+	for _, k := range []string{
+		"GET /api", "GET /apis", "GET /version", // discovery
+		"GET /apis/gateway.networking.k8s.io/v1/gatewayclasses",             // resources and install: cluster-scoped
+		"GET /apis/apps/v1/namespaces/kgateway-system/deployments/kgateway", // install
+		"GET " + sys + "events", "GET " + sys + "pods", "GET " + sys + "services", "GET /apis/apps/v1/namespaces/kgateway-system/deployments",
+		"GET " + api + "events", "GET " + api + "pods", "GET " + api + "services", "GET /apis/apps/v1/namespaces/team-a/deployments",
+		"GET " + sys + "pods/kgateway-0/log", "GET " + api + "pods/gw-0/log", // logs
+		"GET " + sys + "pods/http:kgateway-0:9092/proxy/metrics", "GET " + api + "pods/http:gw-0:9091/proxy/metrics",
+		"POST " + api + "pods/gw-0/portforward",                      // version and proxy-admin
+		"GET " + sys + "pods/kgateway-0", "GET " + api + "pods/gw-0", // the Sink's re-reads
+	} {
+		want[k] = true
+	}
+	// resources lists each namespaced kind in both namespaces, and nowhere else.
+	kinds := map[string][]string{}
+	for k := range full {
+		if ns := nsOf(k); strings.HasPrefix(k, "GET /apis/gateway.") && ns != "" {
+			kind := strings.Replace(k, "/namespaces/"+ns+"/", "/", 1)
+			kinds[kind] = append(kinds[kind], ns)
+			want[k] = true
+		}
+	}
+	for kind, nss := range kinds {
+		if slices.Sort(nss); !slices.Equal(nss, []string{"kgateway-system", "team-a"}) {
+			t.Errorf("%s listed in %v, want kgateway-system and team-a", kind, nss)
+		}
+	}
+	if !slices.ContainsFunc(slices.Collect(maps.Keys(kinds)), func(k string) bool { return strings.HasSuffix(k, "/httproutes") }) {
+		t.Errorf("resources listed no HTTPRoutes: %v", kinds)
+	}
+
+	got, wantKeys := slices.Sorted(maps.Keys(full)), slices.Sorted(maps.Keys(want))
+	if !slices.Equal(got, wantKeys) {
+		for _, k := range got {
+			if !want[k] {
+				t.Errorf("unexpected request %s", k)
+			}
+		}
+		for _, k := range wantKeys {
+			if !full[k] {
+				t.Errorf("missing request %s", k)
+			}
+		}
+	}
+	for k := range full {
+		if ns := nsOf(k); ns != "" && ns != "team-a" && ns != "kgateway-system" {
+			t.Errorf("request outside -n team-a and the install namespace: %s", k)
+		}
+	}
+}
+
+// TestBundleNoForbiddenRequests: a full run, every collector on its real
+// adapter, sends no secrets or configmaps request.
+func TestBundleNoForbiddenRequests(t *testing.T) {
+	env := newEnv(t, testenv.Options{Fixtures: []string{healthyFixture, bundleCanaries, proxyPods(t, "http-a")}})
+	archiveWith(t, env.Kubeconfig, nil, app.BundleTestHooks{Check: fastHooks(metricsScraper{})})
+	reqs := env.Proxies[0].Requests()
+	// Each real adapter reached the API server, so the scan below covers it.
+	for _, sub := range []string{"/log?", "/portforward", "/proxy/metrics"} {
+		if !slices.ContainsFunc(reqs, func(r string) bool { return strings.Contains(r, sub) }) {
+			t.Errorf("no %s request in a full run", sub)
+		}
+	}
+	for _, r := range reqs {
+		if strings.Contains(r, "/secrets") || strings.Contains(r, "/configmaps") {
+			t.Errorf("request sent: %s", r)
+		}
 	}
 }

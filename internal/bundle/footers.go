@@ -78,10 +78,12 @@ func (l *lineBuf) bytes() []byte {
 }
 
 // errorsFooter is one line for a placeholder manifest, per failed collector,
-// per collector with uncounted items, then per item that is not ok or
-// skipped and not an omission, built within the cap.
+// per collector with uncounted items, per item that is not ok or skipped and
+// not an omission, then per grant and namespace, built within the cap.
 func (w *Writer) errorsFooter(cols []CollectorEntry) []byte {
-	lb := newLineBuf(w.lim.Errors)
+	// Grant lines take at most a quarter of the cap, so cut item lines never push them out.
+	grants := textFooter(w.grantLines(), false, w.lim.Errors/4)
+	lb := newLineBuf(w.lim.Errors - int64(len(grants)))
 	if w.placeholder {
 		lb.add("bundle: " + pb.ManifestFile + ": placeholder: " + ReasonSizeCap)
 	}
@@ -105,7 +107,7 @@ func (w *Writer) errorsFooter(cols []CollectorEntry) []byte {
 			}
 		}
 	}
-	return lb.bytes()
+	return append(lb.bytes(), grants...)
 }
 
 // textFooter joins lines within limit, ending with a truncation line when

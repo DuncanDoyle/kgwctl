@@ -96,9 +96,9 @@ The rules:
 | `kgwctl-reader` ClusterRole | resources, workloads, Events, install, versions, `check` | read access to Gateway API and kgateway objects, Pods, Services, Events, Deployments, Namespaces and CRDs, cluster-wide. No Secrets, ConfigMaps or `pods/log`. |
 | `pods/proxy` `get` (in the reader role) | controller and proxy metrics, `check` | HTTP `GET` to any port of any Pod through the API server. kgwctl sends only `GET` requests for metrics and stats, and refuses redirects. |
 | Optional `kgwctl-proxy-portforward` Role, `pods/portforward` `create` | Envoy admin captures and observed Envoy versions | any TCP forwarding to Pods in the namespace, including Envoy admin operations that change or stop the proxy. RBAC cannot narrow it to a port or path. kgwctl sends only the allowlisted operations. Bind it only to trusted operators. |
-| Optional `kgwctl-bundle-logs` Role, `pods/log` `get` (when the log collector lands) | controller and proxy logs | the logs of every Pod in its namespace, not only kgateway Pods. Bind it in the install and Gateway namespaces only. |
+| Optional `kgwctl-bundle-logs` Role, `pods/log` `get` | controller and proxy logs | the logs of every Pod in its namespace, not only kgateway Pods. Bind it in the install and Gateway namespaces only. |
 
-A `403` marks the affected items `denied`, and the run continues. A reader-only user gets resources, workloads, install, versions without observed Envoy versions, and `check`.
+A `403` marks the affected items `denied`, and the run continues. `errors.txt` ends with one line per missing grant and namespace. A reader-only user gets resources, workloads, install, versions without observed Envoy versions, and `check`.
 
 ## Archive handling
 
