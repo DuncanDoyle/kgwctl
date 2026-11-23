@@ -88,6 +88,8 @@ func newBundleCmd(reg *extension.Registry, build BuildInfo, extra []pb.Collector
 			}
 			t0 := now()
 			root := ib.DefaultName(t0)
+			// After the first Ctrl-C a slow finalization must not trap the user.
+			defer defaultOnCancel(cmd.Context())()
 
 			// The output is created before any client exists, so a bad -o makes no request.
 			var dest ib.Dest
@@ -212,10 +214,11 @@ func summarize(w io.Writer, m ib.Manifest, output string) {
 	}
 	var files, errs, reds int
 	for _, it := range m.Items {
-		if it.Status == pb.ItemOK {
+		switch it.Status {
+		case pb.ItemOK:
 			files++
-		} else {
-			errs++
+		case pb.ItemFailed, pb.ItemDenied, pb.ItemTimeout, pb.ItemDropped:
+			errs++ // skipped and disabled items are not errors
 		}
 		reds += it.Redactions
 	}

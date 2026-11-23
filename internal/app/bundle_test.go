@@ -3,9 +3,11 @@ package app_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -26,11 +28,55 @@ func (c stubCollector) Collect(ctx context.Context, _ pb.Env, s pb.Sink) error {
 	return c.fn(ctx, s)
 }
 
-// writeText is a stub collector that writes one small text item.
+// writeText is a stub collector that writes one small text item at x/<name>.txt.
 func writeText(name string) stubCollector {
 	return stubCollector{name: name, fn: func(_ context.Context, s pb.Sink) error {
-		return s.Text(pb.Path{"x", "a.txt"}, strings.NewReader("hello\n"), pb.Source{})
+		return s.Text(pb.Path{"x", name + ".txt"}, strings.NewReader("hello\n"), pb.Source{})
 	}}
+}
+
+// probe is a collector that makes one API request, so an empty request
+// recorder proves the command returned before running collectors.
+type probe struct{ ran atomic.Bool }
+
+func (*probe) Name() string { return "probe" }
+func (p *probe) Collect(_ context.Context, env pb.Env, _ pb.Sink) error {
+	p.ran.Store(true)
+	_, err := env.Discovery.ServerVersion()
+	return err
+}
+
+// assertNoRun fails unless the probe never ran and the API saw no request.
+func assertNoRun(t *testing.T, env *testenv.Env, p *probe) {
+	t.Helper()
+	if p.ran.Load() {
+		t.Error("a collector ran")
+	}
+	noRequests(t, env)
+}
+
+// manifestDoc is the part of manifest.json the tests read.
+type manifestDoc struct {
+	Item struct {
+		Server     string `json:"server"`
+		Collectors []struct {
+			Name, Status, Reason string
+		} `json:"collectors"`
+		Items []struct{ Path string } `json:"items"`
+	} `json:"item"`
+}
+
+func readManifest(t *testing.T, a bundletest.Archive) manifestDoc {
+	t.Helper()
+	b, ok := a.File("manifest.json")
+	if !ok {
+		t.Fatal("no manifest.json")
+	}
+	var m manifestDoc
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	return m
 }
 
 var bundleNow = time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
@@ -58,23 +104,25 @@ func TestBundleOutputExists(t *testing.T) {
 	if err := os.WriteFile(path, []byte("keep"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	r := runBundle(t, env.Kubeconfig, nil, "-o", path)
+	p := &probe{}
+	r := runBundle(t, env.Kubeconfig, []pb.Collector{p}, "-o", path)
 	if r.code != 2 {
 		t.Fatalf("exit %d, stderr %q; want 2", r.code, r.stderr)
 	}
 	if b, _ := os.ReadFile(path); string(b) != "keep" {
 		t.Errorf("existing file changed to %q", b)
 	}
-	noRequests(t, env)
+	assertNoRun(t, env, p)
 }
 
 func TestBundleUnwritableDir(t *testing.T) {
 	env := newEnv(t, testenv.Options{})
-	r := runBundle(t, env.Kubeconfig, nil, "-o", filepath.Join(t.TempDir(), "missing", "out.tar.gz"))
+	p := &probe{}
+	r := runBundle(t, env.Kubeconfig, []pb.Collector{p}, "-o", filepath.Join(t.TempDir(), "missing", "out.tar.gz"))
 	if r.code != 2 {
 		t.Fatalf("exit %d, stderr %q; want 2", r.code, r.stderr)
 	}
-	noRequests(t, env)
+	assertNoRun(t, env, p)
 }
 
 func TestBundleDefaultName(t *testing.T) {
@@ -106,25 +154,28 @@ func TestBundleDefaultName(t *testing.T) {
 			t.Errorf("member %q names the context", m.Name)
 		}
 	}
-	mf, ok := a.File("manifest.json")
-	if !ok {
-		t.Fatal("no manifest.json")
+	if got := readManifest(t, a).Item.Server; got != "<apiserver>" {
+		t.Errorf("manifest server = %q, want <apiserver>", got)
 	}
-	// The JSON encoder escapes the angle brackets, so match the word.
-	if !bytes.Contains(mf, []byte("apiserver")) || bytes.Contains(mf, []byte(env.Proxies[0].URL())) {
-		t.Errorf("manifest server is not the placeholder alone: %s", mf)
+	if mf, _ := a.File("manifest.json"); bytes.Contains(mf, []byte(env.Proxies[0].URL())) {
+		t.Error("manifest names the API server host")
 	}
 }
 
 func TestBundleStdout(t *testing.T) {
 	env := newEnv(t, testenv.Options{})
-	r := runBundle(t, env.Kubeconfig, []pb.Collector{writeText("alpha")}, "-o", "-")
+	p := &probe{}
+	r := runBundle(t, env.Kubeconfig, []pb.Collector{writeText("alpha"), p}, "-o", "-")
 	if r.code != 0 {
 		t.Fatalf("exit %d, stderr %q; want 0", r.code, r.stderr)
 	}
 	a := bundletest.Extract(t, strings.NewReader(r.stdout))
-	if _, ok := a.File("x/a.txt"); !ok {
-		t.Errorf("archive lacks x/a.txt: %v", a.Members)
+	if _, ok := a.File("x/alpha.txt"); !ok {
+		t.Errorf("archive lacks x/alpha.txt: %v", a.Members)
+	}
+	// The probe shows the recorder sees collector requests.
+	if !p.ran.Load() || len(env.Proxies[0].Requests()) == 0 {
+		t.Error("the probe collector made no recorded request")
 	}
 	if !strings.Contains(r.stderr, "alpha") || !strings.Contains(r.stderr, "files") {
 		t.Errorf("stderr lacks the summary: %q", r.stderr)
@@ -138,49 +189,62 @@ func TestBundleSkip(t *testing.T) {
 		t.Fatalf("exit %d, stderr %q; want 0", r.code, r.stderr)
 	}
 	a := bundletest.Extract(t, strings.NewReader(r.stdout))
-	mf, _ := a.File("manifest.json")
-	if !bytes.Contains(mf, []byte(`"reason": "flag"`)) && !bytes.Contains(mf, []byte(`"reason":"flag"`)) {
-		t.Errorf("manifest does not record skipped: flag: %s", mf)
+	m := readManifest(t, a)
+	status := map[string]string{}
+	for _, c := range m.Item.Collectors {
+		status[c.Name] = c.Status + "/" + c.Reason
+	}
+	if status["alpha"] != "skipped/flag" || status["beta"] != "ok/" {
+		t.Errorf("collector statuses = %v, want alpha skipped/flag and beta ok", status)
+	}
+	if _, ok := a.File("x/alpha.txt"); ok {
+		t.Error("skipped collector alpha wrote a member")
+	}
+	if _, ok := a.File("x/beta.txt"); !ok {
+		t.Error("collector beta did not write its member")
 	}
 }
 
 func TestBundleListCollectors(t *testing.T) {
 	env := newEnv(t, testenv.Options{})
-	r := runBundle(t, env.Kubeconfig, []pb.Collector{writeText("alpha"), writeText("beta")}, "--list-collectors")
+	p := &probe{}
+	r := runBundle(t, env.Kubeconfig, []pb.Collector{writeText("alpha"), p}, "--list-collectors")
 	if r.code != 0 {
 		t.Fatalf("exit %d, stderr %q; want 0", r.code, r.stderr)
 	}
-	for _, n := range []string{"alpha", "beta"} {
+	for _, n := range []string{"alpha", "probe"} {
 		if !strings.Contains(r.stdout, n+"\n") {
 			t.Errorf("stdout %q lacks %q", r.stdout, n)
 		}
 	}
-	noRequests(t, env)
+	assertNoRun(t, env, p)
 }
 
 func TestBundleUnknownSkip(t *testing.T) {
 	env := newEnv(t, testenv.Options{})
 	t.Chdir(t.TempDir())
-	r := runBundle(t, env.Kubeconfig, []pb.Collector{writeText("alpha")}, "--skip", "nope")
+	p := &probe{}
+	r := runBundle(t, env.Kubeconfig, []pb.Collector{p}, "--skip", "nope")
 	if r.code != 2 || !strings.Contains(r.stderr, "nope") {
 		t.Fatalf("exit %d, stderr %q; want 2 naming nope", r.code, r.stderr)
 	}
 	if ents, _ := os.ReadDir("."); len(ents) != 0 {
 		t.Errorf("an output file was created: %v", ents)
 	}
-	noRequests(t, env)
+	assertNoRun(t, env, p)
 }
 
 func TestBundleMinMaxSize(t *testing.T) {
 	env := newEnv(t, testenv.Options{})
 	t.Chdir(t.TempDir())
+	p := &probe{}
 	for _, v := range []string{"16Mi", "lots"} {
-		r := runBundle(t, env.Kubeconfig, nil, "--max-size", v)
+		r := runBundle(t, env.Kubeconfig, []pb.Collector{p}, "--max-size", v)
 		if r.code != 2 {
 			t.Errorf("--max-size %s: exit %d, stderr %q; want 2", v, r.code, r.stderr)
 		}
 	}
-	noRequests(t, env)
+	assertNoRun(t, env, p)
 }
 
 // TestBundleInterrupt cancels the command while a collector blocks: the bundle

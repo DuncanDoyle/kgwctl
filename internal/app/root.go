@@ -162,7 +162,7 @@ func (f *Flags) Context(parent context.Context) (context.Context, context.Cancel
 }
 
 // NewRoot builds the root command with the global flags, get, describe, check,
-// proxy, version, completion and cfg.Commands.
+// proxy, bundle, version, completion and cfg.Commands.
 func NewRoot(cfg Config) *cobra.Command {
 	return newRoot(cfg, checkTestHooks{}, proxyTestHooks{}, bundleTestHooks{})
 }
