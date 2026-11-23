@@ -23,6 +23,7 @@ type recordSink struct {
 	errs     []error
 	errPaths []string
 	json     map[string][]byte
+	text     map[string]string
 	srcs     map[string]pb.Source
 	omits    map[string]pb.OmitReason
 	excluded map[schema.GroupKind]map[pb.ExcludeReason]int
@@ -58,7 +59,23 @@ func (s *recordSink) JSON(_ context.Context, p pb.Path, r io.Reader, src pb.Sour
 	return nil
 }
 func (*recordSink) Prometheus(context.Context, pb.Path, io.Reader, pb.Source) error { return nil }
-func (*recordSink) Text(context.Context, pb.Path, io.Reader, pb.Source) error       { return nil }
+func (s *recordSink) Text(_ context.Context, p pb.Path, r io.Reader, src pb.Source) error {
+	if err := pb.ValidatePath(p); err != nil {
+		return err
+	}
+	b, err := io.ReadAll(r)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.text == nil {
+		s.text = map[string]string{}
+	}
+	s.text[p.String()] = string(b)
+	s.srcs[p.String()] = src
+	return nil
+}
 func (s *recordSink) Omit(p pb.Path, _ pb.Source, r pb.OmitReason) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

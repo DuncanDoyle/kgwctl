@@ -376,7 +376,7 @@ type lines struct {
 	fs [][]redact.Finding // per line
 }
 
-func (w *lines) WriteLine(b []byte, fs []redact.Finding) error {
+func (w *lines) WriteLine(b []byte, fs []redact.Finding, _ *redact.Finding) error {
 	w.l = append(w.l, string(b))
 	w.fs = append(w.fs, fs)
 	return nil

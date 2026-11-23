@@ -10,9 +10,10 @@ import (
 )
 
 // LineWriter receives redacted lines, without their line terminator, with the
-// findings made while redacting each one.
+// findings made while redacting each one. tail is the pem-tail finding the
+// text gets if it ends after this line, nil when no private-key block is open.
 type LineWriter interface {
-	WriteLine(line []byte, fs []Finding) error
+	WriteLine(line []byte, fs []Finding, tail *Finding) error
 }
 
 // TextResult reports what Text did. The writer, not Text, appends the
@@ -49,7 +50,8 @@ var errLineTooLong = errors.New("line over the cap")
 // a read error is dropped; a clean EOF keeps it. An open PEM block is redacted
 // to the end. max caps the bytes written, one newline per line included; the
 // text is cut before the first line that would pass it. max <= 0 means no cap.
-// Findings cover written lines only. The error is the reader's or the writer's.
+// Findings cover written lines only; pem-tail is reported only when the
+// block's opening line was written. The error is the reader's or the writer's.
 func Text(r io.Reader, w LineWriter, max int64, o Options) (TextResult, error) {
 	br := bufio.NewReaderSize(r, 64<<10)
 	all := &recorder{limit: MaxTextFindings}
@@ -57,6 +59,8 @@ func Text(r io.Reader, w LineWriter, max int64, o Options) (TextResult, error) {
 	var res TextResult
 	var written int64
 	var err error
+	// tail is the open block as of the last written line.
+	var tail *Finding
 	for n := 1; ; n++ {
 		line, rerr := readLine(br, max)
 		if rerr != nil && rerr != io.EOF {
@@ -79,10 +83,12 @@ func Text(r io.Reader, w LineWriter, max int64, o Options) (TextResult, error) {
 			res.Reason = ReasonSizeCap
 			break
 		}
-		if werr := w.WriteLine([]byte(out), t.rec.findings()); werr != nil {
+		next := t.tail()
+		if werr := w.WriteLine([]byte(out), t.rec.findings(), next); werr != nil {
 			err = werr
 			break
 		}
+		tail = next
 		for _, f := range t.rec.findings() {
 			all.add(f.Rule, f.Location, f.Count)
 		}
@@ -91,8 +97,8 @@ func Text(r io.Reader, w LineWriter, max int64, o Options) (TextResult, error) {
 			break
 		}
 	}
-	if t.pemStart > 0 {
-		all.add(RulePEMTail, lineLoc(t.pemStart), 1)
+	if tail != nil {
+		all.add(tail.Rule, tail.Location, tail.Count)
 	}
 	res.Findings, res.FindingsOmitted = all.findings(), all.omitted
 	return res, err
@@ -127,6 +133,14 @@ type textState struct {
 	opts Options
 	// pemStart is the line of the open block's BEGIN marker, 0 when none.
 	pemStart int
+}
+
+// tail returns the pem-tail finding of the open block, nil when none.
+func (t *textState) tail() *Finding {
+	if t.pemStart == 0 {
+		return nil
+	}
+	return &Finding{Rule: RulePEMTail, Location: lineLoc(t.pemStart), Count: 1}
 }
 
 // timestampRe is the kubelet's prefix on logs read with timestamps=true.

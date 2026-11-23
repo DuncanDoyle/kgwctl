@@ -318,3 +318,44 @@ func TestClusterStateOwnership(t *testing.T) {
 	assertMembers(t, a, append(ours, foreign...), nil)
 	fileHas(t, a, "workloads/other-only/deployments.yaml", "name: other-app")
 }
+
+// TestBundleSkipLogs: --skip logs writes no logs/ member and records the
+// collector skipped with reason flag, with no errors.txt line and no
+// pods/log request; without it, the same cluster gets log requests.
+func TestBundleSkipLogs(t *testing.T) {
+	env := newEnv(t, testenv.Options{Fixtures: []string{healthyFixture, proxyPods(t, "http-a")}})
+	isLog := func(req string) bool { p, _, _ := strings.Cut(req, "?"); return strings.HasSuffix(p, "/log") }
+
+	bundleArchive(t, env)
+	if !slices.ContainsFunc(env.Proxies[0].Requests(), isLog) {
+		t.Fatal("no pods/log request without --skip logs; the check below proves nothing")
+	}
+	before := len(env.Proxies[0].Requests())
+
+	a := bundleArchive(t, env, "--skip", "logs")
+	for _, m := range membersUnder(a, "") {
+		if strings.Contains(m, "/logs/") {
+			t.Errorf("member %s", m)
+		}
+	}
+	var found bool
+	for _, c := range readManifest(t, a).Item.Collectors {
+		if c.Name == "logs" {
+			found = true
+			if c.Status != "skipped" || c.Reason != "flag" {
+				t.Errorf("logs collector %s (%s), want skipped (flag)", c.Status, c.Reason)
+			}
+		}
+	}
+	if !found {
+		t.Error("no logs collector in the manifest")
+	}
+	if b, _ := a.File("errors.txt"); strings.Contains(string(b), "log") {
+		t.Errorf("errors.txt:\n%s", b)
+	}
+	for _, req := range env.Proxies[0].Requests()[before:] {
+		if isLog(req) {
+			t.Errorf("request with --skip logs: %s", req)
+		}
+	}
+}

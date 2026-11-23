@@ -63,10 +63,11 @@ type call struct {
 	text      bool
 	e         entry
 	lines     int
-	found     findingSet // of the staged lines, or the structured body
-	late      bool       // in flight at Seal; the result is discarded
-	kept      *record    // a text item kept at Seal
-	dropErr   error      // staging failed mid-stream
+	found     findingSet      // of the staged lines, or the structured body
+	tail      *redact.Finding // pem-tail as of the last staged line; Seal adds it
+	late      bool            // in flight at Seal; the result is discarded
+	kept      *record         // a text item kept at Seal
+	dropErr   error           // staging failed mid-stream
 	// done marks a text item fully read and awaiting its re-read, with its reason.
 	done       bool
 	doneReason string

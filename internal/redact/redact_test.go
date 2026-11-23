@@ -277,6 +277,21 @@ func TestTextCutAndCancel(t *testing.T) {
 			t.Errorf("findings %+v", res.Findings)
 		}
 	})
+	t.Run("PEM opening line cut by the cap", func(t *testing.T) {
+		var w lines
+		// The opening line fits the cap alone, but not after the first line.
+		first := strings.Repeat("x", 20)
+		res, err := redact.Text(strings.NewReader(first+"\n-----BEGIN EC PRIVATE KEY-----\nAAAA\n"), &w, 40, redact.Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(w.l, []string{first}) || !res.Truncated {
+			t.Errorf("lines %q, result %+v", w.l, res)
+		}
+		if hasFinding(res.Findings, redact.RulePEMTail, "line:2") {
+			t.Errorf("pem-tail reported for a block whose opening line was cut: %+v", res.Findings)
+		}
+	})
 	t.Run("cap at a line boundary", func(t *testing.T) {
 		var w lines
 		res, err := redact.Text(strings.NewReader("aaaa\nbbbb\ncccc\n"), &w, 12, redact.Options{})

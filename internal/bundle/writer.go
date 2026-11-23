@@ -144,7 +144,8 @@ func (w *Writer) Log(line string) {
 
 // Seal freezes staged state at the collection deadline. Every call in flight
 // is counted as late for its collector. A text item with staged lines keeps
-// them, with a truncation line unless it was fully read; a kept Pod item gets
+// them, with a truncation line and its open PEM block's pem-tail finding
+// unless it was fully read; a kept Pod item gets
 // reread-failed, as its pending re-read is discarded. Any other late result
 // is not written. Exclude counts are frozen. Later Sink calls return ErrSealed.
 func (w *Writer) Seal() {
@@ -160,6 +161,10 @@ func (w *Writer) Seal() {
 		keep, reason := c.text && c.done, c.doneReason
 		if !keep && c.text && c.lines > 0 && c.dropErr == nil && w.sp.add(&c.e, []byte(truncation(ReasonSealed)+"\n"), true) == nil {
 			keep, reason = true, "truncated: "+ReasonSealed
+			// A block still open in the kept lines is redacted to the end.
+			if c.tail != nil {
+				c.found.add([]redact.Finding{*c.tail})
+			}
 		}
 		if keep {
 			if c.src.Pod != "" {

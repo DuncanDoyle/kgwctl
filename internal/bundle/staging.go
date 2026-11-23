@@ -184,7 +184,7 @@ type lineSink struct {
 	c *call
 }
 
-func (l lineSink) WriteLine(b []byte, fs []redact.Finding) error {
+func (l lineSink) WriteLine(b []byte, fs []redact.Finding, tail *redact.Finding) error {
 	w, c := l.w, l.c
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -199,6 +199,7 @@ func (l lineSink) WriteLine(b []byte, fs []redact.Finding) error {
 	}
 	c.lines++
 	c.found.add(fs)
+	c.tail = tail
 	return nil
 }
 

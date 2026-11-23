@@ -37,6 +37,8 @@ type bundleTestHooks struct {
 	Check checkTestHooks
 	// Dialer replaces the port-forwarder to proxy admin ports.
 	Dialer proxydump.Dialer
+	// Logs replaces the Pod log source.
+	Logs collect.LogSource
 }
 
 // collectorDeps are what built-in collectors read beyond Env; zero values
@@ -46,12 +48,13 @@ type collectorDeps struct {
 	rc     *rest.Config // guarded
 	res    *load.Result
 	dialer proxydump.Dialer
+	logs   collect.LogSource
 }
 
 // builtinCollectors are the collectors every build has, in registration order.
 func builtinCollectors(reg *extension.Registry, build BuildInfo, d collectorDeps, hooks bundleTestHooks) []pb.Collector {
 	return []pb.Collector{collect.Resources(reg), collect.Workloads(), collect.Install(),
-		collect.Version(build, d.res, d.dialer), newCheckCollector(d.f, d.rc, reg, build, hooks.Check)}
+		collect.Version(build, d.res, d.dialer), newCheckCollector(d.f, d.rc, reg, build, hooks.Check), collect.Logs(d.logs)}
 }
 
 // newBundleCmd builds the bundle command (phase 4 design §3). extra are the
@@ -210,7 +213,11 @@ func newBundleCmd(reg *extension.Registry, build BuildInfo, extra []pb.Collector
 			if dialer == nil {
 				dialer = proxydump.NewPortForwarder(grc)
 			}
-			cs = append(builtinCollectors(reg, build, collectorDeps{f: f, rc: grc, res: res, dialer: dialer}, hooks), extra...)
+			logs := hooks.Logs
+			if logs == nil {
+				logs = collect.KubeLogSource(kube)
+			}
+			cs = append(builtinCollectors(reg, build, collectorDeps{f: f, rc: grc, res: res, dialer: dialer, logs: logs}, hooks), extra...)
 			m, err = ib.Run(cmd.Context(), cs, env, w, m, ib.RunOptions{Skip: skipSet, Deadline: time.Now().Add(timeout)})
 			if err != nil {
 				return &ExitError{Code: 2, Err: fmt.Errorf("write bundle: %w", err)}
