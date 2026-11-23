@@ -18,6 +18,7 @@ import (
 
 	"github.com/DuncanDoyle/kgwctl/internal/quiet"
 	"github.com/DuncanDoyle/kgwctl/internal/view"
+	pb "github.com/DuncanDoyle/kgwctl/pkg/bundle"
 )
 
 // BuildInfo identifies the build.
@@ -31,7 +32,9 @@ type Config struct {
 	Registry *extension.Registry
 	// Commands are added as top-level commands.
 	Commands []*cobra.Command
-	Build    BuildInfo
+	// Collectors are downstream bundle collectors, run after the built-in ones.
+	Collectors []pb.Collector
+	Build      BuildInfo
 	// Out and Err default to os.Stdout and os.Stderr.
 	Out, Err io.Writer
 	// Now is the clock AGE is measured against; nil means time.Now.
@@ -160,9 +163,11 @@ func (f *Flags) Context(parent context.Context) (context.Context, context.Cancel
 
 // NewRoot builds the root command with the global flags, get, describe, check,
 // proxy, version, completion and cfg.Commands.
-func NewRoot(cfg Config) *cobra.Command { return newRoot(cfg, checkTestHooks{}, proxyTestHooks{}) }
+func NewRoot(cfg Config) *cobra.Command {
+	return newRoot(cfg, checkTestHooks{}, proxyTestHooks{}, bundleTestHooks{})
+}
 
-func newRoot(cfg Config, hooks checkTestHooks, proxyHooks proxyTestHooks) *cobra.Command {
+func newRoot(cfg Config, hooks checkTestHooks, proxyHooks proxyTestHooks, bundleHooks bundleTestHooks) *cobra.Command {
 	if cfg.Name == "" {
 		cfg.Name = "kgwctl"
 	}
@@ -191,7 +196,8 @@ func newRoot(cfg Config, hooks checkTestHooks, proxyHooks proxyTestHooks) *cobra
 	root.SetErr(cfg.Err)
 	(&Flags{}).Bind(root.PersistentFlags())
 	root.AddCommand(newGetCmd(cfg.Registry, cfg.Now), newDescribeCmd(cfg.Registry, cfg.Now), newVersionCmd(cfg.Registry, cfg.Build),
-		newCheckCmd(cfg.Registry, cfg.Build, cfg.Now, hooks), newProxyCmd(cfg.Now, proxyHooks))
+		newCheckCmd(cfg.Registry, cfg.Build, cfg.Now, hooks), newProxyCmd(cfg.Now, proxyHooks),
+		newBundleCmd(cfg.Registry, cfg.Build, cfg.Collectors, bundleHooks))
 	root.AddCommand(cfg.Commands...)
 	return root
 }
