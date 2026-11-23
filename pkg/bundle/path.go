@@ -1,6 +1,8 @@
 package bundle
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 
@@ -190,7 +192,9 @@ func validateKind(s string) []string {
 }
 
 // File returns name plus ext as a path component. The name follows the object
-// rule and the result stays within 255 bytes. A failure wraps ErrInvalidPath.
+// rule. When name plus ext passes 255 bytes, the name is cut and gets "-" and
+// the first 12 hex digits of its SHA-256, so distinct names stay distinct.
+// A failure wraps ErrInvalidPath.
 func File(name string, ext Ext) (string, error) {
 	if !ext.valid() {
 		return "", fmt.Errorf("%w: unknown extension %q", ErrInvalidPath, string(ext))
@@ -199,11 +203,18 @@ func File(name string, ext Ext) (string, error) {
 		return "", err
 	}
 	f := name + string(ext)
-	if len(f) > maxComponent {
-		return "", fmt.Errorf("%w: file name over %d bytes", ErrInvalidPath, maxComponent)
+	if len(f) <= maxComponent {
+		return f, nil
 	}
-	return f, nil
+	sum := sha256.Sum256([]byte(name))
+	suffix := "-" + hex.EncodeToString(sum[:])[:hashDigits]
+	// The cut keeps the prefix a subdomain: it ends in a letter or digit.
+	prefix := strings.TrimRight(name[:maxComponent-len(ext)-len(suffix)], ".-")
+	return prefix + suffix + string(ext), nil
 }
+
+// hashDigits is the length of the hash suffix File gives a cut name.
+const hashDigits = 12
 
 // ValidatePath checks a path against the archive rules: 1 to 8 components,
 // each 1 to 255 bytes and either a constant of this package or a DNS-1123

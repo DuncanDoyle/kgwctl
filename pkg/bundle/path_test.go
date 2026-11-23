@@ -43,6 +43,47 @@ func TestPathConstructors(t *testing.T) {
 	}
 }
 
+// TestFileLongName: a name that does not fit with its extension gets a
+// bounded, valid and distinct file name; one that fits is unchanged.
+func TestFileLongName(t *testing.T) {
+	long := strings.Repeat("a", 61) + "." + strings.Repeat("b", 63) + "." + strings.Repeat("c", 63) + "." + strings.Repeat("d", 63)
+	if len(long) != 253 {
+		t.Fatalf("fixture name is %d bytes", len(long))
+	}
+	other := long[:252] + "e"
+	seen := map[string]string{}
+	for _, name := range []string{long, other} {
+		for _, ext := range []Ext{YAML, PreviousLog} {
+			f, err := File(name, ext)
+			if err != nil {
+				t.Fatalf("File(%d bytes, %s): %v", len(name), ext, err)
+			}
+			if len(f) > 255 || !strings.HasSuffix(f, string(ext)) || !strings.HasPrefix(f, name[:200]) {
+				t.Errorf("File(%d bytes, %s) = %q (%d bytes)", len(name), ext, f, len(f))
+			}
+			if err := ValidatePath(Path{ResourcesDir, "x", f}); err != nil {
+				t.Errorf("ValidatePath(%q): %v", f, err)
+			}
+			if _, dup := seen[f]; dup {
+				t.Errorf("two names share file name %q", f)
+			}
+			seen[f] = name
+			if again, _ := File(name, ext); again != f {
+				t.Errorf("File is not stable: %q then %q", f, again)
+			}
+		}
+	}
+	// A '.' at the cut point is dropped, so the result stays a subdomain.
+	dotAtCut := strings.Repeat("a", 236) + "." + strings.Repeat("b", 16)
+	if f, err := File(dotAtCut, YAML); err != nil || ValidatePath(Path{"x", f}) != nil {
+		t.Errorf("File(dot at cut) = %q, %v", f, err)
+	}
+	fits := strings.Repeat("a", 250)
+	if f, err := File(fits, YAML); err != nil || f != fits+".yaml" {
+		t.Errorf("File(250 bytes) = %q, %v; want unchanged", f, err)
+	}
+}
+
 func TestValidatePath(t *testing.T) {
 	ok := Path{ResourcesDir, Core, "Service", Cluster, "x.yaml"}
 	if err := ValidatePath(ok); err != nil {
