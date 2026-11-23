@@ -28,7 +28,7 @@ type Clients struct {
 // NewClients builds the four clients from a copy of cfg, with every request
 // bound to ctx through BindContext. It makes no requests.
 func NewClients(ctx context.Context, cfg *rest.Config) (Clients, error) {
-	cfg = withThrottleDefaults(rest.CopyConfig(cfg))
+	cfg = ThrottleDefaults(rest.CopyConfig(cfg))
 	cfg.Wrap(BindContext(ctx))
 	hc, err := rest.HTTPClientFor(cfg)
 	if err != nil {
@@ -53,9 +53,9 @@ func NewClients(ctx context.Context, cfg *rest.Config) (Clients, error) {
 	return Clients{Discovery: disc, Dynamic: dyn, Kube: kube, Metadata: meta}, nil
 }
 
-// withThrottleDefaults fills an unset QPS and Burst with kubectl's 50 and 300;
-// client-go's 5/10 throttles a one-shot load past the deadline.
-func withThrottleDefaults(cfg *rest.Config) *rest.Config {
+// ThrottleDefaults fills an unset QPS and Burst of cfg with kubectl's 50 and
+// 300 and returns cfg; client-go's 5/10 throttles a one-shot load past the deadline.
+func ThrottleDefaults(cfg *rest.Config) *rest.Config {
 	if cfg.QPS == 0 {
 		cfg.QPS = 50
 	}

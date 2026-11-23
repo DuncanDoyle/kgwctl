@@ -19,6 +19,7 @@ import (
 	"k8s.io/client-go/rest"
 
 	ib "github.com/DuncanDoyle/kgwctl/internal/bundle"
+	"github.com/DuncanDoyle/kgwctl/internal/bundle/collect"
 	"github.com/DuncanDoyle/kgwctl/internal/load"
 	"github.com/DuncanDoyle/kgwctl/internal/redact"
 	pb "github.com/DuncanDoyle/kgwctl/pkg/bundle"
@@ -36,7 +37,9 @@ type bundleTestHooks struct {
 }
 
 // builtinCollectors are the collectors every build has, in registration order.
-func builtinCollectors(*extension.Registry, bundleTestHooks) []pb.Collector { return nil }
+func builtinCollectors(reg *extension.Registry, _ bundleTestHooks) []pb.Collector {
+	return []pb.Collector{collect.Resources(reg), collect.Workloads(), collect.Install()}
+}
 
 // newBundleCmd builds the bundle command (phase 4 design §3). extra are the
 // downstream collectors, registered after the built-in ones.
@@ -123,7 +126,8 @@ func newBundleCmd(reg *extension.Registry, build BuildInfo, extra []pb.Collector
 				return usageErr(err)
 			}
 			// Every bundle-owned client, install detection included, goes through the guard (§6.1).
-			grc := ib.Guard(rc)
+			// Collectors list per kind and namespace, so they get install detection's throttle.
+			grc := load.ThrottleDefaults(ib.Guard(rc))
 			kube, err := kubernetes.NewForConfig(grc)
 			if err != nil {
 				return usageErr(err)
