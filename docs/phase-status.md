@@ -33,7 +33,8 @@ none (4.1 closed 2026-11-22: docs/phases/phase-4/phase-4.1-complete.md)
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
 - Read 2026-11-22 at kgateway-tooling `56c8868` (main after the owner-approved history rewrite; E7 text merged, P-008, P-009, E13, E14). Phase 4 waits on no edge. The program session asked the bundle to capture per-replica convergence inputs (§5 of the design).
 - Consumed: E1 and E11 — xdsview `v0.4.3` (kgwctl#1, kgwctl#10).
-- Waiting on: E7 (Phase 6). E6 (xdsview#32) before Phase 7. Snellius `install.Scope.Excluded` (DuncanDoyle/snellius#66, draft PR #67, unreleased): Task 4.2.2 keeps a local loop over `Scope.Contains` until a release ships it.
+- 2026-11-23 at kgateway-tooling `4deab4d`: P-010 and E15, the xdsview Phase 9 contract. kgwctl migrates `proxy routes` when that tag ships; Phase 6 also waits on E15. Planned in `docs/roadmap.md`; no Phase 4 change.
+- Waiting on: E7 and E15 (Phase 6). E15 (`proxy routes` migration). E6 (xdsview#32) before Phase 7. Snellius `install.Scope.Excluded` (DuncanDoyle/snellius#66, draft PR #67, unreleased): Task 4.2.2 keeps a local loop over `Scope.Contains` until a release ships it.
 - Consumers: none
 
 ## Carry-over (deferred to later phases)
