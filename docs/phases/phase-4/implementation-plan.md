@@ -283,7 +283,7 @@ Each task builds and passes on its own; no task consumes a type a later task int
 ## Sub-phase 4.3 — Logs, metrics, Envoy
 
 ### Task 4.3.1: Logs
-- [ ] (review 4.1 P4-2, settle before this task) `Sink.Text` must attach the post-capture identity (`changed`, `gone`, `reread-failed`) to the item it wrote, and the Sink must express intentional outcomes (`skipped: not running`, `disabled`) without a failure. Decide the contract change (e.g. a returned item handle or an outcome method) and record it in decisions.md first.
+- [x] (done in 4.3.0b, D-027, `dea0b1a`..`5d089b0`) (review 4.1 P4-2, settle before this task) `Sink.Text` must attach the post-capture identity (`changed`, `gone`, `reread-failed`) to the item it wrote, and the Sink must express intentional outcomes (`skipped: not running`, `disabled`) without a failure. Decide the contract change (e.g. a returned item handle or an outcome method) and record it in decisions.md first.
 - [ ] (review 4.1 P3-3) `pem-tail` finding only when its opening line was kept; a block open at the seal still reports it.
 **Files:** create `internal/bundle/collect/logs.go`, tests; modify `internal/app/bundle.go` (hooks gain `Logs collect.LogSource`).
 **Interfaces (produces):**
