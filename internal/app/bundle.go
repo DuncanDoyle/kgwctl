@@ -21,6 +21,7 @@ import (
 	ib "github.com/DuncanDoyle/kgwctl/internal/bundle"
 	"github.com/DuncanDoyle/kgwctl/internal/bundle/collect"
 	"github.com/DuncanDoyle/kgwctl/internal/load"
+	"github.com/DuncanDoyle/kgwctl/internal/proxydump"
 	"github.com/DuncanDoyle/kgwctl/internal/redact"
 	pb "github.com/DuncanDoyle/kgwctl/pkg/bundle"
 )
@@ -34,11 +35,23 @@ type bundleTestHooks struct {
 	Now func() time.Time
 	// Check replaces check's seams for the check collector.
 	Check checkTestHooks
+	// Dialer replaces the port-forwarder to proxy admin ports.
+	Dialer proxydump.Dialer
+}
+
+// collectorDeps are what built-in collectors read beyond Env; zero values
+// are enough for their names.
+type collectorDeps struct {
+	f      *Flags
+	rc     *rest.Config // guarded
+	res    *load.Result
+	dialer proxydump.Dialer
 }
 
 // builtinCollectors are the collectors every build has, in registration order.
-func builtinCollectors(reg *extension.Registry, _ bundleTestHooks) []pb.Collector {
-	return []pb.Collector{collect.Resources(reg), collect.Workloads(), collect.Install()}
+func builtinCollectors(reg *extension.Registry, build BuildInfo, d collectorDeps, hooks bundleTestHooks) []pb.Collector {
+	return []pb.Collector{collect.Resources(reg), collect.Workloads(), collect.Install(),
+		collect.Version(build, d.res, d.dialer), newCheckCollector(d.f, d.rc, reg, build, hooks.Check)}
 }
 
 // newBundleCmd builds the bundle command (phase 4 design §3). extra are the
@@ -62,7 +75,7 @@ func newBundleCmd(reg *extension.Registry, build BuildInfo, extra []pb.Collector
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			cs := append(builtinCollectors(reg, hooks), extra...)
+			cs := append(builtinCollectors(reg, build, collectorDeps{}, hooks), extra...)
 			names, err := collectorNames(cs)
 			if err != nil {
 				return usageErr(err)
@@ -193,6 +206,11 @@ func newBundleCmd(reg *extension.Registry, build BuildInfo, extra []pb.Collector
 				Flags: ib.RecordFlags(cmd.Flags()), Window: env.Window, Start: t0,
 				Scope: scope, Replicas: replicas,
 			}
+			dialer := hooks.Dialer
+			if dialer == nil {
+				dialer = proxydump.NewPortForwarder(grc)
+			}
+			cs = append(builtinCollectors(reg, build, collectorDeps{f: f, rc: grc, res: res, dialer: dialer}, hooks), extra...)
 			m, err = ib.Run(cmd.Context(), cs, env, w, m, ib.RunOptions{Skip: skipSet, Deadline: time.Now().Add(timeout)})
 			if err != nil {
 				return &ExitError{Code: 2, Err: fmt.Errorf("write bundle: %w", err)}
@@ -232,7 +250,8 @@ func loadBundle(cmd *cobra.Command, f *Flags, reg *extension.Registry, grc *rest
 	if err != nil {
 		return nil, err
 	}
-	return load.Load(ctx, c, reg, load.Needs{Logger: engineLogger(cmd.ErrOrStderr())})
+	// Proxy Pods give the version collector each Gateway's proxy image tags.
+	return load.Load(ctx, c, reg, load.Needs{ProxyPods: true, Logger: engineLogger(cmd.ErrOrStderr())})
 }
 
 // loadError classifies a failed install detection: interrupted, no reachable

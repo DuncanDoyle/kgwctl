@@ -60,6 +60,8 @@ type Action struct {
 	Until      <-chan struct{}
 	Status     int
 	RetryAfter int // seconds, sent with Status
+	// Body, if set, is sent verbatim with Status in place of a metav1.Status.
+	Body []byte
 	// HoldWatchThenStatus keeps a plain watch open until the matching LIST has
 	// completed plus 200ms, then answers with this status.
 	HoldWatchThenStatus int
@@ -264,6 +266,12 @@ func (p *Proxy) apply(w http.ResponseWriter, r *http.Request, req request, a Act
 			return false
 		}
 		writeStatus(w, req, a.HoldWatchThenStatus, 0)
+		return false
+	}
+	if a.Status != 0 && a.Body != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(a.Status)
+		_, _ = w.Write(a.Body)
 		return false
 	}
 	if a.Status != 0 {

@@ -78,59 +78,118 @@ func newCheckCmd(reg *extension.Registry, build BuildInfo, now func() time.Time,
 			if live && timeout <= 0 {
 				return fmt.Errorf("invalid --%s %v: must be positive", flagTimeout, timeout)
 			}
-			if live {
-				// After the first Ctrl-C a slow report must not trap the user.
-				defer defaultOnCancel(cmd.Context())()
-			}
 			f, err := FlagsFrom(cmd)
 			if err != nil {
 				return err
 			}
-			// Only an explicit -n filters; no -n shows every namespace (design §3.1).
-			ns := f.Namespace
-			if f.AllNamespaces {
-				ns = ""
-			}
-			sel := view.CheckSelect{Namespace: ns, Install: f.Install, AllControllers: f.AllControllers}
-			if err := sel.Validate(); err != nil {
+			// A malformed --install fails before the kubeconfig is read.
+			if err := (view.CheckSelect{Install: f.Install}).Validate(); err != nil {
 				return err
 			}
 			rc, _, err := f.RESTConfig()
 			if err != nil {
 				return err
 			}
-			if sel.Context, err = currentContext(f); err != nil {
-				return err
+			if !live {
+				c, err := checkOnceFrom(cmd.Context(), f, start, rc, reg, build, hooks, cmd.ErrOrStderr())
+				var v *checkVerdict
+				if err != nil && !errors.As(err, &v) {
+					return err
+				}
+				if err := writeCheck(cmd, output, c, build, now()); err != nil {
+					return err
+				}
+				if v != nil {
+					return v.err
+				}
+				return nil
 			}
-			sel.Server = rc.Host
-			o := observe.Options{Scraper: hooks.Scraper, Clock: hooks.Clock, Quiet: hooks.Quiet, FirstPublishWait: hooks.FirstPublishWait,
-				MetricsInterval: hooks.MetricsInterval, Logger: engineLogger(cmd.ErrOrStderr()), Published: hooks.Published}
-			// Since times from this moment on only say when kgwctl first looked (design §3.3).
-			sel.ObservedFrom = time.Now()
-			if hooks.Clock != nil {
-				sel.ObservedFrom = hooks.Clock.Now()
-			}
-			a, err := acquire(cmd.Context(), f, start, rc, reg, o, hooks.Waiting)
+			// After the first Ctrl-C a slow report must not trap the user.
+			defer defaultOnCancel(cmd.Context())()
+			sel, err := checkSelect(f, rc, hooks)
 			if err != nil {
 				return err
 			}
-			if live {
-				return runLive(cmd, a, liveConfig{reg: reg, sel: sel, f: f, build: build, output: output, timeout: timeout, hooks: hooks})
-			}
-			a.stop()
-			p := a.p
-			c := view.BuildCheck(p.Model, reg, sel)
-			c.Incomplete = incomplete(a.inputs, len(p.Model.Installs) > 0, sel.Server)
-			if err := writeCheck(cmd, output, c, build, now()); err != nil {
+			a, err := acquire(cmd.Context(), f, start, rc, reg, observeOptions(hooks, cmd.ErrOrStderr()), hooks.Waiting)
+			if err != nil {
 				return err
 			}
-			return checkExit(cmd, p, c, f, build.Name)
+			return runLive(cmd, a, liveConfig{reg: reg, sel: sel, f: f, build: build, output: output, timeout: timeout, hooks: hooks})
 		},
 	}
 	cmd.Flags().StringVarP(&output, "output", "o", print.FormatText, "Output format: text, json or yaml")
 	cmd.Flags().BoolVar(&live, flagLive, false, "Keep observing until --timeout or Ctrl-C, then report")
 	cmd.Flags().DurationVar(&timeout, flagTimeout, defaultTimeout, "How long --live observes")
 	return cmd
+}
+
+// checkSelect is the selection the flags make, observed from now.
+func checkSelect(f *Flags, rc *rest.Config, hooks checkTestHooks) (view.CheckSelect, error) {
+	// Only an explicit -n filters; no -n shows every namespace (design §3.1).
+	ns := f.Namespace
+	if f.AllNamespaces {
+		ns = ""
+	}
+	sel := view.CheckSelect{Namespace: ns, Install: f.Install, AllControllers: f.AllControllers, Server: rc.Host}
+	if err := sel.Validate(); err != nil {
+		return view.CheckSelect{}, err
+	}
+	kctx, err := currentContext(f)
+	if err != nil {
+		return view.CheckSelect{}, err
+	}
+	sel.Context = kctx
+	// Since times from this moment on only say when kgwctl first looked (design §3.3).
+	sel.ObservedFrom = time.Now()
+	if hooks.Clock != nil {
+		sel.ObservedFrom = hooks.Clock.Now()
+	}
+	return sel, nil
+}
+
+// observeOptions are the session options of a check run; engine logs go to logs.
+func observeOptions(hooks checkTestHooks, logs io.Writer) observe.Options {
+	return observe.Options{Scraper: hooks.Scraper, Clock: hooks.Clock, Quiet: hooks.Quiet, FirstPublishWait: hooks.FirstPublishWait,
+		MetricsInterval: hooks.MetricsInterval, Logger: engineLogger(logs), Published: hooks.Published}
+}
+
+// checkVerdict is the exit decided on a built report, returned so the report is written first.
+type checkVerdict struct{ err error }
+
+func (v *checkVerdict) Error() string { return v.err.Error() }
+func (v *checkVerdict) Unwrap() error { return v.err }
+
+// checkOnce runs one check over the cluster rc reaches, as `check` without
+// --live does, bounded by --request-timeout. With a report it returns nil or
+// a *checkVerdict holding the exit (design §3.4); without one, the zero Check
+// and the error. Engine logs are dropped.
+func checkOnce(ctx context.Context, f *Flags, rc *rest.Config, reg *extension.Registry, build BuildInfo, hooks checkTestHooks) (view.Check, error) {
+	return checkOnceFrom(ctx, f, time.Now(), rc, reg, build, hooks, io.Discard)
+}
+
+// checkOnceFrom is checkOnce with the deadline counted from start and engine logs to logs.
+func checkOnceFrom(ctx context.Context, f *Flags, start time.Time, rc *rest.Config, reg *extension.Registry, build BuildInfo,
+	hooks checkTestHooks, logs io.Writer,
+) (view.Check, error) {
+	sel, err := checkSelect(f, rc, hooks)
+	if err != nil {
+		return view.Check{}, err
+	}
+	a, err := acquire(ctx, f, start, rc, reg, observeOptions(hooks, logs), hooks.Waiting)
+	if err != nil {
+		return view.Check{}, err
+	}
+	a.stop()
+	p := a.p
+	c := view.BuildCheck(p.Model, reg, sel)
+	c.Incomplete = incomplete(a.inputs, len(p.Model.Installs) > 0, sel.Server)
+	if ctx.Err() != nil {
+		return c, &checkVerdict{interrupted()}
+	}
+	if err := reportExit(p, c, fmt.Sprintf("within --%s %v", flagRequestTimeout, f.RequestTimeout), build.Name); err != nil {
+		return c, &checkVerdict{err}
+	}
+	return c, nil
 }
 
 // acquired is a running session and the model acquisition ended with.
@@ -238,15 +297,8 @@ func abandon(ch <-chan started, cancel context.CancelFunc) {
 
 func interrupted() error { return &ExitError{Code: 2, Err: errors.New("interrupted")} }
 
-// checkExit returns nil, a findings exit 1 or an exit 2 once the report is out (design §3.4).
-func checkExit(cmd *cobra.Command, p *engine.Published, c view.Check, f *Flags, name string) error {
-	if cmd.Context().Err() != nil {
-		return interrupted()
-	}
-	return reportExit(p, c, fmt.Sprintf("within --%s %v", flagRequestTimeout, f.RequestTimeout), name)
-}
-
-// reportExit is checkExit's rules on the final model p and its report c; within ends the not-synced error.
+// reportExit returns nil, a findings exit 1 or an exit 2 for the final model
+// p and its report c (design §3.4); within ends the not-synced error.
 func reportExit(p *engine.Published, c view.Check, within, name string) error {
 	switch {
 	case p.Model.Snapshot == nil || !p.Model.Snapshot.Synced:

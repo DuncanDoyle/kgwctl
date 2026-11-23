@@ -318,6 +318,18 @@ func TestProxySubresourceMatch(t *testing.T) {
 	}
 }
 
+// TestProxyBody: a rule with Body answers with those bytes, not a Status.
+func TestProxyBody(t *testing.T) {
+	env := testenv.New(t, testenv.Options{})
+	const body = "kgwctl-canary-proxy-body"
+	hits := env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindAcquire, Resource: "pods"}, testenv.Action{Status: http.StatusForbidden, Body: []byte(body)})
+	var code int
+	raw, _ := clients(t, env).Kube.CoreV1().RESTClient().Get().Resource("pods").Do(t.Context()).StatusCode(&code).Raw()
+	if code != http.StatusForbidden || string(raw) != body || hits.N() != 1 {
+		t.Fatalf("status %d, body %q, hits %d; want 403, %q, 1", code, raw, hits.N(), body)
+	}
+}
+
 // TestProxySubresourceAnyVerb: a Subresource rule matches a POST, such as a
 // pods/portforward upgrade, for both deny and hold.
 func TestProxySubresourceAnyVerb(t *testing.T) {
