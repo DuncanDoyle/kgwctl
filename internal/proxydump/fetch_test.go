@@ -384,6 +384,25 @@ func (f dialerFunc) Dial(ctx context.Context, pod types.NamespacedName, port int
 	return f(ctx, pod, port)
 }
 
+// TestFetchOpUnknown: an operation outside the allowlist fails before a dial.
+func TestFetchOpUnknown(t *testing.T) {
+	for _, op := range []Op{Op(99), Op(-1)} {
+		var dials atomic.Int32
+		d := dialerFunc(func(context.Context, types.NamespacedName, int) (io.ReadWriteCloser, func(), error) {
+			dials.Add(1)
+			return nil, nil, errors.New("dialed")
+		})
+		c, err := FetchOp(context.Background(), d, testPod, op, time.Now)
+		if err == nil {
+			_ = c.Body.Close()
+			t.Fatalf("FetchOp(%d) succeeded, want an unknown-operation error", int(op))
+		}
+		if n := dials.Load(); n != 0 {
+			t.Fatalf("FetchOp(%d) dialed %d times, want 0", int(op), n)
+		}
+	}
+}
+
 func TestFetchCloseStopsTunnel(t *testing.T) {
 	ft := newFakeTunnel(t, blockMidBody)
 	c, err := Fetch(context.Background(), ft, testPod, time.Now)

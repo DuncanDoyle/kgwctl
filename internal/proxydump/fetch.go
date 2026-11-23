@@ -7,13 +7,18 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/DuncanDoyle/kgwctl/internal/load"
+	"github.com/DuncanDoyle/kgwctl/pkg/bundle"
 )
 
 // AdminPort is the port of Envoy's admin interface inside the proxy Pod.
@@ -29,11 +34,59 @@ type Dialer interface {
 	Dial(ctx context.Context, pod types.NamespacedName, port int) (conn io.ReadWriteCloser, stop func(), err error)
 }
 
-// Capture is one config dump response, streamed from the proxy.
+// Op is one allowlisted Envoy admin operation (design §6.3). Each binds the
+// admin port, GET, a path and an exact query; no API takes a path.
+type Op int
+
+// Admin operations. The zero Op is not an operation.
+const (
+	// OpConfigDump is GET /config_dump.
+	OpConfigDump Op = iota + 1
+	// OpConfigDumpEDS is GET /config_dump?include_eds.
+	OpConfigDumpEDS
+	// OpStats is GET /stats.
+	OpStats
+	// OpServerInfo is GET /server_info.
+	OpServerInfo
+	// OpCerts is GET /certs.
+	OpCerts
+	// OpClusters is GET /clusters.
+	OpClusters
+)
+
+// opSpec is an operation's request target, wording and manifest code.
+type opSpec struct {
+	path, query string
+	desc        string
+	code        bundle.Op
+}
+
+var ops = map[Op]opSpec{
+	OpConfigDump:    {path: "/config_dump", desc: "config dump", code: bundle.OpConfigDump},
+	OpConfigDumpEDS: {path: "/config_dump", query: "include_eds", desc: "config dump with endpoints", code: bundle.OpConfigDumpEDS},
+	OpStats:         {path: "/stats", desc: "stats", code: bundle.OpStats},
+	OpServerInfo:    {path: "/server_info", desc: "server info", code: bundle.OpServerInfo},
+	OpCerts:         {path: "/certs", desc: "certs", code: bundle.OpCerts},
+	OpClusters:      {path: "/clusters", desc: "clusters", code: bundle.OpClusters},
+}
+
+// String returns the operation's name, which is also its manifest code's name.
+func (o Op) String() string {
+	if s, ok := ops[o]; ok {
+		return s.code.String()
+	}
+	return fmt.Sprintf("Op(%d)", int(o))
+}
+
+// Code returns the manifest operation code; an unknown Op gives the unset code.
+func (o Op) Code() bundle.Op { return ops[o].code }
+
+// Capture is one admin response, streamed from the proxy.
 type Capture struct {
 	Pod        types.NamespacedName
+	Op         Op
 	CapturedAt time.Time
-	// Body streams the dump. Closing it also releases the tunnel; further
+	// Body streams the response. Closing it also releases the tunnel; further
 	// calls to Close do nothing.
 	Body io.ReadCloser
 }
@@ -60,23 +113,33 @@ func (b *tunnelBody) Close() error {
 	return b.release()
 }
 
-// Fetch sends one GET /config_dump to the admin port of pod over the stream d
-// opens. Redirects are refused. It returns ctx's error by ctx's deadline even
-// when the dial or the stream ignores ctx, as client-go's exec credential
-// plugins do; a Capture that completes later is released. On success the
-// caller must close Capture.Body; the tunnel is also released when ctx ends.
-// On error it is already released.
+// Fetch is FetchOp with OpConfigDump: one GET /config_dump.
 func Fetch(ctx context.Context, d Dialer, pod types.NamespacedName, now func() time.Time) (*Capture, error) {
-	c, err := Await(ctx, func() (*Capture, error) { return fetch(ctx, d, pod, now) },
+	return FetchOp(ctx, d, pod, OpConfigDump, now)
+}
+
+// FetchOp sends op's one request to the admin port of pod over the stream d
+// opens. An unknown op fails before the dial, and redirects are refused. It
+// returns ctx's error by ctx's deadline even when the dial or the stream
+// ignores ctx, as client-go's exec credential plugins do; a Capture that
+// completes later is released. On success the caller must close
+// Capture.Body; the tunnel is also released when ctx ends. On error it is
+// already released.
+func FetchOp(ctx context.Context, d Dialer, pod types.NamespacedName, op Op, now func() time.Time) (*Capture, error) {
+	spec, ok := ops[op]
+	if !ok {
+		return nil, fmt.Errorf("unknown admin operation %s", op)
+	}
+	c, err := Await(ctx, func() (*Capture, error) { return fetch(ctx, d, pod, op, spec, now) },
 		func(c *Capture) { _ = c.Body.Close() })
 	if err != nil && err == ctx.Err() { // ctx ended before fetch returned
-		err = fmt.Errorf("fetch config dump from %s: %w", pod, err)
+		err = fmt.Errorf("fetch %s from %s: %w", spec.desc, pod, err)
 	}
 	return c, err
 }
 
-// fetch is Fetch without the bound on calls that ignore ctx.
-func fetch(ctx context.Context, d Dialer, pod types.NamespacedName, now func() time.Time) (*Capture, error) {
+// fetch is FetchOp without the bound on calls that ignore ctx.
+func fetch(ctx context.Context, d Dialer, pod types.NamespacedName, op Op, spec opSpec, now func() time.Time) (*Capture, error) {
 	conn, stop, err := d.Dial(ctx, pod, AdminPort)
 	if err != nil {
 		if stop != nil {
@@ -96,12 +159,13 @@ func fetch(ctx context.Context, d Dialer, pod types.NamespacedName, now func() t
 		if ctx.Err() != nil {
 			err = ctx.Err()
 		}
-		return nil, fmt.Errorf("fetch config dump from %s: %w", pod, err)
+		return nil, fmt.Errorf("fetch %s from %s: %w", spec.desc, pod, err)
 	}
 	if ctx.Err() != nil {
 		return fail(ctx.Err())
 	}
-	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("http://localhost:%d/config_dump", AdminPort), nil)
+	u := &url.URL{Scheme: "http", Host: net.JoinHostPort("localhost", strconv.Itoa(AdminPort)), Path: spec.path, RawQuery: spec.query}
+	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
 	if err != nil {
 		return fail(err)
 	}
@@ -114,13 +178,18 @@ func fetch(ctx context.Context, d Dialer, pod types.NamespacedName, now func() t
 	case err != nil:
 		return fail(err)
 	case resp.StatusCode >= 300 && resp.StatusCode < 400:
-		return fail(fmt.Errorf("admin endpoint returned %s; refusing to follow redirect", resp.Status))
+		return fail(fmt.Errorf("admin endpoint returned %s; refusing to follow redirect", statusText(resp.StatusCode)))
 	case resp.StatusCode != http.StatusOK:
-		return fail(fmt.Errorf("admin endpoint returned %s", resp.Status))
+		return fail(fmt.Errorf("admin endpoint returned %s", statusText(resp.StatusCode)))
 	}
 	// Closing the stream ends the body; resp.Body.Close would drain it first.
 	body := &tunnelBody{r: resp.Body, ctx: ctx, release: release, stopAfter: stopAfter}
-	return &Capture{Pod: pod, CapturedAt: now(), Body: body}, nil
+	return &Capture{Pod: pod, Op: op, CapturedAt: now(), Body: body}, nil
+}
+
+// statusText is code with its standard text, never the remote reason phrase.
+func statusText(code int) string {
+	return strings.TrimSpace(fmt.Sprintf("%d %s", code, http.StatusText(code)))
 }
 
 // FetchError is a failed Fetch from the Pod that FetchGateway selected.
