@@ -31,6 +31,11 @@ const kgatewayCategory = "kgateway"
 // gatewayAPIGroups are listed whole: every served kind in them is collected.
 var gatewayAPIGroups = map[string]bool{"gateway.networking.k8s.io": true, "gateway.networking.x-k8s.io": true}
 
+var gatewayClassGK = schema.GroupKind{Group: gatewayGroup, Kind: "GatewayClass"}
+
+// gatewayGroup is the Gateway API group.
+const gatewayGroup = "gateway.networking.k8s.io"
+
 // forbidden are the core resources the bundle never requests (design §6.1).
 var forbidden = map[string]bool{"secrets": true, "configmaps": true}
 
@@ -91,7 +96,8 @@ func (c resources) kinds(env pb.Env, s pb.Sink) ([]kind, error) {
 			return
 		}
 		k := kind{gvr: v.WithResource(r.Name), kind: r.Kind, namespaced: r.Namespaced}
-		if seen[k.gk()] {
+		// GatewayClass is the only cluster-scoped kind the bundle collects (design §3.2).
+		if seen[k.gk()] || (!k.namespaced && k.gk() != gatewayClassGK) {
 			return
 		}
 		seen[k.gk()] = true

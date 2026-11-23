@@ -30,7 +30,7 @@ func obj(apiVersion, kind, ns, name string) *unstructured.Unstructured {
 }
 
 // TestResourcesKinds: Gateway API kinds and the kgateway category are listed,
-// other groups are not, a registry kind naming Secrets is an error and never
+// other groups are not, no cluster-scoped kind but GatewayClass is, a registry kind naming Secrets is an error and never
 // requested, and Keep's exclusions are counted.
 func TestResourcesKinds(t *testing.T) {
 	list := []string{"get", "list", "watch"}
@@ -39,9 +39,11 @@ func TestResourcesKinds(t *testing.T) {
 		{GroupVersion: "gateway.networking.k8s.io/v1", APIResources: []metav1.APIResource{
 			{Name: "httproutes", Kind: "HTTPRoute", Namespaced: true, Verbs: list},
 			{Name: "httproutes/status", Kind: "HTTPRoute", Namespaced: true, Verbs: []string{"get"}},
+			{Name: "gatewayclasses", Kind: "GatewayClass", Verbs: list},
 		}},
 		{GroupVersion: "example.com/v1", APIResources: []metav1.APIResource{
 			{Name: "widgets", Kind: "Widget", Namespaced: true, Verbs: list, Categories: []string{"kgateway"}},
+			{Name: "clusterwidgets", Kind: "ClusterWidget", Verbs: list, Categories: []string{"kgateway"}},
 			{Name: "gadgets", Kind: "Gadget", Namespaced: true, Verbs: list},
 		}},
 		{GroupVersion: "v1", APIResources: []metav1.APIResource{
@@ -49,15 +51,19 @@ func TestResourcesKinds(t *testing.T) {
 		}},
 	}
 	dyn := dynfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{
-		{Group: "gateway.networking.k8s.io", Version: "v1", Resource: "httproutes"}: "HTTPRouteList",
-		{Group: "example.com", Version: "v1", Resource: "widgets"}:                  "WidgetList",
-		{Group: "example.com", Version: "v1", Resource: "gadgets"}:                  "GadgetList",
-		{Version: "v1", Resource: "secrets"}:                                        "SecretList",
+		{Group: "gateway.networking.k8s.io", Version: "v1", Resource: "httproutes"}:     "HTTPRouteList",
+		{Group: "gateway.networking.k8s.io", Version: "v1", Resource: "gatewayclasses"}: "GatewayClassList",
+		{Group: "example.com", Version: "v1", Resource: "widgets"}:                      "WidgetList",
+		{Group: "example.com", Version: "v1", Resource: "clusterwidgets"}:               "ClusterWidgetList",
+		{Group: "example.com", Version: "v1", Resource: "gadgets"}:                      "GadgetList",
+		{Version: "v1", Resource: "secrets"}:                                            "SecretList",
 	},
 		obj("gateway.networking.k8s.io/v1", "HTTPRoute", "team-a", "kept"),
 		obj("gateway.networking.k8s.io/v1", "HTTPRoute", "team-a", "foreign"),
 		obj("example.com/v1", "Widget", "team-a", "w"),
 		obj("example.com/v1", "Gadget", "team-a", "g"),
+		obj("gateway.networking.k8s.io/v1", "GatewayClass", "", "gc"),
+		obj("example.com/v1", "ClusterWidget", "", "cw"),
 	)
 	reg := extension.NewCore(extension.WithKinds(kinds.Descriptor{Kind: "Secret", Resource: "secrets", Versions: []string{"v1"}, Namespaced: true}))
 	env := pb.Env{Dynamic: dyn, Discovery: &discfake.FakeDiscovery{Fake: fakeAPI},
@@ -74,6 +80,7 @@ func TestResourcesKinds(t *testing.T) {
 	got := slices.Sorted(slices.Values(keys(s.objects)))
 	want := []string{
 		"resources/example.com/Widget/team-a/w.yaml",
+		"resources/gateway.networking.k8s.io/GatewayClass/_cluster/gc.yaml",
 		"resources/gateway.networking.k8s.io/HTTPRoute/team-a/kept.yaml",
 	}
 	if !slices.Equal(got, want) {
@@ -83,8 +90,8 @@ func TestResourcesKinds(t *testing.T) {
 		t.Errorf("errors %v, want one ErrForbiddenKind", s.errs)
 	}
 	for _, a := range dyn.Actions() {
-		if a.GetResource().Resource == "secrets" {
-			t.Errorf("secrets requested: %v", a)
+		if r := a.GetResource().Resource; r == "secrets" || r == "clusterwidgets" {
+			t.Errorf("%s requested: %v", r, a)
 		}
 	}
 	if n := s.excluded[schema.GroupKind{Group: "gateway.networking.k8s.io", Kind: "HTTPRoute"}][pb.ExcludeOwnership]; n != 1 {

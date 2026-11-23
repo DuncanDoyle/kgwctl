@@ -92,6 +92,7 @@ func inWindow(u *unstructured.Unstructured, since time.Time) bool {
 	if since.IsZero() {
 		return true
 	}
+	// An Event with none of the three timestamps stays zero and is left out by design.
 	var latest time.Time
 	for _, f := range [][]string{{"lastTimestamp"}, {"eventTime"}, {"series", "lastObservedTime"}} {
 		v, _, _ := unstructured.NestedString(u.Object, f...)

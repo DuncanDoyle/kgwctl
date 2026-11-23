@@ -24,8 +24,9 @@ const (
 // ownershipFixture writes the cluster state of TestClusterStateOwnership and
 // returns its path: a kgateway install whose discovery selector leaves out
 // team-b, a second controller (example.com/other) with its GatewayClass,
-// Gateway and HTTPRoute in other-only, and Deployments in team-a (shared with
-// a kgateway Gateway), other-only and team-b.
+// Gateway and HTTPRoute in other-only, a kept route in team-c, and
+// Deployments in team-a (shared with a kgateway Gateway), team-c, other-only
+// and team-b.
 func ownershipFixture(t *testing.T) string {
 	t.Helper()
 	const fixture = `apiVersion: apps/v1
@@ -75,6 +76,11 @@ metadata: {name: route-b, namespace: team-b}
 spec: {parentRefs: [{name: gw, namespace: team-a}]}
 ---
 apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: {name: route-c, namespace: team-c}
+spec: {parentRefs: [{name: gw, namespace: team-a}]}
+---
+apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata: {name: edge, namespace: other-only}
 spec:
@@ -91,7 +97,7 @@ spec: {parentRefs: [{name: edge}]}
 			"spec:\n  selector: {matchLabels: {app: " + name + "}}\n  template:\n    metadata: {labels: {app: " + name + "}}\n" +
 			"    spec: {containers: [{name: app, image: example.com/" + name + ":v1}]}\n"
 	}
-	body := strings.Join([]string{fixture, deployment("team-a", "other-app"), deployment("other-only", "other-app"), deployment("team-b", "app-b")}, "---\n")
+	body := strings.Join([]string{fixture, deployment("team-a", "other-app"), deployment("team-c", "app-c"), deployment("other-only", "other-app"), deployment("team-b", "app-b")}, "---\n")
 	path := filepath.Join(t.TempDir(), "ownership.yaml")
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
@@ -186,23 +192,56 @@ func TestClusterStateArchive(t *testing.T) {
 	}
 }
 
-// TestClusterStateScope: -n team-a writes no team-b member and makes no
-// namespaced team-b request; GatewayClasses stay under _cluster.
+// TestClusterStateScope: -n team-a, also with --all-controllers, writes no
+// member outside team-a and the install namespace, though team-c's route is
+// kept by ownership and scope; GatewayClasses stay under _cluster.
 func TestClusterStateScope(t *testing.T) {
 	env := newEnv(t, testenv.Options{Fixtures: []string{ownershipFixture(t)}})
+	outside := func(t *testing.T, a bundletest.Archive) {
+		t.Helper()
+		for _, m := range membersUnder(a, "") {
+			if strings.Contains(m, "team-b") || strings.Contains(m, "team-c") || strings.Contains(m, "other-only") {
+				t.Errorf("member %s is outside -n team-a", m)
+			}
+		}
+	}
+
 	a := bundleArchive(t, env, "-n", "team-a")
-	for _, m := range membersUnder(a, "") {
-		if strings.Contains(m, "team-b") {
-			t.Errorf("member %s names team-b", m)
-		}
-	}
+	outside(t, a)
 	assertMembers(t, a, []string{gwDir + "GatewayClass/_cluster/kgateway.yaml", gwDir + "HTTPRoute/team-a/route-a.yaml",
-		"workloads/team-a/deployments.yaml", "install/_cluster/kgateway.yaml"}, nil)
+		"workloads/team-a/deployments.yaml", "install/_cluster/kgateway.yaml"}, []string{gwDir + "GatewayClass/_cluster/other.yaml"})
+	// team-b's route is out of the bound, so it is never listed nor counted.
+	if ex := excludedCounts(t, a); ex["gateway.networking.k8s.io/HTTPRoute scope"] != 0 {
+		t.Errorf("excluded %v: team-b's route was listed", ex)
+	}
 	for _, req := range env.Proxies[0].Requests() {
-		if strings.Contains(req, "/namespaces/team-b/") || strings.Contains(req, "/namespaces/other-only/") {
-			t.Errorf("request outside the -n bound: %s", req)
+		for _, ns := range []string{"team-b", "team-c", "other-only"} {
+			if strings.Contains(req, "/namespaces/"+ns+"/") {
+				t.Errorf("request outside the -n bound: %s", req)
+			}
 		}
 	}
+
+	// --all-controllers lifts ownership, never the -n bound; GatewayClasses are cluster-scoped.
+	a = bundleArchive(t, env, "--all-controllers", "-n", "team-a")
+	outside(t, a)
+	assertMembers(t, a, []string{gwDir + "GatewayClass/_cluster/other.yaml", "install/_cluster/other.yaml",
+		gwDir + "GatewayClass/_cluster/kgateway.yaml", "workloads/team-a/deployments.yaml"}, nil)
+}
+
+// excludedCounts returns the manifest's exclusions as "group/Kind reason" counts.
+func excludedCounts(t *testing.T, a bundletest.Archive) map[string]int {
+	t.Helper()
+	var doc bundleScopeDoc
+	mf, _ := a.File("manifest.json")
+	if err := json.Unmarshal(mf, &doc); err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]int{}
+	for _, e := range doc.Item.Excluded {
+		out[e.Kind+" "+e.Reason] = e.Count
+	}
+	return out
 }
 
 // bundleScopeDoc is the part of manifest.json the ownership test reads.
@@ -242,6 +281,8 @@ func TestClusterStateOwnership(t *testing.T) {
 		gwDir + "GatewayClass/_cluster/kgateway.yaml",
 		gwDir + "Gateway/team-a/gw.yaml",
 		gwDir + "HTTPRoute/team-a/route-a.yaml",
+		gwDir + "HTTPRoute/team-c/route-c.yaml",
+		"workloads/team-c/deployments.yaml",
 		"install/_cluster/kgateway.yaml",
 		"install/kgateway-system/kgateway.yaml",
 	}
@@ -260,10 +301,7 @@ func TestClusterStateOwnership(t *testing.T) {
 	if ins := doc.Item.Scope.Installs; len(ins) != 1 || ins[0].Discovery.Mode != "selectors" || !slices.Contains(ins[0].Discovery.Unwatched, "team-b") {
 		t.Errorf("manifest scope %+v, want selectors with team-b unwatched", doc.Item.Scope)
 	}
-	excluded := map[string]int{}
-	for _, e := range doc.Item.Excluded {
-		excluded[e.Kind+" "+e.Reason] = e.Count
-	}
+	excluded := excludedCounts(t, a)
 	want := map[string]int{
 		"gateway.networking.k8s.io/HTTPRoute scope":        1,
 		"gateway.networking.k8s.io/HTTPRoute ownership":    1,

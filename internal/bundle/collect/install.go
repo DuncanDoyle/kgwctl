@@ -2,17 +2,31 @@ package collect
 
 import (
 	"context"
+	"fmt"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	pb "github.com/DuncanDoyle/kgwctl/pkg/bundle"
 )
 
-var (
-	deploymentsGVR    = schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}
-	gatewayClassesGVR = schema.GroupVersionResource{Group: "gateway.networking.k8s.io", Version: "v1", Resource: "gatewayclasses"}
-)
+var deploymentsGVR = schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}
+
+// gatewayClassesGVR returns GatewayClasses at the Gateway API group's
+// preferred version, as the resources collector lists them.
+func gatewayClassesGVR(env pb.Env) (schema.GroupVersionResource, error) {
+	groups, err := env.Discovery.ServerGroups()
+	if err != nil {
+		return schema.GroupVersionResource{}, err
+	}
+	for _, g := range groups.Groups {
+		if g.Name == gatewayGroup {
+			return schema.GroupVersionResource{Group: gatewayGroup, Version: g.PreferredVersion.Version, Resource: "gatewayclasses"}, nil
+		}
+	}
+	return schema.GroupVersionResource{}, fmt.Errorf("API group %s is not served", gatewayGroup)
+}
 
 type installCollector struct{}
 
@@ -28,6 +42,9 @@ func (installCollector) Name() string { return "install" }
 // Collect implements pb.Collector.
 func (installCollector) Collect(ctx context.Context, env pb.Env, s pb.Sink) error {
 	for _, in := range env.Scope.Installs {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		src := pb.Source{Namespace: in.Namespace, Operation: pb.OpList}
 		f, err := pb.File(in.Deployment, pb.YAML)
 		if err != nil {
@@ -47,14 +64,18 @@ func (installCollector) Collect(ctx context.Context, env pb.Env, s pb.Sink) erro
 			return err
 		}
 	}
-	gcs, err := list(ctx, env, gatewayClassesGVR, "")
+	gvr, err := gatewayClassesGVR(env)
+	var gcs []unstructured.Unstructured
+	if err == nil {
+		gcs, err = list(ctx, env, gvr, "")
+	}
 	if err != nil {
 		s.Error(pb.Path{pb.InstallDir, pb.Cluster}, pb.Source{Operation: pb.OpList}, err)
 		return nil
 	}
 	for i := range gcs {
 		u := &gcs[i]
-		u.SetGroupVersionKind(gatewayClassesGVR.GroupVersion().WithKind("GatewayClass"))
+		u.SetGroupVersionKind(gvr.GroupVersion().WithKind(gatewayClassGK.Kind))
 		if env.Keep != nil && env.Keep(u) != pb.ExcludeNone {
 			continue
 		}
