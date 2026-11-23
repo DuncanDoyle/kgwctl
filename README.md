@@ -189,7 +189,9 @@ This Gateway also serves HTTPRoute `proxy/orders-kgwctl`, and the Envoy route na
 
 ## Permissions
 
-kgwctl only reads. It needs `get`, `list` and `watch` on the Gateway API and kgateway kinds, Namespaces, Pods, Events, Services, EndpointSlices, Deployments and CustomResourceDefinitions, and `get` on `pods/proxy` for `check`. It never reads Secrets or ConfigMaps. [`docs/rbac.yaml`](docs/rbac.yaml) holds that ClusterRole, plus a sample ServiceAccount and binding. The reader role grants no `pods/portforward` or `pods/log`. Two optional Roles at the end of the file add them: `kgwctl-proxy-portforward` for the `proxy` commands and the bundle's Envoy captures (see [`proxy dump`](#proxy-dump-gateway)), and `kgwctl-bundle-logs` for the bundle's logs. `get pods/log` reads every Pod's logs in its namespace. Without these grants `kgwctl bundle` still writes a bundle; `errors.txt` ends with one line per missing grant and namespace:
+kgwctl only reads. It needs `get`, `list` and `watch` on the Gateway API and kgateway kinds, Namespaces, Pods, Events, Services, EndpointSlices, Deployments and CustomResourceDefinitions, and `get` on `pods/proxy` for `check` and the bundle's metrics. It never reads Secrets or ConfigMaps. [`docs/rbac.yaml`](docs/rbac.yaml) holds that ClusterRole, plus a sample ServiceAccount and binding. The reader role grants no `pods/portforward` or `pods/log`. Two optional Roles at the end of the file add them: `kgwctl-proxy-portforward` for the `proxy` commands and the bundle's Envoy captures (see [`proxy dump`](#proxy-dump-gateway)), and `kgwctl-bundle-logs` for the bundle's logs. `get pods/log` reads every Pod's logs in its namespace. When a grant is missing, `kgwctl bundle` still writes a bundle, and `errors.txt` ends with one line per missing grant and namespace.
+
+Apply the file with:
 
 ```bash
 kubectl apply -f docs/rbac.yaml

@@ -450,6 +450,26 @@ func TestBundleReaderOnly(t *testing.T) {
 	}
 }
 
+// TestBundleDeniedListGrant: a 403 on HTTPRoute lists gives the item a
+// denied status and a reader grant line per namespace of the -n bound.
+func TestBundleDeniedListGrant(t *testing.T) {
+	env := newEnv(t, testenv.Options{Fixtures: []string{healthyFixture}})
+	hits := env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindAcquire, Resource: httpRoutes}, testenv.Action{Status: http.StatusForbidden})
+	a := bundleArchive(t, env, "-n", "default")
+	if hits.N() == 0 {
+		t.Fatal("the rule never applied")
+	}
+	fileHas(t, a, "errors.txt", "resources/gateway.networking.k8s.io/HTTPRoute", "denied")
+	_, grants := grantLines(t, a)
+	want := []string{
+		"grant: get, list and watch in namespace default: see the kgwctl-reader ClusterRole in docs/rbac.yaml",
+		"grant: get, list and watch in namespace kgateway-system: see the kgwctl-reader ClusterRole in docs/rbac.yaml",
+	}
+	if !slices.Equal(grants, want) {
+		t.Errorf("grant lines %q, want %q", grants, want)
+	}
+}
+
 // mixedLogs serves every log stream but http-b's, which hangs until its
 // request times out.
 type mixedLogs struct{}
@@ -569,7 +589,8 @@ func TestNamespacedRequestSet(t *testing.T) {
 	// resources lists each namespaced kind in both namespaces, and nowhere else.
 	kinds := map[string][]string{}
 	for k := range full {
-		if ns := nsOf(k); strings.HasPrefix(k, "GET /apis/gateway.") && ns != "" {
+		// Only plain lists: a collector never watches.
+		if ns := nsOf(k); strings.HasPrefix(k, "GET /apis/gateway.") && ns != "" && !strings.HasSuffix(k, " watch") {
 			kind := strings.Replace(k, "/namespaces/"+ns+"/", "/", 1)
 			kinds[kind] = append(kinds[kind], ns)
 			want[k] = true
@@ -605,10 +626,16 @@ func TestNamespacedRequestSet(t *testing.T) {
 }
 
 // TestBundleNoForbiddenRequests: a full run, every collector on its real
-// adapter, sends no secrets or configmaps request.
+// adapter, sends no secrets or configmaps request, and no collector tries one
+// that the guard refused.
 func TestBundleNoForbiddenRequests(t *testing.T) {
 	env := newEnv(t, testenv.Options{Fixtures: []string{healthyFixture, bundleCanaries, proxyPods(t, "http-a")}})
-	archiveWith(t, env.Kubeconfig, nil, app.BundleTestHooks{Check: fastHooks(metricsScraper{})})
+	a := archiveWith(t, env.Kubeconfig, nil, app.BundleTestHooks{Check: fastHooks(metricsScraper{})})
+	for _, f := range []string{"errors.txt", "manifest.json"} {
+		if b, _ := a.File(f); strings.Contains(string(b), "forbidden kind") {
+			t.Errorf("%s records a refused Secret or ConfigMap request:\n%s", f, b)
+		}
+	}
 	reqs := env.Proxies[0].Requests()
 	// Each real adapter reached the API server, so the scan below covers it.
 	for _, sub := range []string{"/log?", "/portforward", "/proxy/metrics"} {
