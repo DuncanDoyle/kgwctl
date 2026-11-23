@@ -68,16 +68,26 @@ One command that collects what support asks for, so nobody hand-collects it (D-0
 
 - `analyze -f <file>`: validate manifests before applying, reporting new, fixed and unchanged problems against the live cluster.
 
+### xdsview Phase 9 migration (E15)
+**Status:** Planned, not scheduled. It lands with the xdsview Phase 9 tag, separate from Phase 6.
+**Waits on:** E15, the xdsview Phase 9 contract (P-010): one breaking release after xdsview `v0.6.0` and the P-009 investigation. Before that, kgwctl reviews xdsview's Phase 9 design for `proxy routes` and Phase 6 (program open question 7).
+
+- `proxy routes` calls parse, then `Analyze` with the kgateway module, then explicit selection, then render. xdsview's Phase 9 design sets the exact names.
+- The unresolved-route listing stays, as explicit selection over candidate readings.
+- kgwctl builds its own `ProxyRoutes` payload instead of embedding xdsview's `model`.
+- The shared envelope moves to `kgwctl.kgateway.dev/v1alpha2`. That changes every command's JSON and YAML, including the bundle's `manifest.json`. Text, JSON and YAML goldens are reviewed together.
+- The xdsview import allowlist follows the new package layout.
+
 ### Phase 6 — Topology and policies
 **Status:** Not started
 **Docs:** `docs/phases/phase-6/`
-**Waits on:** E7 = Snellius Phase 8 declared-policy model, plus xdsview `origin.Policies` for the route-level xDS part (E5, E13). No effective-policy view (D-024, P-008).
+**Waits on:** E7 = Snellius Phase 8 declared-policy model, plus the scoped `merge.*` records from E15 for the xDS part. No effective-policy view (D-024, P-008).
 
 The controller owns policy semantics; kgwctl shows evidence and never re-derives precedence, inheritance or merging (D-024).
 - `describe` lists policies, each labelled with its source (P-008):
   - declared: `targetRefs`/selectors as written;
   - controller-reported attached: ancestor conditions as the controller reports them, for the target, controller and generation each names;
-  - for a route, the policy IDs in its `merge.*` metadata. These are level-local: they do not say which level governs a request.
+  - runtime: the `merge.*` records of the listener, RouteConfiguration, virtual host and route (E15), joined with Snellius `pkg/policy` by ref. Each shows the level it came from. They are level-local: they do not say which level governs a request.
 - What Envoy runs for the route or listener (xdsview): one replica at capture time, linked from `describe` and back.
 - Each link marked verified, inferred (names, selectors) or unknown (no, stale or ambiguous evidence). `route_source` verifies the originating route and rule, not which policy won or merged.
 - `get -o graph`: Gateway → route → backend topology as DOT or Mermaid text, written without a graphics library.
