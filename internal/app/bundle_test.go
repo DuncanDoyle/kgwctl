@@ -4,12 +4,20 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
 	"github.com/DuncanDoyle/kgwctl/internal/app"
 	"github.com/DuncanDoyle/kgwctl/internal/bundle/bundletest"
@@ -245,6 +253,69 @@ func TestBundleMinMaxSize(t *testing.T) {
 		}
 	}
 	assertNoRun(t, env, p)
+}
+
+// TestBundleUnreachable: with no reachable API server no bundle is written.
+func TestBundleUnreachable(t *testing.T) {
+	srv := httptest.NewServer(http.NotFoundHandler())
+	srv.Close() // the port now refuses connections
+	cfg := clientcmdapi.NewConfig()
+	cfg.Clusters["c"] = &clientcmdapi.Cluster{Server: srv.URL}
+	cfg.AuthInfos["u"] = &clientcmdapi.AuthInfo{}
+	cfg.Contexts["ctx"] = &clientcmdapi.Context{Cluster: "c", AuthInfo: "u"}
+	cfg.CurrentContext = "ctx"
+	kubeconfig := filepath.Join(t.TempDir(), "kubeconfig")
+	if err := clientcmd.WriteToFile(*cfg, kubeconfig); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(t.TempDir(), "out.tar.gz")
+	p := &probe{}
+	r := runBundle(t, kubeconfig, []pb.Collector{p}, "-o", out, "--request-timeout", "5s")
+	if r.code != 2 || !strings.Contains(r.stderr, "no reachable cluster") {
+		t.Fatalf("exit %d, stderr %q; want 2 naming no reachable cluster", r.code, r.stderr)
+	}
+	if _, err := os.Stat(out); !os.IsNotExist(err) {
+		t.Errorf("output left behind: %v", err)
+	}
+	if p.ran.Load() {
+		t.Error("a collector ran")
+	}
+}
+
+// TestBundleGuardsClients: Env's clients refuse Secrets and ConfigMaps unsent.
+func TestBundleGuardsClients(t *testing.T) {
+	env := newEnv(t, testenv.Options{})
+	g := &guardProbe{}
+	r := runBundle(t, env.Kubeconfig, []pb.Collector{g}, "-o", filepath.Join(t.TempDir(), "out.tar.gz"))
+	if r.code != 0 {
+		t.Fatalf("exit %d, stderr %q", r.code, r.stderr)
+	}
+	if len(g.errs) != 4 {
+		t.Fatalf("got %d results, want 4", len(g.errs))
+	}
+	for i, err := range g.errs {
+		if !errors.Is(err, pb.ErrForbiddenKind) {
+			t.Errorf("request %d: err %v, want ErrForbiddenKind", i, err)
+		}
+	}
+	for _, req := range env.Proxies[0].Requests() {
+		if strings.Contains(req, "/secrets") || strings.Contains(req, "/configmaps") {
+			t.Errorf("request sent: %s", req)
+		}
+	}
+}
+
+// guardProbe lists Secrets and ConfigMaps through every Env client kind.
+type guardProbe struct{ errs []error }
+
+func (*guardProbe) Name() string { return "guard-probe" }
+func (g *guardProbe) Collect(ctx context.Context, env pb.Env, _ pb.Sink) error {
+	_, e1 := env.Kube.CoreV1().Secrets("").List(ctx, metav1.ListOptions{})
+	_, e2 := env.Kube.CoreV1().ConfigMaps("default").Get(ctx, "c", metav1.GetOptions{})
+	_, e3 := env.Dynamic.Resource(schema.GroupVersionResource{Version: "v1", Resource: "secrets"}).Namespace("default").List(ctx, metav1.ListOptions{})
+	e4 := env.Discovery.RESTClient().Get().AbsPath("/api/v1/configmaps").Do(ctx).Error()
+	g.errs = []error{e1, e2, e3, e4}
+	return nil
 }
 
 // TestBundleInterrupt cancels the command while a collector blocks: the bundle

@@ -14,8 +14,10 @@ import (
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 
 	ib "github.com/DuncanDoyle/kgwctl/internal/bundle"
+	"github.com/DuncanDoyle/kgwctl/internal/load"
 	"github.com/DuncanDoyle/kgwctl/internal/redact"
 	pb "github.com/DuncanDoyle/kgwctl/pkg/bundle"
 )
@@ -118,20 +120,37 @@ func newBundleCmd(reg *extension.Registry, build BuildInfo, extra []pb.Collector
 			if err != nil {
 				return usageErr(err)
 			}
-			kube, err := kubernetes.NewForConfig(rc)
+			// Every bundle-owned client, install detection included, goes through the guard (§6.1).
+			grc := ib.Guard(rc)
+			kube, err := kubernetes.NewForConfig(grc)
 			if err != nil {
 				return usageErr(err)
 			}
-			dyn, err := dynamic.NewForConfig(rc)
+			dyn, err := dynamic.NewForConfig(grc)
 			if err != nil {
 				return usageErr(err)
 			}
-			disc, err := discovery.NewDiscoveryClientForConfig(rc)
+			disc, err := discovery.NewDiscoveryClientForConfig(grc)
 			if err != nil {
 				return usageErr(err)
 			}
-			// 4.2.2 wraps rc in the request guard before these clients are built.
 			_ = noEndpoints // 4.3.x collectors read it through Env.
+
+			res, err := loadBundle(cmd, f, reg, grc)
+			if err != nil {
+				return &ExitError{Code: 2, Err: fmt.Errorf("no reachable cluster: %w", err)}
+			}
+			scope, gws, keep, warns, err := resolveScope(f, cmd.Flags().Changed(flagNamespace), res)
+			if err != nil {
+				return err
+			}
+			for _, w := range warns {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: %s\n", w)
+			}
+			ictx, cancel := f.Context(cmd.Context())
+			replicas, invErrs := ib.Inventory(ictx, kube, scope, gws, controllerSelectors(res, scope))
+			cancel()
+			scope = withReplicaNamespaces(scope, replicas)
 
 			sp, err := ib.NewSpool("", limits.RAM, limits.MaxSize)
 			if err != nil {
@@ -139,17 +158,27 @@ func newBundleCmd(reg *extension.Registry, build BuildInfo, extra []pb.Collector
 			}
 			// The writer hides the real host in error text; the manifest only gets the placeholder.
 			w := ib.NewWriter(dest, sp, root, limits, redact.Options{ExtraHeaders: redactHeaders, MaxSize: limits.MaxSize}, rc.Host, now)
+			inv := w.Sink(inventoryName)
+			for _, e := range invErrs {
+				var re *ib.ReplicaError
+				if errors.As(e, &re) {
+					inv.Error(re.Path, re.Source, re.Err)
+				}
+			}
 			env := pb.Env{
 				Kube: kube, Dynamic: dyn, Discovery: disc,
+				Scope:          scope,
+				Replicas:       replicas,
+				Keep:           keep,
 				Window:         pb.Window{Start: t0, Since: t0.Add(-since), Tail: tail},
 				Now:            now,
 				RequestTimeout: f.RequestTimeout,
-				// 4.2.2 and later tasks fill Scope, Replicas and Keep here.
 			}
 			m := ib.Manifest{
 				Build:   ib.BuildInfo{Version: build.Version, Commit: build.Commit},
 				Context: kctx, Server: apiserverPlaceholder,
 				Flags: ib.RecordFlags(cmd.Flags()), Window: env.Window, Start: t0,
+				Scope: scope, Replicas: replicas,
 			}
 			m, err = ib.Run(cmd.Context(), cs, env, w, m, ib.RunOptions{Skip: skipSet, Deadline: time.Now().Add(timeout)})
 			if err != nil {
@@ -177,6 +206,21 @@ func newBundleCmd(reg *extension.Registry, build BuildInfo, extra []pb.Collector
 }
 
 func usageErr(err error) error { return &ExitError{Code: 2, Err: err} }
+
+// inventoryName attributes replica inventory errors in errors.txt.
+const inventoryName = "inventory"
+
+// loadBundle detects installs and loads the model over the guarded config,
+// bounded by --request-timeout; an unreachable API server fails it.
+func loadBundle(cmd *cobra.Command, f *Flags, reg *extension.Registry, grc *rest.Config) (*load.Result, error) {
+	ctx, cancel := f.Context(cmd.Context())
+	defer cancel()
+	c, err := load.NewClients(ctx, grc)
+	if err != nil {
+		return nil, err
+	}
+	return load.Load(ctx, c, reg, load.Needs{Logger: engineLogger(cmd.ErrOrStderr())})
+}
 
 // collectorNames validates and returns the names of cs.
 func collectorNames(cs []pb.Collector) ([]string, error) {
