@@ -234,21 +234,31 @@ func boundedSorted(set map[string]bool, bound []string) []string {
 }
 
 // controllerSelectors returns each selected install's controller Pod selector,
-// the Deployment's spec.selector; an install without a valid one is skipped.
-func controllerSelectors(res *load.Result, sc pb.Scope) []ib.ControllerSelector {
-	var out []ib.ControllerSelector
+// the Deployment's spec.selector. An install without a usable one gets an
+// error naming it, so its missing controller replicas leave a trace.
+func controllerSelectors(res *load.Result, sc pb.Scope) ([]ib.ControllerSelector, []error) {
+	var (
+		out  []ib.ControllerSelector
+		errs []error
+	)
 	for _, in := range sc.Installs {
+		skip := func(why string) {
+			errs = append(errs, &ib.ReplicaError{Path: pb.Path{pb.ControllerDir, in.Namespace}, Source: pb.Source{Namespace: in.Namespace},
+				Err: fmt.Errorf("install %s/%s: %s; controller replicas not inventoried", in.Namespace, in.Deployment, why)})
+		}
 		i := slices.IndexFunc(res.Model.Installs, func(im engine.InstallModel) bool {
 			return im.Resolved.Namespace == in.Namespace && im.Resolved.Name == in.Deployment
 		})
 		if i < 0 || res.Model.Installs[i].Resolved.Deployment == nil {
+			skip("no Deployment")
 			continue
 		}
 		sel, err := metav1.LabelSelectorAsSelector(res.Model.Installs[i].Resolved.Deployment.Spec.Selector)
 		if err != nil || sel.Empty() {
+			skip("no valid Deployment selector")
 			continue
 		}
 		out = append(out, ib.ControllerSelector{Install: in, Selector: sel})
 	}
-	return out
+	return out, errs
 }

@@ -155,6 +155,39 @@ func TestGuardSanitizesBodies(t *testing.T) {
 	}
 }
 
+// TestGuardPassesRedirects: 3xx responses, 304 included, pass untouched.
+func TestGuardPassesRedirects(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/moved") {
+			w.Header().Set("Location", "/elsewhere")
+			w.WriteHeader(http.StatusFound)
+			io.WriteString(w, "moved body")
+			return
+		}
+		w.WriteHeader(http.StatusNotModified)
+	}))
+	t.Cleanup(srv.Close)
+	rt, err := rest.TransportFor(Guard(&rest.Config{Host: srv.URL}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for path, want := range map[string]int{"/api/v1/namespaces/a/pods/p/proxy/moved": 302, "/api/v1/pods": 304} {
+		req, _ := http.NewRequest(http.MethodGet, srv.URL+path, nil)
+		resp, err := rt.RoundTrip(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != want || resp.Header.Get("Content-Type") == "application/json" {
+			t.Errorf("%s: status %d, content type %q; want %d untouched", path, resp.StatusCode, resp.Header.Get("Content-Type"), want)
+		}
+		if want == 302 && (string(body) != "moved body" || resp.Header.Get("Location") != "/elsewhere") {
+			t.Errorf("%s: body %q, location %q; want them untouched", path, body, resp.Header.Get("Location"))
+		}
+	}
+}
+
 func statusCode(err error) int32 {
 	var st apierrors.APIStatus
 	if errors.As(err, &st) {

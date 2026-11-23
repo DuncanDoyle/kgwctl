@@ -101,6 +101,35 @@ func TestInventoryUnverified(t *testing.T) {
 	}
 }
 
+// TestInventoryUnverifiedShortened: a release without the annotation shortens
+// the label of a long Gateway name; its Pods are still recorded unverified.
+func TestInventoryUnverifiedShortened(t *testing.T) {
+	long := strings.Repeat("g", 70)
+	short := proxyPod("team-a", "short", "")
+	short.Labels[gatewayNameLabel] = shorten(long)
+	stray := proxyPod("team-a", "stray", "")
+	stray.Labels[gatewayNameLabel] = "unrelated"
+	noLabel := proxyPod("team-a", "no-proxy-label", "")
+	delete(noLabel.Labels, ProxyLabel)
+	kube := kubefake.NewClientset(short, stray, noLabel)
+	gws := GatewaySet{gwKey("team-a", long): ""}
+
+	rs, errs := Inventory(context.Background(), kube, pb.Scope{}, gws, nil)
+	if got := podNames(rs); !slices.Equal(got, []string{"team-a/short"}) || len(errs) != 1 || rs[0].Identity != pb.IdentityUnverified {
+		t.Errorf("replicas %+v, errors %v; want short unverified", rs, errs)
+	}
+	// Within -n an unattributable proxy Pod is reported too; one without the proxy label never is.
+	rs, errs = Inventory(context.Background(), kube, pb.Scope{Namespace: "team-a"}, gws, nil)
+	if got := podNames(rs); !slices.Equal(got, []string{"team-a/short", "team-a/stray"}) || len(errs) != 2 {
+		t.Errorf("-n team-a: replicas %v, errors %v; want short and stray unverified", got, errs)
+	}
+	for _, a := range kube.Actions() {
+		if a.GetResource().Resource != "pods" {
+			t.Errorf("request for %s, want pods only", a.GetResource().Resource)
+		}
+	}
+}
+
 func TestInventoryStates(t *testing.T) {
 	start := metav1.NewTime(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	notReady := proxyPod("team-a", "not-ready", "gw")

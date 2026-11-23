@@ -1,9 +1,11 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"slices"
 	"strings"
 	"time"
@@ -138,18 +140,23 @@ func newBundleCmd(reg *extension.Registry, build BuildInfo, extra []pb.Collector
 
 			res, err := loadBundle(cmd, f, reg, grc)
 			if err != nil {
-				return &ExitError{Code: 2, Err: fmt.Errorf("no reachable cluster: %w", err)}
+				return &ExitError{Code: 2, Err: loadError(cmd.Context(), err, rc.Host)}
 			}
 			scope, gws, keep, warns, err := resolveScope(f, cmd.Flags().Changed(flagNamespace), res)
 			if err != nil {
 				return err
 			}
+			ctrls, invErrs := controllerSelectors(res, scope)
+			for _, e := range invErrs {
+				warns = append(warns, e.Error())
+			}
 			for _, w := range warns {
 				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: %s\n", w)
 			}
 			ictx, cancel := f.Context(cmd.Context())
-			replicas, invErrs := ib.Inventory(ictx, kube, scope, gws, controllerSelectors(res, scope))
+			replicas, errs := ib.Inventory(ictx, kube, scope, gws, ctrls)
 			cancel()
+			invErrs = append(invErrs, errs...)
 			scope = withReplicaNamespaces(scope, replicas)
 
 			sp, err := ib.NewSpool("", limits.RAM, limits.MaxSize)
@@ -163,6 +170,8 @@ func newBundleCmd(reg *extension.Registry, build BuildInfo, extra []pb.Collector
 				var re *ib.ReplicaError
 				if errors.As(e, &re) {
 					inv.Error(re.Path, re.Source, re.Err)
+				} else {
+					inv.Error(pb.Path{inventoryName}, pb.Source{}, e)
 				}
 			}
 			env := pb.Env{
@@ -220,6 +229,23 @@ func loadBundle(cmd *cobra.Command, f *Flags, reg *extension.Registry, grc *rest
 		return nil, err
 	}
 	return load.Load(ctx, c, reg, load.Needs{Logger: engineLogger(cmd.ErrOrStderr())})
+}
+
+// loadError classifies a failed install detection: interrupted, no reachable
+// cluster, or another load failure. The text is redacted and cut (§7.1).
+func loadError(ctx context.Context, err error, host string) error {
+	var (
+		ue *url.Error
+		te *load.TimeoutError
+	)
+	what := "load cluster"
+	switch {
+	case ctx.Err() != nil:
+		what = "interrupted during install detection"
+	case errors.As(err, &ue), errors.As(err, &te) && te.Stage == load.StageDiscovery:
+		what = "no reachable cluster"
+	}
+	return fmt.Errorf("%s: %s", what, redact.ErrorText(err, host))
 }
 
 // collectorNames validates and returns the names of cs.

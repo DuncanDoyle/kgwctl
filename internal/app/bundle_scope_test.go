@@ -214,8 +214,20 @@ func TestResolveScope(t *testing.T) {
 	if len(sc.Installs) != 0 || len(warns) != 1 || !strings.Contains(warns[0], "no kgateway install") {
 		t.Errorf("no install: installs %+v, warnings %q", sc.Installs, warns)
 	}
-	if cs := controllerSelectors(none.result(t), sc); len(cs) != 0 {
-		t.Errorf("no install: controller selectors %v", cs)
+	if cs, errs := controllerSelectors(none.result(t), sc); len(cs) != 0 || len(errs) != 0 {
+		t.Errorf("no install: controller selectors %v, errors %v", cs, errs)
+	}
+
+	// An install without a usable selector is named, not silently dropped.
+	sc, _, _, _ = mustScope(t, &Flags{}, false, res)
+	if cs, errs := controllerSelectors(res, sc); len(cs) != 1 || len(errs) != 0 {
+		t.Errorf("controller selectors %v, errors %v; want one selector", cs, errs)
+	}
+	bad := one.result(t)
+	bad.Model.Installs[0].Resolved.Deployment.Spec.Selector = &metav1.LabelSelector{}
+	cs, errs := controllerSelectors(bad, sc)
+	if len(cs) != 0 || len(errs) != 1 || !strings.Contains(errs[0].Error(), "kgateway-system/kgateway") {
+		t.Errorf("empty selector: selectors %v, errors %v; want one error naming the install", cs, errs)
 	}
 }
 

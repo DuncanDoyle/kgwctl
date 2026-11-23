@@ -280,6 +280,24 @@ func TestBundleUnreachable(t *testing.T) {
 	if p.ran.Load() {
 		t.Error("a collector ran")
 	}
+	if host := strings.TrimPrefix(srv.URL, "http://"); strings.Contains(r.stderr, host) {
+		t.Errorf("stderr names the API host: %q", r.stderr)
+	}
+
+	// Ctrl-C during detection is reported as such, not as an unreachable cluster.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	cfgApp := app.Config{Build: testBuild, Out: &bytes.Buffer{}, Err: &bytes.Buffer{}, Now: testNow}
+	root := app.NewRootWithBundleHooks(cfgApp, app.BundleTestHooks{Now: func() time.Time { return bundleNow }})
+	root.SetArgs([]string{"--kubeconfig", kubeconfig, "bundle", "-o", out})
+	err := root.ExecuteContext(ctx)
+	var ee *app.ExitError
+	if !errors.As(err, &ee) || ee.Code != 2 || !strings.Contains(err.Error(), "interrupted") {
+		t.Errorf("cancelled: err %v, want exit 2 naming the interruption", err)
+	}
+	if _, err := os.Stat(out); !os.IsNotExist(err) {
+		t.Errorf("cancelled: output left behind: %v", err)
+	}
 }
 
 // TestBundleGuardsClients: Env's clients refuse Secrets and ConfigMaps unsent.

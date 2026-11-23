@@ -29,7 +29,7 @@ var refusedPhrase = []byte("connect: connection refused")
 
 // Guard returns a copy of cfg whose transport refuses every request for core
 // secrets and configmaps with pb.ErrForbiddenKind, unsent, and replaces each
-// error response body with a Status holding only code, reason and the
+// 4xx and 5xx response body with a Status holding only code, reason and the
 // refused cause (design §6.1, §7.1). Bodies are never stored.
 func Guard(cfg *rest.Config) *rest.Config {
 	c := rest.CopyConfig(cfg)
@@ -51,8 +51,8 @@ func (g *guard) RoundTrip(req *http.Request) (*http.Response, error) {
 		return nil, fmt.Errorf("%w: %s", pb.ErrForbiddenKind, res)
 	}
 	resp, err := g.next.RoundTrip(req)
-	// 1xx (upgrades) and 2xx pass; every other body is replaced.
-	if err != nil || resp.StatusCode < 300 {
+	// 1xx (upgrades), 2xx and 3xx pass; 4xx and 5xx bodies are replaced.
+	if err != nil || resp.StatusCode < 400 {
 		return resp, err
 	}
 	var refused bool
