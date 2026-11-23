@@ -363,3 +363,33 @@ func TestIdentitySealMidStream(t *testing.T) {
 		t.Errorf("%d Pod GETs after the seal, want 0", n)
 	}
 }
+
+// TestErrorDropsCallerIdentity: Error never publishes a caller-set identity,
+// as Source.Identity is output only on every Sink method.
+func TestErrorDropsCallerIdentity(t *testing.T) {
+	h := newHarness(t, mustLimits(t, 32<<20), redact.Options{}, "")
+	src := podSrc
+	src.Identity = pb.IdentityVerified
+	p := pb.Path{"proxies", "gw", "p-0", "logs", "envoy.log"}
+	h.w.Sink("logs").Error(p, src, errors.New("boom"))
+	it, _ := committedItem(t, h, p.String(), "logs")
+	if it.Source.Identity != "" || it.Source.UID != uid1 {
+		t.Errorf("error item source %+v, want the source without its identity", it.Source)
+	}
+}
+
+// TestNilContextIsBackground: a write with a nil ctx runs as with
+// context.Background(), re-read included.
+func TestNilContextIsBackground(t *testing.T) {
+	kube, gets := podClient()
+	h := podHarness(t, kube)
+	var nilCtx context.Context
+	p := pb.Path{"proxies", "gw", "p-0", "server_info.json"}
+	if err := h.w.Sink("c").JSON(nilCtx, p, strings.NewReader(`{}`), podSrc); err != nil {
+		t.Fatal(err)
+	}
+	it, _ := committedItem(t, h, p.String(), "c")
+	if it.Status != pb.ItemOK || it.Source.Identity != pb.IdentityVerified || gets.Load() != 1 {
+		t.Errorf("item %+v after %d GETs, want ok and verified after 1", it, gets.Load())
+	}
+}

@@ -107,6 +107,8 @@ func (s *sink) Omit(p pb.Path, src pb.Source, reason pb.OmitReason) error {
 }
 
 func (s *sink) Error(p pb.Path, src pb.Source, err error) {
+	// Identity is output only (D-027); an error item is never re-read.
+	src.Identity = ""
 	text := s.w.errorText(err)
 	path := p.String()
 	if pb.ValidatePath(p) != nil {

@@ -142,7 +142,8 @@ const (
 // After the content of a write with Source.Pod is read, also when it was
 // cut, the Sink re-reads the Pod, bounded by ctx and the request timeout,
 // and records the CaptureIdentity with the item. A write that failed is not
-// re-read. The identity never fails the item.
+// re-read. The identity never fails the item. A nil ctx is treated as
+// context.Background(). Error drops a caller-set Source.Identity.
 type Sink interface {
 	// Object writes a Kubernetes object as YAML.
 	Object(ctx context.Context, p Path, u *unstructured.Unstructured, src Source) error
