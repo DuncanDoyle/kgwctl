@@ -171,6 +171,54 @@ This Gateway also serves HTTPRoute `proxy/orders-kgwctl`, and the Envoy route na
 
 `-o json|yaml` prints one `ProxyRoutes` document ([`docs/output.md`](docs/output.md)) with the source, the snapshot, parser warnings and the ambiguous routes. Exit codes: `0` when printed, `2` on any error.
 
+### `bundle`
+
+Writes one `.tar.gz` with what a maintainer asks for in a kgateway case. It covers all namespaces and every detected install, unlike the other commands. Use `-n <ns>` or `--install <ns>/<name>` to narrow it. It runs with your own credentials and uploads nothing.
+
+```bash
+kgwctl bundle -o bundle.tar.gz
+```
+
+The archive root holds `manifest.json` (per-item status), `errors.txt`, `redactions.json` and `run.log`. Each collector writes its own part:
+
+| Collector | Collects | Needs | Path in the archive |
+|---|---|---|---|
+| `resources` | Gateway API and kgateway objects with status | reader | `resources/<group>/<kind>/<ns>/<name>.yaml` |
+| `workloads` | Deployments, Pods, Services and Events | reader | `workloads/<ns>/` |
+| `install` | controller Deployment, GatewayClasses | reader | `install/` |
+| `version` | Kubernetes, image and Envoy versions | reader; `pods/portforward` for the Envoy versions | `cluster/version.json` |
+| `check` | the `check` report | reader | `check/check.json` |
+| `logs` | controller and proxy logs, and the previous logs after a restart | `pods/log` | `controller/<ns>/<pod>/logs/`, `proxies/<ns>/<pod>/logs/` |
+| `controller-metrics` | controller `/metrics` | `pods/proxy` (reader) | `controller/<ns>/<pod>/metrics.txt` |
+| `proxy-metrics` | proxy `/metrics` | `pods/proxy` (reader) | `proxies/<ns>/<pod>/metrics.txt` |
+| `proxy-admin` | Envoy config dump, stats, server info, certs and clusters | `pods/portforward` | `proxies/<ns>/<pod>/` |
+
+`--skip <collector>,...` leaves collectors out, and `--list-collectors` prints their names. `--since` (default `24h`) and `--tail` (default `5000`) bound logs and Events. `--timeout` (default `5m`) ends collection, and `--max-size` (default `512Mi`) caps the uncompressed size. `-o` names the file, `-o -` writes to stdout. The file is created with mode `0600`, and kgwctl never overwrites one. Exit codes: `0` when a bundle was written, even a partial one, and `2` when none was.
+
+**Never requested.** kgwctl makes no API request for Secrets or ConfigMaps. Helm values are not collected either, because they live only in Secrets. It requests no controller admin endpoint (`/snapshots/xds` and `/snapshots/krt` can hold keys and credentials), and sends Envoy only fixed `GET` requests: config dump, stats, server info, certs and clusters. Two layers enforce this. A request guard wraps every client the command owns, including install detection, `check` and downstream collectors. It refuses any request for `secrets` or `configmaps` before it is sent. The archive writer also refuses a Secret or ConfigMap object of any API group, even inside a list.
+
+**Residual risk.** Although kgwctl never reads Secrets, the controller copies Secret values into Envoy config, such as a header value from a Secret reference. These derived values land in the config dump, and logs can echo them. The config dump, stats and metrics are kept whole, so with `-n` they can still name routes and backends in other namespaces. `check` reads cluster-wide. The config dump and `clusters.txt` hold endpoint addresses, which `--no-endpoints` drops. The bundle names namespaces, hosts and backends on purpose, so treat it as sensitive as your cluster's configuration.
+
+**Redaction.** Every file is redacted by its content type before it is written. Redacted values become `[redacted]`, so files keep their keys. It covers header values, inline JWKS private members, literal env values, credential-named keys and Envoy inline sources, and matches patterns such as `Bearer` tokens, JWTs, PEM private keys and AWS keys. Pass `--redact-header <name>,...` for custom credential headers. Redaction is best effort:
+
+- Logs and free text are caught only when a secret has a known shape. Custom formats, base64 and compressed content can pass.
+- Opaque extension config, such as an unknown `TypedStruct`, `Any` or Wasm configuration, gets only the pattern pass.
+- Map keys stay in the output.
+
+**Review before sharing.** Do not send the file unread:
+
+1. Read `redactions.json`. It lists the rule, location and count for each file, never a value.
+2. Search the logs and the config dump for tokens, internal hostnames and anything you don't want to share.
+3. Rerun with `--skip logs`, `--no-endpoints` or `--redact-header` if something is there.
+
+[`docs/bundle-threat-model.md`](docs/bundle-threat-model.md) lists every artifact, rule and limit.
+
+**RBAC.** The `kgwctl-reader` ClusterRole in [`docs/rbac.yaml`](docs/rbac.yaml) covers everything except logs and Envoy admin captures. Two optional Roles add them: `kgwctl-bundle-logs` (`get pods/log`) and `kgwctl-proxy-portforward` (`create pods/portforward`). Apply each in every namespace with controller or proxy Pods. Both grants reach every Pod in the namespace, so bind them only to trusted operators. With the reader role alone, the command exits `0`. The affected logs and Envoy captures are marked `denied` in `manifest.json`, and `errors.txt` ends with one grant line per grant and namespace:
+
+```
+grant: get pods/log in namespace kgateway-system: see the kgwctl-bundle-logs Role in docs/rbac.yaml
+```
+
 ## Global flags
 
 | Flag | Meaning |
@@ -185,11 +233,11 @@ This Gateway also serves HTTPRoute `proxy/orders-kgwctl`, and the Envoy route na
 
 ## Output and exit codes
 
-`get`, `describe` and `version` exit `0` on success and `1` on any error. `check` exits `0` when clean, `1` for problems and `2` when it could not check something. `proxy dump` and `proxy routes` exit `0` or `2`. Data goes to stdout; errors and warnings go to stderr. With `-o json|yaml`, `describe`, `version`, `check` and `proxy routes` print a versioned envelope, documented in [`docs/output.md`](docs/output.md); `get` prints a plain Kubernetes `List`. Tables and text layouts are not a stable interface.
+`get`, `describe` and `version` exit `0` on success and `1` on any error. `check` exits `0` when clean, `1` for problems and `2` when it could not check something. `proxy dump`, `proxy routes` and `bundle` exit `0` or `2`. Data goes to stdout; errors and warnings go to stderr. With `-o json|yaml`, `describe`, `version`, `check` and `proxy routes` print a versioned envelope, documented in [`docs/output.md`](docs/output.md); `get` prints a plain Kubernetes `List`. Tables and text layouts are not a stable interface.
 
 ## Permissions
 
-kgwctl only reads. It needs `get`, `list` and `watch` on the Gateway API and kgateway kinds, Namespaces, Pods, Events, Services, EndpointSlices, Deployments and CustomResourceDefinitions, and `get` on `pods/proxy` for `check` and the bundle's metrics. It never reads Secrets or ConfigMaps. [`docs/rbac.yaml`](docs/rbac.yaml) holds that ClusterRole, plus a sample ServiceAccount and binding. The reader role grants no `pods/portforward` or `pods/log`. Two optional Roles at the end of the file add them: `kgwctl-proxy-portforward` for the `proxy` commands and the bundle's Envoy captures (see [`proxy dump`](#proxy-dump-gateway)), and `kgwctl-bundle-logs` for the bundle's logs. `get pods/log` reads every Pod's logs in its namespace. When a grant is missing, `kgwctl bundle` still writes a bundle, and `errors.txt` ends with one line per missing grant and namespace.
+kgwctl only reads. It needs `get`, `list` and `watch` on the Gateway API and kgateway kinds, Namespaces, Pods, Events, Services, EndpointSlices, Deployments and CustomResourceDefinitions, and `get` on `pods/proxy` for `check` and the bundle's metrics. It never reads Secrets or ConfigMaps. [`docs/rbac.yaml`](docs/rbac.yaml) holds that ClusterRole, plus a sample ServiceAccount and binding. The reader role grants no `pods/portforward` or `pods/log`. Two optional Roles at the end of the file add them: `kgwctl-proxy-portforward` for the `proxy` commands and the bundle's Envoy captures (see [`proxy dump`](#proxy-dump-gateway)), and `kgwctl-bundle-logs` for the bundle's logs. `get pods/log` reads every Pod's logs in its namespace. When a grant is missing, `kgwctl bundle` still writes a bundle, and `errors.txt` ends with one line per missing grant and namespace. See [`bundle`](#bundle).
 
 Apply the file with:
 
@@ -205,7 +253,7 @@ When the kind `get` or `describe` was asked for can't be read, the command fails
 
 ## Extending
 
-Downstream builds embed the CLI through [`pkg/cli`](pkg/cli). `cli.NewRootCommand` takes options for the binary name, a registry of extra kinds and install detectors, extra commands and build info. [`examples/downstream`](examples/downstream) is a complete example.
+Downstream builds embed the CLI through [`pkg/cli`](pkg/cli). `cli.NewRootCommand` takes options for the binary name, a registry of extra kinds and install detectors, extra commands and build info. `cli.WithBundleCollectors` adds collectors to `bundle`. They run after the built-in ones, appear in `--list-collectors`, and honor `--skip`. A collector writes only through the `bundle.Sink`, so the redaction and the Secret and ConfigMap refusal apply to it. A name that is invalid, or repeats a built-in or another added collector, makes `bundle` exit `2`. [`examples/downstream`](examples/downstream) is a complete example, including a bundle collector.
 
 ## Development
 
