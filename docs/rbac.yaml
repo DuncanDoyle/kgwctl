@@ -18,11 +18,12 @@ rules:
       - grpcroutes
       - tcproutes
       - tlsroutes
+      - udproutes
       - backendtlspolicies
       - referencegrants
     verbs: ["get", "list", "watch"]
   - apiGroups: ["gateway.networking.x-k8s.io"]
-    resources: ["xlistenersets"]
+    resources: ["xlistenersets", "xbackends", "xbackendtrafficpolicies", "xtelemetrypolicies"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["gateway.kgateway.dev"]
     resources:

@@ -15,8 +15,13 @@ envtest installs only `CustomResourceDefinition` documents, so the bundles' Vali
 
 Gateway API v1.7.0's experimental channel has no `XListenerSet`; ListenerSet is in the standard channel. v1.4.1 is the newest release whose experimental channel still ships `XListenerSet`.
 
-To refresh, derive the Gateway API version from the release's `go.mod`:
+## When you bump these CRDs
 
-```bash
-gh api repos/kgateway-dev/kgateway/contents/go.mod?ref=<tag> --jq .content | base64 -d | grep sigs.k8s.io/gateway-api
-```
+1. Derive the Gateway API version from the kgateway release `go.mod`:
+   ```bash
+   gh api repos/kgateway-dev/kgateway/contents/go.mod?ref=<tag> --jq .content | base64 -d | grep sigs.k8s.io/gateway-api
+   ```
+2. Refresh the CRD files, then `git diff` them against the old ones.
+3. For each new kind, add it to `docs/rbac.yaml` (`TestReaderRoleCoversServedKinds` enforces this) and decide whether kgwctl supports it.
+4. For each changed kind, check served and storage versions, and new fields that hold credentials or Secret references, which redaction must cover.
+5. Bump the fixture version labels with the CRDs.
