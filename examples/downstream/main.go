@@ -22,9 +22,11 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/utils/clock"
 
+	"github.com/DuncanDoyle/kgwctl/pkg/bundle"
 	"github.com/DuncanDoyle/kgwctl/pkg/cli"
 )
 
@@ -43,6 +45,12 @@ const (
 	serverHoldReason = "Waiting to see if the example server becomes ready"
 )
 
+// The example bundle collector's name and the secret-shaped value it plants to show the Sink's guarantees.
+const (
+	evidenceName   = "example-evidence"
+	evidenceCanary = "kgwctl-canary-example"
+)
+
 // serverHold is how long an unready server is held before it is a finding; tests shorten it.
 var serverHold = 30 * time.Second
 
@@ -58,6 +66,7 @@ func newRoot() *cobra.Command {
 	return cli.NewRootCommand(
 		cli.WithName("vendorctl"),
 		cli.WithRegistry(newRegistry()),
+		cli.WithBundleCollectors(evidence{}),
 		cli.WithCommands(&cobra.Command{
 			Use:   "hello",
 			Short: "Print hello",
@@ -65,6 +74,33 @@ func newRoot() *cobra.Command {
 			Run:   func(cmd *cobra.Command, _ []string) { fmt.Fprintln(cmd.OutOrStdout(), "hello") },
 		}),
 	)
+}
+
+// evidence is the example bundle collector. It writes a secret-shaped value through
+// JSON and Text, which the Sink redacts, then tries two writes the Sink refuses.
+type evidence struct{}
+
+func (evidence) Name() string { return evidenceName }
+
+// Collect writes two typed items, then a raw payload and a Secret. The Sink
+// records each refusal as a failed item, so Collect ignores those errors.
+func (evidence) Collect(ctx context.Context, _ bundle.Env, s bundle.Sink) error {
+	if err := s.JSON(ctx, bundle.Path{"example", "evidence.json"},
+		strings.NewReader(`{"service":"example","token":"`+evidenceCanary+`"}`), bundle.Source{}); err != nil {
+		return err
+	}
+	if err := s.Text(ctx, bundle.Path{"example", "evidence.txt"},
+		strings.NewReader("GET /callback?access_token="+evidenceCanary+"&state=abc\n"), bundle.Source{}); err != nil {
+		return err
+	}
+	// There is no raw write: a payload that is no JSON document is refused.
+	_ = s.JSON(ctx, bundle.Path{"example", "payload.json"}, strings.NewReader("raw payload "+evidenceCanary), bundle.Source{})
+	secret := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1", "kind": "Secret", "metadata": map[string]any{"name": "example", "namespace": "default"},
+		"data": map[string]any{"token": evidenceCanary},
+	}}
+	_ = s.Object(ctx, bundle.Path{"example", "secret.yaml"}, secret, bundle.Source{})
+	return nil
 }
 
 // newRegistry adds the example pack to the defaults: the ExamplePolicy kind,

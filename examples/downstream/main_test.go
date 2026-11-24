@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/DuncanDoyle/snellius/pkg/kinds"
 	"k8s.io/client-go/tools/clientcmd"
 
+	"github.com/DuncanDoyle/kgwctl/internal/bundle/bundletest"
 	"github.com/DuncanDoyle/kgwctl/internal/load"
 	"github.com/DuncanDoyle/kgwctl/internal/testenv"
 	"github.com/DuncanDoyle/kgwctl/pkg/cli"
@@ -119,6 +121,67 @@ func TestDownstreamCommand(t *testing.T) {
 	code, stdout, stderr := runRoot(t, env, "hello")
 	if code != 0 || stdout != "hello\n" {
 		t.Errorf("exit %d, stdout %q, stderr %q; want 0 and \"hello\\n\"", code, stdout, stderr)
+	}
+}
+
+// bundleArchive runs `bundle` against env and returns the extracted archive.
+func bundleArchive(t *testing.T, env *testenv.Env, args ...string) bundletest.Archive {
+	t.Helper()
+	code, stdout, stderr := runRoot(t, env, append([]string{"bundle", "-o", "-", "--skip", "version,check"}, args...)...)
+	if code != 0 {
+		t.Fatalf("exit %d, stderr: %s", code, stderr)
+	}
+	return bundletest.Extract(t, strings.NewReader(stdout))
+}
+
+func TestWithBundleCollectors(t *testing.T) {
+	env := newEnv(t)
+	code, stdout, stderr := runRoot(t, env, "bundle", "--list-collectors")
+	if code != 0 || !slices.Contains(strings.Fields(stdout), evidenceName) {
+		t.Fatalf("exit %d, stdout %q, stderr %q; want 0 and %s listed", code, stdout, stderr, evidenceName)
+	}
+	a := bundleArchive(t, env)
+	b, ok := a.File("example/evidence.json")
+	if !ok || !strings.Contains(string(b), "[redacted]") || !strings.Contains(string(b), `"service": "example"`) {
+		t.Errorf("example/evidence.json = %q (found %v); want the item with its token redacted", b, ok)
+	}
+	if skipped := bundleArchive(t, env, "--skip", evidenceName); func() bool { _, ok := skipped.File("example/evidence.json"); return ok }() {
+		t.Error("--skip did not leave the example collector out")
+	}
+}
+
+func TestDownstreamCanaries(t *testing.T) {
+	env := newEnv(t)
+	a := bundleArchive(t, env)
+	bundletest.AssertNoCanary(t, a, []string{evidenceCanary})
+	// The typed writes land; the undeclared payload and the Secret are refused and recorded.
+	for _, name := range []string{"example/evidence.json", "example/evidence.txt"} {
+		if _, ok := a.File(name); !ok {
+			t.Errorf("archive lacks %s", name)
+		}
+	}
+	for _, name := range []string{"example/payload.json", "example/secret.yaml"} {
+		if _, ok := a.File(name); ok {
+			t.Errorf("archive holds the refused item %s", name)
+		}
+	}
+	var m struct {
+		Item struct {
+			Items []struct{ Path, Status string }
+		}
+	}
+	mf, _ := a.File("manifest.json")
+	if err := json.Unmarshal(mf, &m); err != nil {
+		t.Fatal(err)
+	}
+	status := map[string]string{}
+	for _, it := range m.Item.Items {
+		status[it.Path] = it.Status
+	}
+	for _, p := range []string{"example/payload.json", "example/secret.yaml"} {
+		if status[p] != "failed" {
+			t.Errorf("%s status = %q, want failed (items: %v)", p, status[p], status)
+		}
 	}
 }
 

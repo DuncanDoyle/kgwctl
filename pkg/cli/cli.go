@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/DuncanDoyle/kgwctl/internal/app"
+	"github.com/DuncanDoyle/kgwctl/pkg/bundle"
 )
 
 // BuildInfo identifies a build; main sets it through ldflags.
@@ -20,6 +21,8 @@ type options struct {
 	registry *extension.Registry
 	commands []*cobra.Command
 	build    BuildInfo
+
+	collectors []bundle.Collector
 }
 
 // Option configures NewRootCommand.
@@ -39,6 +42,12 @@ func WithCommands(c ...*cobra.Command) Option {
 	return func(o *options) { o.commands = append(o.commands, c...) }
 }
 
+// WithBundleCollectors adds collectors to `bundle`, run after the built-in ones.
+// An invalid name, or one that repeats a built-in or another added collector, fails `bundle`.
+func WithBundleCollectors(c ...bundle.Collector) Option {
+	return func(o *options) { o.collectors = append(o.collectors, c...) }
+}
+
 // WithBuildInfo sets the build information that version reports.
 func WithBuildInfo(b BuildInfo) Option { return func(o *options) { o.build = b } }
 
@@ -54,7 +63,7 @@ func NewRootCommand(opts ...Option) *cobra.Command {
 		o.registry = extension.New()
 	}
 	logIgnored(o.registry)
-	return app.NewRoot(app.Config{Name: o.name, Registry: o.registry, Commands: o.commands, Build: o.build})
+	return app.NewRoot(app.Config{Name: o.name, Registry: o.registry, Commands: o.commands, Collectors: o.collectors, Build: o.build})
 }
 
 // Execute runs root and returns the exit code: 0, or 1 after "Error: <msg>" on stderr.

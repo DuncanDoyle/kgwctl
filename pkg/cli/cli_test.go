@@ -5,6 +5,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/DuncanDoyle/snellius/pkg/proxystats"
 	"github.com/spf13/cobra"
 
+	"github.com/DuncanDoyle/kgwctl/pkg/bundle"
 	"github.com/DuncanDoyle/kgwctl/pkg/cli"
 )
 
@@ -79,5 +81,49 @@ func TestIgnoredCapabilitiesLogOneDebugLineEach(t *testing.T) {
 	cli.NewRootCommand()
 	if buf.Len() != 0 {
 		t.Errorf("default registry logged: %s", buf.String())
+	}
+}
+
+// bundleProbe is a bundle collector that writes nothing.
+type bundleProbe string
+
+func (p bundleProbe) Name() string                                         { return string(p) }
+func (bundleProbe) Collect(context.Context, bundle.Env, bundle.Sink) error { return nil }
+
+// listCollectors runs `bundle --list-collectors` and returns the exit code and output.
+func listCollectors(t *testing.T, cs ...bundle.Collector) (code int, stdout, stderr string) {
+	t.Helper()
+	var out, errb bytes.Buffer
+	root := cli.NewRootCommand(cli.WithBundleCollectors(cs...))
+	root.SetOut(&out)
+	root.SetErr(&errb)
+	root.SetArgs([]string{"bundle", "--list-collectors"})
+	code = cli.Execute(root)
+	return code, out.String(), errb.String()
+}
+
+func TestWithBundleCollectors(t *testing.T) {
+	t.Run("listed after the built-in collectors", func(t *testing.T) {
+		code, stdout, stderr := listCollectors(t, bundleProbe("alpha"), bundleProbe("beta"))
+		names := strings.Fields(stdout)
+		if code != 0 || len(names) < 3 || names[len(names)-2] != "alpha" || names[len(names)-1] != "beta" || !slices.Contains(names, "logs") {
+			t.Errorf("exit %d, names %v, stderr %q; want 0 and the built-ins then alpha, beta", code, names, stderr)
+		}
+	})
+	for _, tc := range []struct {
+		name string
+		cs   []bundle.Collector
+		want string
+	}{
+		{"built-in name", []bundle.Collector{bundleProbe("logs")}, `duplicate collector name "logs"`},
+		{"two downstream collectors", []bundle.Collector{bundleProbe("alpha"), bundleProbe("alpha")}, `duplicate collector name "alpha"`},
+		{"invalid name", []bundle.Collector{bundleProbe("Not Valid")}, `invalid collector name "Not Valid"`},
+	} {
+		t.Run(tc.name+" is an error", func(t *testing.T) {
+			code, stdout, stderr := listCollectors(t, tc.cs...)
+			if code == 0 || stdout != "" || !strings.Contains(stderr, tc.want) {
+				t.Errorf("exit %d, stdout %q, stderr %q; want an error with %q and no list", code, stdout, stderr, tc.want)
+			}
+		})
 	}
 }
