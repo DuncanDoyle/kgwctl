@@ -892,9 +892,12 @@ MANIFEST
   pods_ready "$CANARY_NS" gateway.networking.k8s.io/gateway-name=canary
   k -n "$CANARY_NS" wait --for=jsonpath='{.status.ancestors[0].controllerName}'=kgateway.dev/kgateway \
     trafficpolicy/canary-header trafficpolicy/canary-extauth trafficpolicy/canary-jwt --timeout=120s
-  # The proxy has all three translated before the bundle runs; the dump stays in $OUT (git-ignored).
-  dump_until "$OUT/bundle/canary-wait.json" "$CANARY_NS" canary \
-    'tostring | contains("x-tenant-key") and contains("x-canary-ext") and contains("local_jwks")'
+  # The proxy has all three translated before the bundle runs; the dump holds raw values, so it is removed.
+  local wait="$OUT/bundle/canary-wait.json" rc=0
+  dump_until "$wait" "$CANARY_NS" canary \
+    'tostring | contains("x-tenant-key") and contains("x-canary-ext") and contains("local_jwks")' || rc=$?
+  rm -f "$wait" "$wait.stderr"
+  return "$rc"
 }
 
 # debug_request: raises the canary proxy to debug logging over a port-forward of its admin port, sends
@@ -917,10 +920,17 @@ debug_request() {
     wait "$pid" 2>/dev/null || true
     return 1
   fi
+  # An interrupt or failure from here on puts the level back to info and stops the port-forward.
+  restore_level() {
+    curl -fsS -o /dev/null -X POST "http://127.0.0.1:$admin/logging?level=info" || return 1
+  }
+  trap 'restore_level || true; kill "$pid" 2>/dev/null || true' EXIT
+  trap 'exit 130' INT TERM
   curl -fsS -o /dev/null -X POST "http://127.0.0.1:$admin/logging?level=debug" || { log "FAIL raise log level"; ok=1; }
   code="$(curl -sS -o /dev/null -w '%{http_code}' -H 'Host: canary.kgwctl.example' \
     -H "x-tenant-key: $(canary secret-header)" "http://127.0.0.1:$lp/headers")" || true
-  curl -fsS -o /dev/null -X POST "http://127.0.0.1:$admin/logging?level=info" || { log "FAIL restore log level"; ok=1; }
+  restore_level || { log "FAIL restore log level"; ok=1; }
+  trap - EXIT INT TERM
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
   log "debug request through $CANARY_NS/$pod: HTTP $code; log level back to info"

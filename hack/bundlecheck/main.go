@@ -5,7 +5,8 @@
 //	bundlecheck prom <file>...                   check each file parses as Prometheus text exposition
 //
 // scan reports a canary found raw, base64-encoded, inside a decoded base64 run, or inside a gzip
-// member or gzip payload. It prints canary labels and member names, never canary values.
+// member or gzip payload. It prints canary labels and member names that carry no canary, never
+// canary values; a member whose name carries one is shown by its index.
 package main
 
 import (
@@ -38,7 +39,7 @@ func main() {
 		}
 		err = extract(os.Args[2], os.Args[3])
 	case "scan":
-		err = scan(os.Args[2], os.Args[3:])
+		err = scan(os.Stdout, os.Args[2], os.Args[3:])
 	case "prom":
 		err = prom(os.Args[2:])
 	default:
@@ -61,6 +62,7 @@ type member struct {
 }
 
 // members reads every regular file of a tar.gz; a duplicate or unsafe name is an error.
+// Errors name a member by its index, since a name can carry a canary.
 func members(archive string) ([]member, error) {
 	f, err := os.Open(archive)
 	if err != nil {
@@ -74,7 +76,7 @@ func members(archive string) ([]member, error) {
 	tr := tar.NewReader(zr)
 	seen := map[string]bool{}
 	var out []member
-	for {
+	for idx := 0; ; idx++ {
 		h, err := tr.Next()
 		if errors.Is(err, io.EOF) {
 			return out, nil
@@ -84,10 +86,10 @@ func members(archive string) ([]member, error) {
 		}
 		clean := path.Clean(h.Name)
 		if path.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, "../") {
-			return nil, fmt.Errorf("unsafe member name %q", h.Name)
+			return nil, fmt.Errorf("unsafe name on member #%d", idx)
 		}
 		if seen[clean] {
-			return nil, fmt.Errorf("duplicate member %q", h.Name)
+			return nil, fmt.Errorf("member #%d duplicates an earlier member name", idx)
 		}
 		seen[clean] = true
 		switch h.Typeflag {
@@ -95,7 +97,7 @@ func members(archive string) ([]member, error) {
 			continue
 		case tar.TypeReg:
 		default:
-			return nil, fmt.Errorf("member %q has type %c, want a regular file", h.Name, h.Typeflag)
+			return nil, fmt.Errorf("member #%d has type %c, want a regular file", idx, h.Typeflag)
 		}
 		b, err := io.ReadAll(tr)
 		if err != nil {
@@ -125,7 +127,8 @@ func extract(archive, dir string) error {
 
 type canary struct{ label, value string }
 
-func scan(archive string, args []string) error {
+// scan writes its findings to w.
+func scan(w io.Writer, archive string, args []string) error {
 	var cs []canary
 	for _, a := range args {
 		l, v, ok := strings.Cut(a, "=")
@@ -142,14 +145,19 @@ func scan(archive string, args []string) error {
 		return err
 	}
 	leaks := 0
-	for _, m := range ms {
+	for i, m := range ms {
+		// A name that carries a canary is shown by its index, never by its text.
+		shown := m.name
 		for _, c := range cs {
-			if strings.Contains(m.name, c.value) {
-				fmt.Printf("LEAK %s in member name %s\n", c.label, m.name)
+			if how := find([]byte(m.name), c.value, 0); how != "" {
+				fmt.Fprintf(w, "LEAK %s in the name of member #%d (%s)\n", c.label, i, how)
+				shown = fmt.Sprintf("member #%d", i)
 				leaks++
 			}
+		}
+		for _, c := range cs {
 			if how := find(m.body, c.value, 0); how != "" {
-				fmt.Printf("LEAK %s in %s (%s)\n", c.label, m.name, how)
+				fmt.Fprintf(w, "LEAK %s in %s (%s)\n", c.label, shown, how)
 				leaks++
 			}
 		}
@@ -157,7 +165,7 @@ func scan(archive string, args []string) error {
 	if leaks > 0 {
 		return fmt.Errorf("%d canary hits", leaks)
 	}
-	fmt.Printf("scanned %d members for %d canaries (raw, base64, gzip): none found\n", len(ms), len(cs))
+	fmt.Fprintf(w, "scanned %d members for %d canaries (raw, base64, gzip): none found\n", len(ms), len(cs))
 	return nil
 }
 

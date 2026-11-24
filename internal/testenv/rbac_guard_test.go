@@ -60,7 +60,7 @@ func TestReaderRoleCoversServedKinds(t *testing.T) {
 
 	// The bundle lists the Gateway API groups whole and kinds in the kgateway category.
 	listed := map[string]bool{"gateway.networking.k8s.io": true, "gateway.networking.x-k8s.io": true}
-	dirs := []string{"gateway-api", "kgateway"}
+	dirs := []string{"gateway-api", "kgateway", "xlistenerset"}
 	checked := 0
 	for _, dir := range dirs {
 		err := filepath.WalkDir(filepath.Join("testdata", "crds", dir), func(p string, e os.DirEntry, err error) error {
