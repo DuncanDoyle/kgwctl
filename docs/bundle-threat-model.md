@@ -119,8 +119,8 @@ Downstream builds can register their own collectors. These are trusted in-proces
 2. **A single JWK or a PEM public key is redacted whole.** The JWKS rule accepts only a `{"keys":[...]}` set. Other shapes lose their public members too.
 3. **Pattern redaction is best effort.** Free text and logs are caught only when a secret has a known shape or a credential-named key. Custom formats, base64-encoded or compressed content, and application log formats can pass. Unknown extension config (`TypedStruct`, `Any`, Wasm configuration) gets only the pattern pass.
 4. **Names reveal topology.** Metrics, stats and object names show namespaces, services, routes and hosts. This is on purpose.
-5. **`-n` does not bound derived artifacts.** Proxy config dumps, stats and metrics are kept whole. They can name other namespaces' routes and backends, also under `-n`. `check` reads cluster-wide.
-6. **Endpoint addresses.** The config dump with endpoints (EDS) and `clusters.txt` hold endpoint IP addresses. `--no-endpoints` drops both. Pod and Service IPs in workload objects stay.
+5. **`-n` does not bound derived artifacts or the controller.** Proxy config dumps, stats and metrics are kept whole. They can name other namespaces' routes and backends, also under `-n`. Controller logs and metrics are collected from every selected install, and the install namespace is always included. `check` reads cluster-wide.
+6. **Endpoint addresses.** The config dump with endpoints (EDS) and `clusters.txt` hold endpoint IP addresses. `--no-endpoints` drops both. Pod and Service IPs in workload objects stay, and so do static and DNS `load_assignment` addresses in the config dump.
 7. **Envoy redacts little.** Envoy `/config_dump` redacts only the fields Envoy marks sensitive. kgwctl's header-value rule covers the structures listed above. A secret in another Envoy field relies on the key-name rule and the pattern pass.
 8. **Values resolved from Secrets.** kgwctl never reads Secrets, but the controller copies Secret values into Envoy config, for example a header from a Secret reference. The structural rules catch these in the known header structures. Logs can echo them anywhere.
 9. **Over-redaction.** A `BEGIN … PRIVATE KEY` marker with no matching end redacts every later line of that log. Every scalar under a credential-named object is redacted, including values that are not secret.
@@ -130,6 +130,6 @@ Downstream builds can register their own collectors. These are trusted in-proces
 - Review the archive before you send it. Read `redactions.json` and look at the logs and the config dump.
 - Use `--skip logs` when logs may carry application data or tokens in a custom format.
 - Use `--no-endpoints` when endpoint IP addresses are sensitive.
-- Use `-n <namespace>` to limit resources, workloads, Events and logs. Proxy captures and metrics can still name other namespaces.
+- Use `-n <namespace>` to limit resources, workloads and Events to that namespace plus the install namespaces. Proxy captures, metrics and controller logs can still name other namespaces.
 - Use `--redact-header <name>,...` for custom headers that carry credentials, such as a tenant key.
-- Grant `pods/portforward` and `pods/log` only in the namespaces you need.
+- Grant `pods/log` only in the namespaces you need. Grant `pods/portforward` only in Gateway (proxy) namespaces, since in a controller namespace it would reach the controller admin port.
