@@ -217,3 +217,9 @@ Downstream collectors are trusted in-process code. The Sink and the guard protec
 - `verified`, `changed`, `gone` and `reread-failed` are metadata. None makes an item or collector fail.
 **Alternatives:** An item handle with a one-shot `SetIdentity`: collectors can forget it, and a failed write has no handle. A path-based `Identity` amendment plus `Outcome`: a wrong path can amend another item, and the writer needs an amendment index.
 **Consequences:** `pkg/bundle.Sink` changes before any release; the 4.2 collectors and `examples/downstream` move to it in the same task. One GET per Pod capture, on the collector's own worker. Design §5 and §8.1–§8.4 updated.
+
+## D-028 — The reader role lists resources explicitly, guarded by a test (2026-11-24, phase 4) — decided by the owner 2026-11-24
+**Context:** The bundle lists every served Gateway API kind. Gateway API v1.7.0 serves UDPRoute and three experimental kinds the `kgwctl-reader` ClusterRole did not grant, so a reader-only bundle recorded them as `denied`.
+**Decision:** `docs/rbac.yaml` names every resource; no `*` in `resources` or `apiGroups`. `TestReaderRoleCoversServedKinds` fails when a test CRD in a group the bundle lists has a kind the role lacks. Each bump of the test CRDs follows the checklist in `internal/testenv/testdata/crds/README.md`: diff the CRDs, review new kinds (RBAC, support) and changed kinds (served versions, credential fields for redaction).
+**Alternatives:** `resources: ["*"]` per group: covers new kinds without a change, but admission policies and security reviews often reject a wildcard Role. Listing only registry kinds: drops new kinds from the bundle without a trace.
+**Consequences:** Each new kind needs a one-line RBAC change, which the test enforces on the next CRD bump. A cluster running a newer Gateway API than the test CRDs still shows the new kind as `denied` with a reader grant line.

@@ -6,7 +6,7 @@ Base: 38acaa0
 Author: anthropic (claude-opus-5-5 controller; Claude subagent implementers)
 Advisory: none
 Docs: docs/phases/phase-4/
-Status: implementing; 4.1–4.3 closed, 4.4 next
+Status: implementing; 4.1–4.4 closed; Phase 4 review next
 
 ### Queue
 - [x] Q1 Phase 4 design (`design.md`) r1, with research notes (prior art, reuse, threats) — not committed, in .agents-tmp/
@@ -18,7 +18,8 @@ Status: implementing; 4.1–4.3 closed, 4.4 next
 - [x] Q6 Sub-phase 4.1 (contract, redaction, writer, runner, threat model) — phase-4.1-complete.md; Codex reviews 4.1-codex.md … -r4.md
 - [x] Q7 Sub-phase 4.2 (command, guard, scope, inventory, Envoy transport, cluster-state collectors) — phase-4.2-complete.md
 - [x] Q8 Sub-phase 4.3 (writer split, Sink contract D-027, logs, metrics, Envoy capture, RBAC and partial runs) — phase-4.3-complete.md
-- [ ] Q9 Sub-phase 4.4 (extension point, README, live check) ← CURRENT
+- [x] Q9 Sub-phase 4.4 (extension point, README, live check, reader role D-028) — phase-4.4-complete.md
+- [ ] Q10 Phase 4 review (Codex) + triage; owner try-out on kind; program file note ← CURRENT
 
 ### Exit gates
 - [ ] tests/vet pass
@@ -29,21 +30,7 @@ Status: implementing; 4.1–4.3 closed, 4.4 next
 - [ ] phase-4-complete.md written, roadmap updated, tracked items closed
 
 ## Sub-phase
-Sub-phase: 4.4 — Extension point, README, live check
-Kind: planned
-Base: b12d3a7
-Brief: docs/phases/phase-4/phase-4.4-brief.md
-
-### Allowed work
-Features within the approved design (r6): plan Tasks 4.4.1–4.4.3.
-
-### Not allowed
-Design changes without a decisions.md entry and owner approval; the xdsview bump; new collectors.
-
-### Queue
-- [ ] T1 Task 4.4.1 `WithBundleCollectors` ← CURRENT
-- [ ] T2 Task 4.4.2 README `bundle` section
-- [ ] T3 Task 4.4.3 Live check on kind (admin and reader-only)
+none active
 
 ## Program
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
@@ -70,3 +57,4 @@ Design changes without a decisions.md entry and owner approval; the xdsview bump
 - 2026-11-22 Sub-phase 4.1 closed: docs/phases/phase-4/phase-4.1-complete.md.
 - 2026-11-23 Sub-phase 4.2 closed: docs/phases/phase-4/phase-4.2-complete.md. Gates at 6376149 plus docs: `make test` (race, envtest) exit 0 (internal/app 211 s); `go vet ./...` and gofmt clean; `go mod tidy -diff` empty.
 - 2026-11-23 Sub-phase 4.3 closed: docs/phases/phase-4/phase-4.3-complete.md. Gates at bb63cac plus close docs: `make test` (race, envtest) exit 0, 16 packages (internal/app 226 s); `make lint` and `go mod tidy -diff` clean.
+- 2026-11-24 Sub-phase 4.4 closed: docs/phases/phase-4/phase-4.4-complete.md. Gates at 838c0b8: `make test` (race, envtest) exit 0, 17 packages (internal/app 223 s); `make lint` and `go mod tidy -diff` clean; live check bundle exit 0 with stock `docs/rbac.yaml`.
