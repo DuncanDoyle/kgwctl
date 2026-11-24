@@ -8,6 +8,8 @@
 #                                          toggles the Helm value enableRouteSourceMetadata
 #   hack/live-check.sh goldens             capture testdata/dumps/*.json; toggles the Helm value enableRouteSourceMetadata
 #   hack/live-check.sh goldens-check       rerun the goldens' content (no credential material) and shape checks; offline
+#   hack/live-check.sh bundle              plant canaries in namespace kgwctl-canary, run kgwctl bundle as admin and
+#                                          as reader only, scan both archives and check captures and grant lines
 #
 # verify also runs `check`, with two scenarios as admin: controller down, route to a missing Service.
 # Env: KUBECONFIG_FILE (admin kubeconfig, default hack/live/out/admin.kubeconfig),
@@ -643,6 +645,415 @@ routes() {
   log "routes passed; outputs in $dir"
 }
 
+CANARY_NS=kgwctl-canary
+# Planted values that no archive member may hold. All are pattern-free except the Event's,
+# which follows "Bearer" so the pattern pass must catch it. The JWK k is valid base64url.
+CANARIES=(
+  secret-header=kgwq7Zt4mWx9LpR2vKcHdr
+  extauth-header=kgwN3pX8rT5yB1cExtAdd
+  event-bearer=kgwM6dF2hJ9sQ4wEvtTok
+  gwparams-env=kgwR8gV3nK7tZ2bEnvVal
+  jwks-k=kgwW5cY1aL6uP9oJwkSym0
+)
+# canary <label>: the planted value.
+canary() {
+  local c
+  for c in "${CANARIES[@]}"; do
+    [ "${c%%=*}" = "$1" ] && { echo "${c#*=}"; return; }
+  done
+  return 1
+}
+
+# pods_ready <namespace> <selector>: waits for the Pods to exist and be Ready. Reads Pod conditions, not
+# Deployment status, so it does not depend on kube-controller-manager.
+pods_ready() {
+  local _
+  for _ in $(seq 60); do
+    [ -n "$(k -n "$1" get pods -l "$2" -o name)" ] && break
+    sleep 2
+  done
+  k -n "$1" wait --for=condition=Ready pod -l "$2" --timeout=300s
+}
+
+# Plants the canaries in $CANARY_NS:a Gateway "canary" with its own proxy, an echo backend, and the
+# canary objects; applied client-side so last-applied-configuration carries the values too. Reapplying
+# is safe; the Event is recreated so its time stays inside the bundle's --since window.
+bundle_canaries() {
+  local now
+  now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  k delete event -n "$CANARY_NS" canary-event --ignore-not-found >/dev/null
+  k apply -f - >/dev/null <<MANIFEST
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: $CANARY_NS
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: canary-header
+  namespace: $CANARY_NS
+stringData:
+  x-tenant-key: $(canary secret-header)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: echo
+  namespace: $CANARY_NS
+spec:
+  selector:
+    matchLabels:
+      app: echo
+  template:
+    metadata:
+      labels:
+        app: echo
+    spec:
+      containers:
+        - name: echo
+          image: mccutchen/go-httpbin:v2.15.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: echo
+  namespace: $CANARY_NS
+spec:
+  selector:
+    app: echo
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: GatewayParameters
+metadata:
+  name: canary-params
+  namespace: $CANARY_NS
+spec:
+  kube:
+    envoyContainer:
+      env:
+        - name: CANARY_ENV
+          value: $(canary gwparams-env)
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: canary
+  namespace: $CANARY_NS
+spec:
+  gatewayClassName: kgateway
+  infrastructure:
+    parametersRef:
+      group: gateway.kgateway.dev
+      kind: GatewayParameters
+      name: canary-params
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 8080
+      allowedRoutes:
+        namespaces:
+          from: Same
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: canary
+  namespace: $CANARY_NS
+spec:
+  parentRefs:
+    - name: canary
+  hostnames:
+    - canary.kgwctl.example
+  rules:
+    - backendRefs:
+        - name: echo
+          port: 8080
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: canary-header
+  namespace: $CANARY_NS
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: canary
+  headerModifiers:
+    request:
+      set:
+        - name: x-tenant-key
+          secretRef:
+            name: canary-header
+            key: x-tenant-key
+---
+# Ext auth and JWT sit on a second route, so the header request above reaches the backend.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: canary-auth
+  namespace: $CANARY_NS
+spec:
+  parentRefs:
+    - name: canary
+  hostnames:
+    - canary-auth.kgwctl.example
+  rules:
+    - backendRefs:
+        - name: echo
+          port: 8080
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: GatewayExtension
+metadata:
+  name: canary-extauth
+  namespace: $CANARY_NS
+spec:
+  extAuth:
+    httpService:
+      backendRef:
+        name: echo
+        port: 8080
+      authorizationRequest:
+        headersToAdd:
+          x-canary-ext: $(canary extauth-header)
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: GatewayExtension
+metadata:
+  name: canary-jwt
+  namespace: $CANARY_NS
+spec:
+  jwt:
+    providers:
+      - name: canary
+        issuer: https://canary.kgwctl.example
+        jwks:
+          local:
+            inline: '{"keys":[{"kty":"oct","kid":"canary","alg":"HS256","k":"$(canary jwks-k)"}]}'
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: canary-extauth
+  namespace: $CANARY_NS
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: canary-auth
+  extAuth:
+    extensionRef:
+      name: canary-extauth
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: canary-jwt
+  namespace: $CANARY_NS
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: canary-auth
+  jwtAuth:
+    extensionRef:
+      name: canary-jwt
+---
+apiVersion: v1
+kind: Event
+metadata:
+  name: canary-event
+  namespace: $CANARY_NS
+involvedObject:
+  apiVersion: gateway.networking.k8s.io/v1
+  kind: Gateway
+  name: canary
+  namespace: $CANARY_NS
+reason: CanaryCheck
+message: "upstream rejected Authorization: Bearer $(canary event-bearer)"
+type: Warning
+firstTimestamp: "$now"
+lastTimestamp: "$now"
+count: 1
+source:
+  component: kgwctl-live-check
+MANIFEST
+  pods_ready "$CANARY_NS" app=echo
+  k -n "$CANARY_NS" wait --for=condition=Programmed gateway/canary --timeout=300s
+  pods_ready "$CANARY_NS" gateway.networking.k8s.io/gateway-name=canary
+  k -n "$CANARY_NS" wait --for=jsonpath='{.status.ancestors[0].controllerName}'=kgateway.dev/kgateway \
+    trafficpolicy/canary-header trafficpolicy/canary-extauth trafficpolicy/canary-jwt --timeout=120s
+  # The proxy has all three translated before the bundle runs; the dump stays in $OUT (git-ignored).
+  dump_until "$OUT/bundle/canary-wait.json" "$CANARY_NS" canary \
+    'tostring | contains("x-tenant-key") and contains("x-canary-ext") and contains("local_jwks")'
+}
+
+# debug_request: raises the canary proxy to debug logging over a port-forward of its admin port, sends
+# one request that carries the Secret-backed header (the client sends it too), and restores info.
+debug_request() {
+  local pod pf="$OUT/bundle/port-forward.log" pid admin="" lp="" code ok=0 _
+  pod="$(k -n "$CANARY_NS" get pods -l gateway.networking.k8s.io/gateway-name=canary \
+    --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}')"
+  k -n "$CANARY_NS" port-forward "pod/$pod" :19000 :8080 >"$pf" 2>&1 &
+  pid=$!
+  for _ in $(seq 30); do
+    admin="$(awk '/-> 19000$/ { n = split($3, a, ":"); print a[n]; exit }' "$pf")"
+    lp="$(awk '/-> 8080$/ { n = split($3, a, ":"); print a[n]; exit }' "$pf")"
+    [ -n "$admin" ] && [ -n "$lp" ] && break
+    sleep 1
+  done
+  if [ -z "$admin" ] || [ -z "$lp" ]; then
+    log "FAIL port-forward to $CANARY_NS/$pod did not start"
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    return 1
+  fi
+  curl -fsS -o /dev/null -X POST "http://127.0.0.1:$admin/logging?level=debug" || { log "FAIL raise log level"; ok=1; }
+  code="$(curl -sS -o /dev/null -w '%{http_code}' -H 'Host: canary.kgwctl.example' \
+    -H "x-tenant-key: $(canary secret-header)" "http://127.0.0.1:$lp/headers")" || true
+  curl -fsS -o /dev/null -X POST "http://127.0.0.1:$admin/logging?level=info" || { log "FAIL restore log level"; ok=1; }
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  log "debug request through $CANARY_NS/$pod: HTTP $code; log level back to info"
+  [ "$code" = 200 ] || { log "FAIL debug request: HTTP $code, want 200"; ok=1; }
+  return "$ok"
+}
+
+# bundle_run <name> <kubeconfig>: writes $dir/<name>.tar.gz, extracts it to $dir/<name>/, scans it for
+# every canary and sets root to the archive root. Returns 1 on a non-zero exit, an extraction error or a hit.
+bundle_run() {
+  local name="$1" kc="$2" code=0
+  rm -rf "${dir:?}/$name" "$dir/$name.tar.gz"
+  "$OUT/kgwctl" --kubeconfig "$kc" --context "$CONTEXT" bundle -o "$dir/$name.tar.gz" \
+    >"$dir/$name.stdout" 2>"$dir/$name.stderr" || code=$?
+  log "bundle as $name: exit $code; $(tail -n 2 "$dir/$name.stderr" | head -n 1)"
+  [ "$code" -eq 0 ] || { log "FAIL bundle as $name: exit $code, want 0"; return 1; }
+  "$OUT/bundlecheck" extract "$dir/$name.tar.gz" "$dir/$name" >/dev/null || { log "FAIL extract $name"; return 1; }
+  root="$(echo "$dir/$name"/kgwctl-bundle-*)"
+  [ -f "$root/manifest.json" ] || { log "FAIL $name: no manifest.json"; return 1; }
+  if ! "$OUT/bundlecheck" scan "$dir/$name.tar.gz" "${CANARIES[@]}" >"$dir/$name.scan" 2>&1; then
+    log "FAIL canary in the $name bundle:"
+    indent <"$dir/$name.scan"
+    return 1
+  fi
+  log "canary scan $name: $(tail -n 1 "$dir/$name.scan")"
+}
+
+# indent: copies stdin to stderr, indented.
+indent() { sed 's/^/   /' >&2; }
+
+# proxy_replicas <root>:"<namespace>/<pod>" of every proxy replica in the manifest.
+proxy_replicas() { jq -r '.item.replicas[] | select(.role == "proxy") | "\(.namespace)/\(.pod)"' "$1/manifest.json"; }
+
+# expect_proxy_files <root> <files...>: each proxy replica has the files; stats.txt has version_text,
+# config_dump.json is JSON, metrics.txt parses as Prometheus.
+expect_proxy_files() {
+  local root="$1" r f ok=0; shift
+  for r in $(proxy_replicas "$root"); do
+    for f in "$@"; do
+      [ -s "$root/proxies/$r/$f" ] || { log "FAIL $r: no $f"; ok=1; continue; }
+      case "$f" in
+        config_dump.json) jq -e '.configs | length > 0' "$root/proxies/$r/$f" >/dev/null ||
+          { log "FAIL $r: config_dump.json has no configs"; ok=1; } ;;
+        stats.txt) grep -q 'version_text: ' "$root/proxies/$r/$f" || { log "FAIL $r: stats.txt has no version_text"; ok=1; } ;;
+        metrics.txt) "$OUT/bundlecheck" prom "$root/proxies/$r/$f" >/dev/null 2>"$dir/prom.err" ||
+          { log "FAIL $r: metrics.txt: $(cat "$dir/prom.err")"; ok=1; } ;;
+      esac
+    done
+  done
+  return "$ok"
+}
+
+# Plants canaries, runs a full bundle as admin and as reader only, and checks both archives.
+bundle() {
+  local dir="$OUT/bundle" root failed=0 want n start=$SECONDS
+  build
+  (cd "$ROOT" && go build -o "$OUT/bundlecheck" ./hack/bundlecheck)
+  mkdir -p "$dir"
+  k apply -f "$ROOT/docs/rbac.yaml" >/dev/null
+  write_reader_kubeconfig
+  pods_ready "$KGW_NS" app.kubernetes.io/name=kgateway
+  bundle_canaries
+  debug_request || failed=1
+
+  if bundle_run admin "$KUBECONFIG_FILE"; then
+    # Every running proxy Pod is in the inventory; the canary proxy is one of them.
+    want="$(k get pods -A -l gateway.networking.k8s.io/gateway-name --field-selector=status.phase=Running \
+      -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"\n"}{end}' | sort)"
+    [ "$(proxy_replicas "$root" | sort)" = "$want" ] ||
+      { log "FAIL admin: proxy replicas differ from the running proxy Pods"; failed=1; }
+    n="$(proxy_replicas "$root" | wc -l | tr -d ' ')"
+    expect_proxy_files "$root" config_dump.json stats.txt metrics.txt || failed=1
+    log "admin: $n proxy replicas checked for config_dump.json, stats.txt (version_text), metrics.txt (Prometheus)"
+    # The carriers are in the archive, so a clean scan means redacted, not absent.
+    local p c
+    p="$(proxy_replicas "$root" | grep -m1 "^$CANARY_NS/" || echo "$CANARY_NS/missing")"
+    for c in "x-tenant-key" "x-canary-ext" "local_jwks"; do
+      grep -q "$c" "$root/proxies/$p/config_dump.json" || { log "FAIL admin: $p config_dump.json lacks $c"; failed=1; }
+    done
+    grep -q "'x-tenant-key', '\[redacted\]'" "$root/proxies/$p/logs/kgateway-proxy.log" ||
+      { log "FAIL admin: no redacted x-tenant-key debug line in the $p log"; failed=1; }
+    grep -q 'Bearer \[redacted\]' "$root/workloads/$CANARY_NS/events.yaml" ||
+      { log "FAIL admin: canary Event missing or not redacted"; failed=1; }
+    grep -q 'CANARY_ENV' "$root/workloads/$CANARY_NS/pods.yaml" || { log "FAIL admin: canary env missing"; failed=1; }
+    for c in "TrafficPolicy/$CANARY_NS/canary-header" "GatewayExtension/$CANARY_NS/canary-extauth" \
+      "GatewayExtension/$CANARY_NS/canary-jwt" "GatewayParameters/$CANARY_NS/canary-params"; do
+      [ -f "$root/resources/gateway.kgateway.dev/$c.yaml" ] || { log "FAIL admin: no resources/.../$c.yaml"; failed=1; }
+    done
+  else
+    failed=1
+  fi
+
+  if bundle_run reader "$OUT/reader.kubeconfig"; then
+    expect_proxy_files "$root" metrics.txt || failed=1
+    # Logs and Envoy admin captures are denied; nothing else is.
+    local ops='["log","previous-log","config-dump","config-dump-eds","stats","server-info","certs","clusters"]'
+    n="$(jq --argjson ops "$ops" '[.item.items[] | select(.source.operation | IN($ops[]))] | length' "$root/manifest.json")"
+    if [ "$n" -eq 0 ] || ! jq -e --argjson ops "$ops" \
+      '[.item.items[] | select(.source.operation | IN($ops[])) | select(.status != "denied")] | length == 0' \
+      "$root/manifest.json" >/dev/null; then
+      log "FAIL reader: no log or Envoy admin items, or one is not denied"
+      failed=1
+    fi
+    jq -e --argjson ops "$ops" '[.item.items[] | select(.status == "denied")
+      | select(.source.operation | IN($ops[]) | not)] | length == 0' "$root/manifest.json" >/dev/null ||
+      { log "FAIL reader: an item outside logs and Envoy admin is denied"; failed=1; }
+    # One grant line per grant and affected namespace: pods/log where any replica runs, pods/portforward
+    # where a proxy runs; no other grant line.
+    local logns pfns got ns
+    logns="$(jq -r '[.item.replicas[].namespace] | unique[]' "$root/manifest.json")"
+    pfns="$(jq -r '[.item.replicas[] | select(.role == "proxy") | .namespace] | unique[]' "$root/manifest.json")"
+    want="$( (for ns in $logns; do echo "grant: get pods/log in namespace $ns: see the kgwctl-bundle-logs Role in docs/rbac.yaml"; done
+      for ns in $pfns; do echo "grant: create pods/portforward in namespace $ns: see the kgwctl-proxy-portforward Role in docs/rbac.yaml"; done) | sort)"
+    got="$(grep '^grant: ' "$root/errors.txt" | sort || true)"
+    if [ "$got" = "$want" ]; then
+      log "reader: $n denied items; grant lines:"
+      indent <<<"$got"
+    else
+      log "FAIL reader: grant lines differ; want:"
+      indent <<<"$want"
+      log "got:"
+      indent <<<"$got"
+      failed=1
+    fi
+  else
+    failed=1
+  fi
+
+  log "bundle step took $((SECONDS - start))s"
+  [ "$failed" -eq 0 ] || { log "bundle failed; outputs in $dir"; exit 1; }
+  log "bundle passed; outputs in $dir"
+}
+
 case "${1:-}" in
   setup) setup ;;
   verify) shift; verify "$@" ;;
@@ -650,5 +1061,6 @@ case "${1:-}" in
   routes) routes ;;
   goldens) goldens ;;
   goldens-check) goldens_check ;;
-  *) echo "usage: $0 setup | verify <kubeconfig> | proxy | routes | goldens | goldens-check" >&2; exit 2 ;;
+  bundle) bundle ;;
+  *) echo "usage: $0 setup | verify <kubeconfig> | proxy | routes | goldens | goldens-check | bundle" >&2; exit 2 ;;
 esac
