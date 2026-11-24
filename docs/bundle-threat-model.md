@@ -1,6 +1,6 @@
 # Support bundle threat model
 
-This document describes what `kgwctl bundle` puts in a support archive, what it never reads, how it redacts, and what can still leak. It covers the redaction stage, the archive writer and the runner as they exist today. The command, its request guard, the optional log Role and the built-in collectors land in later sub-phases. Where this document describes them, it follows the Phase 4 design.
+This document describes what `kgwctl bundle` puts in a support archive, what it never reads, how it redacts, and what can still leak. It covers the command, its request guard, the redaction stage, the archive writer, the runner, the built-in collectors and the optional Roles.
 
 ## Purpose and scope
 
@@ -47,7 +47,7 @@ kgwctl makes no API request for these:
 
 Enforcement has two layers:
 
-1. **Request guard (when the command lands).** One `RoundTripper` wraps the client configuration behind every client the bundle owns, including install detection, `check` and downstream collectors' clients. It refuses any request for core `secrets` or `configmaps` before the request is sent. The refusal is recorded as an error line.
+1. **Request guard.** One `RoundTripper` wraps the client configuration behind every client the bundle owns, including install detection, `check` and downstream collectors' clients. It refuses any request for core `secrets` or `configmaps` before the request is sent. The refusal is recorded as an error line.
 2. **Object Sink.** `redact.Object` refuses any object of kind `Secret`, `SecretList`, `ConfigMap` or `ConfigMapList`, in any API group, also inside a List. The writer records the item as `failed` with a forbidden-kind reason and writes nothing.
 
 Certificate questions are answered from Envoy `/certs`, Gateway and listener status, and `check`.
@@ -82,12 +82,12 @@ The rules:
 
 ## Errors and metadata
 
-- **Remote errors** from the Kubernetes API, `pods/proxy`, port-forward and Envoy are recorded as the HTTP status and the Kubernetes reason only, such as `403 Forbidden (Forbidden)`. Only canonical Kubernetes reasons are shown; any other reason becomes `request failed (<code>)`. Messages and response bodies never reach an error record. When the command lands, the guard also replaces every non-2xx body with a code-and-reason status before client-go or `check` builds an error string from it.
+- **Remote errors** from the Kubernetes API, `pods/proxy`, port-forward and Envoy are recorded as the HTTP status and the Kubernetes reason only, such as `403 Forbidden (Forbidden)`. Only canonical Kubernetes reasons are shown; any other reason becomes `request failed (<code>)`. Messages and response bodies never reach an error record. The guard also replaces every 4xx and 5xx response body with a code-and-reason status before client-go or `check` builds an error string from it.
 - **Other error text**, including panic values, passes the server-address redactor and the pattern pass. It is folded to one line and cut at 512 bytes, after the whole text is redacted (text over 64 KiB becomes `[error text too long]`), before it reaches the manifest, `errors.txt`, `run.log` or stderr. A collector panic is recovered into a `failed` status with that text. Stack traces never enter the archive.
 - **Context name.** The manifest records the kubeconfig context name through the same error text redactor. It is never part of a file or member name. The API server address is written as `<apiserver>`.
 - **`-o`.** The output path is never recorded. The archive root is `kgwctl-bundle-<UTC timestamp>`.
 - **Flags** are recorded by name. Only enum, numeric, duration and boolean flags carry a value: `-A`, `--all-controllers`, `--since`, `--tail`, `--timeout`, `--request-timeout`, `--max-size` and `--no-endpoints`. `-n`, `--install`, `--skip`, `-o`, `--kubeconfig`, `--context` and `--redact-header` appear by name only. The resolved scope carries the validated namespace and install names.
-- **Paths and sources.** A path component must be a `pkg/bundle` constant or fit Kubernetes name grammar, with an optional fixed extension. A source name that fails validation is replaced before it reaches the manifest. A capture identity or exclusion reason outside the defined values is rejected and recorded without the value.
+- **Paths and sources.** A path component must be a `pkg/bundle` constant or fit Kubernetes name grammar, with an optional fixed extension. A source name that fails validation is replaced before it reaches the manifest. A capture identity, exclusion reason or omission reason outside the defined values is rejected and recorded without the value. After each Pod capture, the Sink re-reads the Pod and records whether its UID matched (`verified`, `changed`, `gone` or `reread-failed`). A capture left out on purpose, such as a Pod that is not running, is recorded with `Sink.Omit` and a fixed reason.
 
 ## RBAC used
 
@@ -98,7 +98,7 @@ The rules:
 | Optional `kgwctl-proxy-portforward` Role, `pods/portforward` `create` | Envoy admin captures and observed Envoy versions | any TCP forwarding to Pods in the namespace, including Envoy admin operations that change or stop the proxy. RBAC cannot narrow it to a port or path. kgwctl sends only the allowlisted operations. Bind it only to trusted operators. |
 | Optional `kgwctl-bundle-logs` Role, `pods/log` `get` | controller and proxy logs | the logs of every Pod in its namespace, not only kgateway Pods. Bind it in the install and Gateway namespaces only. |
 
-A `403` marks the affected items `denied`, and the run continues. `errors.txt` ends with one line per missing grant and namespace. A reader-only user gets resources, workloads, install, versions without observed Envoy versions, and `check`.
+A `403` marks the affected items `denied`, and the run continues. `errors.txt` ends with one line per missing grant and namespace. A reader-only user gets resources, workloads, install, versions without observed Envoy versions, `check`, and controller and proxy metrics.
 
 ## Archive handling
 
