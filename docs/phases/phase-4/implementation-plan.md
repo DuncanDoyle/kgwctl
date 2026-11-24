@@ -333,7 +333,7 @@ Each task builds and passes on its own; no task consumes a type a later task int
 
 ### Task 4.4.1: `WithBundleCollectors`
 **Files:** modify `pkg/cli/cli.go`, `pkg/cli/cli_test.go`, `examples/downstream/main.go`.
-**Interfaces (produces):** `func WithBundleCollectors(c ...bundle.Collector) Option`; invalid or duplicate names fail `NewRootCommand` like registry errors.
+**Interfaces (produces):** `func WithBundleCollectors(c ...bundle.Collector) Option`; invalid or duplicate names fail `kgwctl bundle` (exit 2, before any client) like registry errors, which also surface when a command runs, not in `NewRootCommand`.
 - [ ] `TestWithBundleCollectors`: the example collector is in `--list-collectors` and in the archive under its path, redacted; a name clash with `logs` is an error.
 - [ ] `TestDownstreamCanaries` (archive boundary): the example writes a canary through `JSON` and `Text`, and tries an undeclared type and a Secret object; none in the archive.
 - [ ] Commit `feat(bundle): bundle collectors for downstream builds`.

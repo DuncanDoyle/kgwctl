@@ -12,7 +12,7 @@ After 4.3, `kgwctl bundle` collects everything the design lists, but three thing
 | Input / action | Expected |
 |---|---|
 | A downstream build passes `cli.WithBundleCollectors(c)` | `c` runs in `kgwctl bundle`, is listed by `--list-collectors`, honours `--skip`, and writes through the same Sink: redaction, guard and path rules apply |
-| A downstream collector with an invalid name, or a name equal to a built-in (`logs`) or to another downstream collector | `NewRootCommand` fails, the same way a registry error does |
+| A downstream collector with an invalid name, or a name equal to a built-in (`logs`) or to another downstream collector | `kgwctl bundle` fails with exit 2 before any client, the same way a registry error surfaces at run time |
 | A downstream collector writes a canary through `JSON` and `Text`, tries an undeclared content type, and tries a Secret object | No canary in any archive member; the undeclared type and the Secret are refused and recorded as errors |
 | A reader reads the README `bundle` section | It covers what is collected, what is never requested and how that is enforced, the residual risk of derived artifacts and of `-n`, the redaction limits, "review before sharing", and RBAC (reader, optional log and port-forward Roles) |
 | `hack/live-check.sh bundle` on kind `kgwctl-live` as admin | Exit 0. Per proxy replica: `config_dump.json`, `stats.txt` with `version_text`, and a `metrics.txt` that parses as Prometheus. No planted canary in the extracted archive (raw, base64, gzip) |
