@@ -18,7 +18,7 @@ Status: implementing; 4.1–4.3 closed, 4.4 next
 - [x] Q6 Sub-phase 4.1 (contract, redaction, writer, runner, threat model) — phase-4.1-complete.md; Codex reviews 4.1-codex.md … -r4.md
 - [x] Q7 Sub-phase 4.2 (command, guard, scope, inventory, Envoy transport, cluster-state collectors) — phase-4.2-complete.md
 - [x] Q8 Sub-phase 4.3 (writer split, Sink contract D-027, logs, metrics, Envoy capture, RBAC and partial runs) — phase-4.3-complete.md
-- [ ] Q9 Sub-phase 4.4 (extension point, README, live check) ← CURRENT (not started)
+- [ ] Q9 Sub-phase 4.4 (extension point, README, live check) ← CURRENT
 
 ### Exit gates
 - [ ] tests/vet pass
@@ -29,14 +29,29 @@ Status: implementing; 4.1–4.3 closed, 4.4 next
 - [ ] phase-4-complete.md written, roadmap updated, tracked items closed
 
 ## Sub-phase
-Sub-phase: none open — 4.3 closed 2026-11-23; 4.4 next (owner to confirm start)
+Sub-phase: 4.4 — Extension point, README, live check
+Kind: planned
+Base: b12d3a7
+Brief: docs/phases/phase-4/phase-4.4-brief.md
+
+### Allowed work
+Features within the approved design (r6): plan Tasks 4.4.1–4.4.3.
+
+### Not allowed
+Design changes without a decisions.md entry and owner approval; the xdsview bump; new collectors.
+
+### Queue
+- [ ] T1 Task 4.4.1 `WithBundleCollectors` ← CURRENT
+- [ ] T2 Task 4.4.2 README `bundle` section
+- [ ] T3 Task 4.4.3 Live check on kind (admin and reader-only)
 
 ## Program
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
 - Read 2026-11-22 at kgateway-tooling `56c8868` (main after the owner-approved history rewrite; E7 text merged, P-008, P-009, E13, E14). Phase 4 waits on no edge. The program session asked the bundle to capture per-replica convergence inputs (§5 of the design).
 - Consumed: E1 and E11 — xdsview `v0.4.3` (kgwctl#1, kgwctl#10).
 - 2026-11-23 at kgateway-tooling `4deab4d`: P-010 and E15, the xdsview Phase 9 contract. kgwctl migrates `proxy routes` when that tag ships; Phase 6 also waits on E15. Planned in `docs/roadmap.md`; no Phase 4 change.
-- Waiting on: E7 and E15 (Phase 6). E15 (`proxy routes` migration). E6 (xdsview#32) before Phase 7. Snellius `install.Scope.Excluded` (DuncanDoyle/snellius#66, draft PR #67, unreleased): Task 4.2.2 keeps a local loop over `Scope.Contains` until a release ships it.
+- 2026-11-24 at kgateway-tooling `a0e1d7c` (4.4 start): E6 available — xdsview `v0.6.0` (kgwctl#12), Go API unchanged, OSS output byte-identical; the bump stays a carry-over. 4.4 waits on no edge.
+- Waiting on: E7 and E15 (Phase 6). E15 (`proxy routes` migration). Snellius `install.Scope.Excluded` (DuncanDoyle/snellius#66, draft PR #67, unreleased): Task 4.2.2 keeps a local loop over `Scope.Contains` until a release ships it.
 - Consumers: none
 
 ## Carry-over (deferred to later phases)
@@ -45,7 +60,7 @@ Sub-phase: none open — 4.3 closed 2026-11-23; 4.4 next (owner to confirm start
 - `--only`, `--exclude`, `--fail-on`, repeatable `-n`, controller logs (D-015).
 - A narrow `pkg/cli` facade for vendor cluster commands (D-015).
 - Phase 3 (reviews/3.4-codex.md P3-4): a test that cancels an established capture through a CONNECT or SOCKS5 proxy, when Phase 4 reuses the capture.
-- E13: xdsview v0.5.0 is tagged (2026-11-22); bump it and update the `proxy routes` text and JSON goldens (certainty added). In docs, call `effectiveChain` the runtime filter chain; the JSON field keeps its name.
+- E13, E6: xdsview v0.5.0 (2026-11-22) and v0.6.0 (2026-11-23, kgwctl#11, kgwctl#12) are tagged; bump straight to v0.6.0 and update the `proxy routes` text and JSON goldens (certainty added). In docs, call `effectiveChain` the runtime filter chain; the JSON field keeps its name.
 
 ## Notes
 - GitHub repo: https://github.com/DuncanDoyle/kgwctl (`kgwctl` remains a working name, D-006).
