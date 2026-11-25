@@ -62,12 +62,13 @@ type collectorDeps struct {
 }
 
 // builtinCollectors are the collectors every build has, in registration order.
+// resources lists with the kinds install detection loaded; check keeps reg, as `check` does.
 func builtinCollectors(reg *extension.Registry, build BuildInfo, d collectorDeps, hooks bundleTestHooks) []pb.Collector {
 	var install, logs pb.Collector = collect.Install(), collect.Logs(d.logs)
 	if d.noInstall {
 		install, logs = omitNoInstall{install, pb.InstallDir}, omitNoInstall{logs, pb.ControllerDir}
 	}
-	return []pb.Collector{collect.Resources(reg), collect.Workloads(), install,
+	return []pb.Collector{collect.Resources(collect.Registry(reg)), collect.Workloads(), install,
 		collect.Version(build, d.res, d.dialer), newCheckCollector(d.f, d.rc, reg, build, hooks.Check), logs,
 		collect.ControllerMetrics(d.scrape), collect.ProxyMetrics(d.scrape), collect.ProxyAdmin(d.dialer, d.noEndpoints)}
 }
@@ -341,8 +342,10 @@ const inventoryName = "inventory"
 
 // loadBundle detects installs and loads the model over the guarded config,
 // bounded by ctx; an unreachable API server fails it. reached is set once
-// the API server sends any response.
+// the API server sends any response. It loads every kind the resources
+// collector lists, so the scope rules see them (design §3.2).
 func loadBundle(ctx context.Context, reg *extension.Registry, grc *rest.Config, reached *atomic.Bool) (*load.Result, error) {
+	reg = collect.Registry(reg)
 	cfg := rest.CopyConfig(grc)
 	cfg.Wrap(func(next http.RoundTripper) http.RoundTripper { return &reachedTransport{next: next, reached: reached} })
 	c, err := load.NewClients(ctx, cfg)

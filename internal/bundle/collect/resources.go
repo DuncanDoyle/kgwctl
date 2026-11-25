@@ -37,6 +37,31 @@ var gatewayClassGK = schema.GroupKind{Group: gatewayGroup, Kind: "GatewayClass"}
 // gatewayGroup is the Gateway API group.
 const gatewayGroup = "gateway.networking.k8s.io"
 
+// gatewayXGroup is the experimental Gateway API group.
+const gatewayXGroup = "gateway.networking.x-k8s.io"
+
+// unregistered are namespaced kinds in gatewayAPIGroups that the Snellius
+// registry lacks. TestRegistryCoversCollectedKinds keeps the list complete.
+var unregistered = []kinds.Descriptor{
+	{Group: gatewayGroup, Kind: "UDPRoute", Resource: "udproutes", Versions: []string{"v1", "v1alpha2"}, Namespaced: true,
+		Category: kinds.CategoryRoute, DisplayName: "UDPRoutes"},
+	{Group: gatewayXGroup, Kind: "XBackend", Resource: "xbackends", Versions: []string{"v1alpha1"}, Namespaced: true,
+		Category: kinds.CategoryBackend, DisplayName: "Backends (experimental)"},
+	{Group: gatewayXGroup, Kind: "XBackendTrafficPolicy", Resource: "xbackendtrafficpolicies", Versions: []string{"v1alpha1"}, Namespaced: true,
+		Category: kinds.CategoryPolicy, DisplayName: "BackendTrafficPolicies (experimental)"},
+	{Group: gatewayXGroup, Kind: "XTelemetryPolicy", Resource: "xtelemetrypolicies", Versions: []string{"v1alpha1"}, Namespaced: true,
+		Category: kinds.CategoryPolicy, DisplayName: "TelemetryPolicies (experimental)"},
+}
+
+// Registry returns a copy of reg that also describes the kinds the resources
+// collector lists but reg lacks, so install detection loads them and the
+// scope rules apply to them (design §3.2). reg's own descriptors win.
+func Registry(reg *extension.Registry) *extension.Registry {
+	r := *reg
+	r.Kinds = append(slices.Clone(unregistered), reg.Kinds...)
+	return &r
+}
+
 // forbidden are the core resources the bundle never requests (design §6.1).
 var forbidden = map[string]bool{"secrets": true, "configmaps": true}
 

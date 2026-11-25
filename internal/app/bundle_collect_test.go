@@ -254,6 +254,7 @@ type bundleScopeDoc struct {
 					Unwatched []string `json:"unwatched"`
 				} `json:"discovery"`
 			} `json:"installs"`
+			WorkloadNamespaces []string `json:"workloadNamespaces"`
 		} `json:"scope"`
 		Excluded []struct {
 			Kind, Reason string
@@ -317,6 +318,51 @@ func TestClusterStateOwnership(t *testing.T) {
 	a = bundleArchive(t, env, "--all-controllers")
 	assertMembers(t, a, append(ours, foreign...), nil)
 	fileHas(t, a, "workloads/other-only/deployments.yaml", "name: other-app")
+}
+
+// TestClusterStateUnregisteredKinds: UDPRoute, which the Snellius registry
+// lacks, follows the registry kinds' rules. A UDPRoute on the other
+// controller's Gateway is left out and counted; a kept one adds its backend
+// Service's namespace to the workload namespaces.
+func TestClusterStateUnregisteredKinds(t *testing.T) {
+	const udp = `apiVersion: gateway.networking.k8s.io/v1
+kind: UDPRoute
+metadata: {name: udp-edge, namespace: other-only}
+spec: {parentRefs: [{name: edge}], rules: [{backendRefs: [{name: dns, port: 53}]}]}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: UDPRoute
+metadata: {name: udp-a, namespace: team-a}
+spec: {parentRefs: [{name: gw}], rules: [{backendRefs: [{name: dns, namespace: udp-backend, port: 53}]}]}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: dns, namespace: udp-backend}
+spec:
+  selector: {matchLabels: {app: dns}}
+  template:
+    metadata: {labels: {app: dns}}
+    spec: {containers: [{name: dns, image: example.com/dns:v1}]}
+`
+	path := filepath.Join(t.TempDir(), "udp.yaml")
+	if err := os.WriteFile(path, []byte(udp), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := newEnv(t, testenv.Options{Fixtures: []string{ownershipFixture(t), path}})
+	a := bundleArchive(t, env)
+	assertMembers(t, a, []string{gwDir + "UDPRoute/team-a/udp-a.yaml", "workloads/udp-backend/deployments.yaml"},
+		[]string{gwDir + "UDPRoute/other-only/udp-edge.yaml"})
+	if ex := excludedCounts(t, a); ex["gateway.networking.k8s.io/UDPRoute ownership"] != 1 {
+		t.Errorf("excluded %v, want one UDPRoute left out by ownership", ex)
+	}
+	var doc bundleScopeDoc
+	mf, _ := a.File("manifest.json")
+	if err := json.Unmarshal(mf, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(doc.Item.Scope.WorkloadNamespaces, "udp-backend") {
+		t.Errorf("workload namespaces %v, want udp-backend", doc.Item.Scope.WorkloadNamespaces)
+	}
 }
 
 // TestBundleSkipLogs: --skip logs writes no logs/ member and records the
