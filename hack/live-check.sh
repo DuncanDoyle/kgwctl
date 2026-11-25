@@ -1007,6 +1007,12 @@ reader_checks() {
   [ "$(jq -r '.item.replicas[] | select(.role == "controller") | "\(.namespace)/\(.pod)"' "$m" | sort)" = "$controllers" ] ||
     { log "FAIL reader: controller replicas differ from the running controller Pods"; ok=1; }
   expect_proxy_files "$root" "$proxies" metrics.txt || ok=1
+  # Each observed controller replica has a metrics.txt that parses as Prometheus.
+  for r in $controllers; do
+    f="$root/controller/$r/metrics.txt"
+    { [ -s "$f" ] && "$OUT/bundlecheck" prom "$f" >/dev/null 2>"$dir/prom.err"; } ||
+      { log "FAIL reader: controller $r: metrics.txt missing or not Prometheus"; ok=1; }
+  done
   for f in check/check.json cluster/version.json; do
     { jq -e . "$root/$f" >/dev/null 2>&1 &&
       jq -e --arg f "$f" 'any(.item.items[]; .path == $f and .status == "ok")' "$m" >/dev/null; } ||
