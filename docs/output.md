@@ -619,7 +619,7 @@ Values appear only for `-A`, `--all-controllers`, `--since`, `--tail`, `--timeou
 | Field | Type | Meaning |
 |---|---|---|
 | `mode` | string | `all`, `selectors`, `unknown` or `namespaces-unreadable`. |
-| `selectors` | string[] | Namespace selectors, at most 64 of at most 256 bytes each. |
+| `selectors` | string[] | Namespace selectors, at most 64 of at most 256 bytes each. Each one gets the pattern pass before the cut. |
 | `selectorsOmitted` | integer | Selectors left out of `selectors`. |
 | `source` | string | Where the selectors were read from. |
 | `reason` | string | Why the mode is `unknown` or `namespaces-unreadable`. For `unknown`, one of these fixed codes: `invalid selector`, `invalid selector list`, `envFrom`, `valueFrom`, `no controller`, `no controller container` or `unresolved`. The controller's own error text is never recorded. |
@@ -668,7 +668,7 @@ Values appear only for `-A`, `--all-controllers`, `--since`, `--tail`, `--timeou
 | `status` | string | `ok`, `partial`, `failed`, `skipped` or `timeout`. |
 | `reason` | string | Why a collector was skipped: `flag`, or `no install` when no install was detected. `no install` is recorded only when the absence is known, not when detection was cut short or an input was unreadable. |
 | `durationMs` | integer | Run time in milliseconds. |
-| `error` | string | Redacted error. When install detection runs out of time, no collector starts: each has status `timeout` and the error `install detection timed out`. |
+| `error` | string | Redacted error. When a deadline cuts install detection before it builds a model, no collector starts. Each one not skipped by flag has status `timeout` and the error `install detection timed out`, or `collection deadline reached` when `--timeout` itself has passed. When detection is cut but leaves a partial model, collectors run. A collector still running when `--timeout` passes has status `timeout` and the error `collection deadline reached`. |
 | `late` | integer | Results that arrived after the seal. |
 
 ### Exclusion
