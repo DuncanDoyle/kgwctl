@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"maps"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -304,6 +306,76 @@ func TestBundleUnreachable(t *testing.T) {
 	}
 	if _, err := os.Stat(out); !os.IsNotExist(err) {
 		t.Errorf("cancelled: output left behind: %v", err)
+	}
+}
+
+// TestBundleTransportTimeoutSeals: a peer that accepts TCP and never answers
+// TLS hits client-go's fixed 10 s handshake timeout before either bundle
+// deadline. The timeout still seals an archive, with every collector timeout.
+func TestBundleTransportTimeoutSeals(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	// Accept and hold every connection without a byte of TLS.
+	var mu sync.Mutex
+	var conns []net.Conn
+	t.Cleanup(func() {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, c := range conns {
+			_ = c.Close()
+		}
+	})
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			conns = append(conns, c)
+			mu.Unlock()
+		}
+	}()
+	cfg := clientcmdapi.NewConfig()
+	cfg.Clusters["c"] = &clientcmdapi.Cluster{Server: "https://" + ln.Addr().String(), InsecureSkipTLSVerify: true}
+	cfg.AuthInfos["u"] = &clientcmdapi.AuthInfo{}
+	cfg.Contexts["ctx"] = &clientcmdapi.Context{Cluster: "c", AuthInfo: "u"}
+	cfg.CurrentContext = "ctx"
+	kubeconfig := filepath.Join(t.TempDir(), "kubeconfig")
+	if err := clientcmd.WriteToFile(*cfg, kubeconfig); err != nil {
+		t.Fatal(err)
+	}
+
+	start := time.Now()
+	r := runBundle(t, kubeconfig, nil, "-o", "-", "--request-timeout", "1m", "--timeout", "5m")
+	if el := time.Since(start); el > 40*time.Second {
+		t.Errorf("run took %v, want the handshake timeout, not a bundle deadline", el.Round(time.Second))
+	}
+	if r.code != 0 {
+		t.Fatalf("exit %d, stderr %q; want a sealed archive", r.code, r.stderr)
+	}
+	a := bundletest.Extract(t, strings.NewReader(r.stdout))
+	b, ok := a.File("manifest.json")
+	if !ok {
+		t.Fatal("no manifest.json: archive not sealed")
+	}
+	var m deadlineManifest
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	if got := itemStatus(m, "inventory/detection"); got != "timeout" {
+		t.Errorf("item inventory/detection: status %q, want timeout", got)
+	}
+	for _, c := range m.Item.Collectors {
+		if c.Status != "timeout" && c.Status != "skipped" {
+			t.Errorf("collector %s: status %q, want timeout", c.Name, c.Status)
+		}
+	}
+	if !strings.Contains(r.stderr, "install detection timed out") {
+		t.Errorf("stderr %q does not say detection timed out", r.stderr)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"slices"
 	"strings"
@@ -197,9 +198,8 @@ func newBundleCmd(reg *extension.Registry, build BuildInfo, extra []pb.Collector
 			dctx, dcancel := f.Context(rctx)
 			res, err := loadBundle(dctx, reg, grc)
 			dcancel()
-			// A deadline during detection seals a bundle (§3.1); a fast connection error does not.
-			var te *load.TimeoutError
-			if err != nil && (cmd.Context().Err() != nil || !errors.As(err, &te)) {
+			// A timeout during detection seals a bundle (§3.1); a fast connection error does not.
+			if err != nil && (cmd.Context().Err() != nil || !timeoutClass(err)) {
 				return &ExitError{Code: 2, Err: loadError(cmd.Context(), err, rc.Host)}
 			}
 			detectLate := err != nil || stillLoading(res)
@@ -349,6 +349,14 @@ func loadBundle(ctx context.Context, reg *extension.Registry, grc *rest.Config) 
 	// Proxy Pods give the version collector each Gateway's proxy image tags. The engine
 	// logger is discarded, as in check: a rejected install's error can quote cluster data (§7.1).
 	return load.Load(ctx, c, reg, load.Needs{ProxyPods: true, Logger: engineLogger(io.Discard)})
+}
+
+// timeoutClass reports whether a detection error is a timeout: a context
+// deadline, or a net.Error timeout such as a TLS handshake or client timeout.
+func timeoutClass(err error) bool {
+	var te *load.TimeoutError
+	var ne net.Error
+	return errors.As(err, &te) || errors.Is(err, context.DeadlineExceeded) || errors.As(err, &ne) && ne.Timeout()
 }
 
 // stillLoading reports whether detection ended with inputs still loading,
