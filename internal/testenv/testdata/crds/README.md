@@ -21,7 +21,13 @@ Gateway API v1.7.0's experimental channel has no `XListenerSet`; ListenerSet is 
    ```bash
    gh api repos/kgateway-dev/kgateway/contents/go.mod?ref=<tag> --jq .content | base64 -d | grep sigs.k8s.io/gateway-api
    ```
-2. Refresh the CRD files, then `git diff` them against the old ones.
+2. Refresh the CRD files, then `git diff` them against the old ones. This is the CRD diff of decision P-012.
 3. For each new kind, add it to `docs/rbac.yaml` (`TestReaderRoleCoversServedKinds` enforces this) and decide whether kgwctl supports it.
-4. For each changed kind, check served and storage versions, and new fields that hold credentials or Secret references, which redaction must cover.
-5. Bump the fixture version labels with the CRDs.
+4. For each new served kind in the listed groups, add it to the extra kinds of `collect.Registry` in `internal/bundle/collect/resources.go`. `TestRegistryCoversCollectedKinds` enforces this. If a kind is left out on purpose, record the exclusion.
+5. For each changed or removed kind, check served and storage versions, and stale watches or version mappings for a removed kind or version. Check new fields that hold credentials or Secret references, which redaction must cover.
+6. Check every table or mapping keyed to a product, Gateway API or Envoy version. An empty CRD diff does not make these current.
+7. Before claiming support for a new kgateway minor, review the mirrors of controller logic, such as the discovery namespace selector parsing and the Gateway label value helper. Update the minors they are pinned to and compare them with real controller output.
+8. Check that each kind list has a test for its intended scope. A guard test, a behavioural test or a recorded exclusion counts. The lists are `docs/rbac.yaml` and the registry extra kinds.
+9. Bump the fixture version labels with the CRDs.
+
+This checklist follows decision P-012.

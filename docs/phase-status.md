@@ -38,13 +38,13 @@ Base: f39a936
 Brief: docs/phases/phase-4/phase-4.5-brief.md
 
 ### Queue
-- [ ] S1 (P2/P3 correctness) Guard: prefixed server paths, 3xx bodies — src: reviews/phase-codex.md#1, #4 ← CURRENT
-- [ ] S2 (P3 correctness) Diagnostics: manifest selector/owner, Snellius logger on stderr — #2, #3
-- [ ] S3 (P2/P3 correctness) Time bounds: one clock from first request; context-bound discovery — #5, #8
-- [ ] S4 (P2 both) Outcomes and scope: check-only denials, `skipped: no install`, non-registry kinds — #9, #11, #12
-- [ ] S5 (P3 architecture) `Sink.JSON` with Kubernetes objects — #10
-- [ ] S6 (P3 correctness) Tests: reader live check, guard test verbs — #14, #15
-- [ ] S7 Gates, live check, Codex review of f39a936..HEAD + triage
+- [x] S1 (P2/P3 correctness) Guard: prefixed server paths, 3xx bodies — 2ea976b..1a6b096: base path stripped before matching; bundle clients never follow redirects; non-2xx status line and body code-only
+- [x] S2 (P3 correctness) Diagnostics: manifest selector/owner, Snellius logger and `Warning` headers on stderr — e9cf428: fixed scope reason codes; owner only for a known Gateway; logger and warnings dropped
+- [x] S3 (P2/P3 correctness) Time bounds: one clock from first request; context-bound discovery — 391c18c..dbb41e4: `--timeout` starts before detection; a cut detection still seals an archive (`inventory/detection` timeout); discovery bounded by `--request-timeout`
+- [x] S4 (P2 both) Outcomes and scope: check-only denials, `skipped: no install`, non-registry kinds — fe26b10..142dff7: check-only denials recorded with grant line; `skipped: no install` only when absence is known; UDPRoute and x-k8s.io kinds in the scope registry
+- [x] S5 (P3 architecture) `Sink.JSON` with Kubernetes objects — 5502015..a0eccee, D-029: public Sink has no `JSON` or `ConfigDump`; built-in JSON via internal writers; `Object` refuses kind-less objects
+- [x] S6 (P3 correctness) Tests: reader live check, guard test verbs — a5e08a5..a04b574: guard rejects extra verbs, subresources, resourceNames, nonResourceURLs; reader check compares proxies and controllers with observed Pods, requires check.json and metrics, fails on non-ok/denied, derives grant lines from observed namespaces, scans stderr. Live run pending (kind unreachable)
+- [ ] S7 Gates, live check, Codex review of f39a936..HEAD + triage; docs: output.md scope reason codes and empty owner, threat-model note that `KGW_*` env and annotation values get only the pattern pass (S2 review); CRD README checklist step for `collect.Registry` extra kinds and `TestRegistryCoversCollectedKinds` (S4 review), checked against P-012's six review points; Codex prompt links program "Architecture guidelines" (protocol step 7)
 
 ## Program
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
@@ -52,6 +52,7 @@ Brief: docs/phases/phase-4/phase-4.5-brief.md
 - Consumed: E1 and E11 — xdsview `v0.4.3` (kgwctl#1, kgwctl#10).
 - 2026-11-23 at kgateway-tooling `4deab4d`: P-010 and E15, the xdsview Phase 9 contract. kgwctl migrates `proxy routes` when that tag ships; Phase 6 also waits on E15. Planned in `docs/roadmap.md`; no Phase 4 change.
 - 2026-11-24 at kgateway-tooling `a0e1d7c` (4.4 start): E6 available — xdsview `v0.6.0` (kgwctl#12), Go API unchanged, OSS output byte-identical; the bump stays a carry-over. 4.4 waits on no edge.
+- 2026-11-25 at kgateway-tooling `dbf7140`: P-012, owner-approved, adds a CRD and version bump review in program.md "Architecture guidelines". It cites D-028 and TestReaderRoleCoversServedKinds as the reference. P-011: lasting IDs come from scoped names, and a UID keys only one incarnation. Protocol step 7: review prompts link "Architecture guidelines". The 4.5 Codex review prompt follows it, and the CRD README checklist cites P-012.
 - Waiting on: E7 and E15 (Phase 6). E15 (`proxy routes` migration). Snellius `install.Scope.Excluded` (DuncanDoyle/snellius#66, draft PR #67, unreleased): Task 4.2.2 keeps a local loop over `Scope.Contains` until a release ships it.
 - Consumers: none
 

@@ -123,7 +123,9 @@ Downstream builds can register their own collectors. These are trusted in-proces
 6. **Endpoint addresses.** The config dump with endpoints (EDS) and `clusters.txt` hold endpoint IP addresses. `--no-endpoints` drops both. Pod and Service IPs in workload objects stay, and so do static and DNS `load_assignment` addresses in the config dump.
 7. **Envoy redacts little.** Envoy `/config_dump` redacts only the fields Envoy marks sensitive. kgwctl's header-value rule covers the structures listed above. A secret in another Envoy field relies on the key-name rule and the pattern pass.
 8. **Values resolved from Secrets.** kgwctl never reads Secrets, but the controller copies Secret values into Envoy config, for example a header from a Secret reference. The structural rules catch these in the known header structures. Logs can echo them anywhere.
-9. **Over-redaction.** A `BEGIN … PRIVATE KEY` marker with no matching end redacts every later line of that log. Every scalar under a credential-named object is redacted, including values that are not secret.
+9. **`KGW_*` env values and annotation values stay.** An `env[].value` whose name starts with `KGW_`, and every annotation value, are kept and get only the pattern pass. A secret placed in either is not caught unless it has a known shape.
+10. **Redirects and non-2xx responses.** Bundle clients never follow a redirect. A non-2xx response keeps only its status code, so a `Location` header or an error body never reaches an error record or the archive.
+11. **Over-redaction.** A `BEGIN … PRIVATE KEY` marker with no matching end redacts every later line of that log. Every scalar under a credential-named object is redacted, including values that are not secret.
 
 ## Advice for users
 

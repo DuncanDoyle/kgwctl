@@ -547,6 +547,8 @@ A breaking change to xdsview's `model` (a renamed or removed field, or a changed
 
 ## BundleManifest
 
+`bundle` exits `0` when it wrote a bundle, also a partial one, and `2` when it wrote none: a usage error, an output that exists or cannot be created, no reachable cluster, or a fatal write failure. The stderr summary names the failed collectors.
+
 `manifest.json` in a support bundle is one envelope with `kind: BundleManifest`. Every list in it is bounded and has an omitted count. When the manifest still would not fit its size cap, it is replaced by a minimal one with `truncated: true`: build, flags, times, finalization, `excluded`, the omitted counts, and the scope's namespace and up to 64 installs. The minimal manifest is under 1 MiB, below the smallest manifest cap.
 
 ### BundleManifest
@@ -620,7 +622,7 @@ Values appear only for `-A`, `--all-controllers`, `--since`, `--tail`, `--timeou
 | `selectors` | string[] | Namespace selectors, at most 64 of at most 256 bytes each. |
 | `selectorsOmitted` | integer | Selectors left out of `selectors`. |
 | `source` | string | Where the selectors were read from. |
-| `reason` | string | Why the mode is `unknown` or `namespaces-unreadable`. |
+| `reason` | string | Why the mode is `unknown` or `namespaces-unreadable`. For `unknown`, one of these fixed codes: `invalid selector`, `invalid selector list`, `envFrom`, `valueFrom`, `no controller`, `no controller container` or `unresolved`. The controller's own error text is never recorded. |
 | `unwatched` | string[] | Names of namespaces the install does not watch. |
 | `unwatchedOmitted` | integer | Names left out of `unwatched`. |
 
@@ -640,7 +642,7 @@ Values appear only for `-A`, `--all-controllers`, `--since`, `--tail`, `--timeou
 | `pod` | string | Pod name. |
 | `uid` | string | Pod UID. |
 | `role` | string | `controller` or `proxy`. |
-| `owner` | string | The install or Gateway the Pod belongs to. |
+| `owner` | string | The install or Gateway the Pod belongs to. Empty for a proxy replica whose Gateway is not known, as can happen with `--all-controllers`, and for one with `identity` `unverified`. |
 | `identity` | string | How the owner was matched: `annotation`, `selector` or `unverified`. |
 | `ready` | boolean | Whether the Pod is ready. |
 | `terminating` | boolean | True while the Pod is terminating. Absent otherwise. |
@@ -664,9 +666,9 @@ Values appear only for `-A`, `--all-controllers`, `--since`, `--tail`, `--timeou
 |---|---|---|
 | `name` | string | Collector name. |
 | `status` | string | `ok`, `partial`, `failed`, `skipped` or `timeout`. |
-| `reason` | string | Why a collector was skipped: `flag` or `no install`. |
+| `reason` | string | Why a collector was skipped: `flag`, or `no install` when no install was detected. `no install` is recorded only when the absence is known, not when detection was cut short or an input was unreadable. |
 | `durationMs` | integer | Run time in milliseconds. |
-| `error` | string | Redacted error. |
+| `error` | string | Redacted error. When install detection runs out of time, no collector starts: each has status `timeout` and the error `install detection timed out`. |
 | `late` | integer | Results that arrived after the seal. |
 
 ### Exclusion
@@ -687,8 +689,15 @@ Values appear only for `-A`, `--all-controllers`, `--since`, `--tail`, `--timeou
 | `capturedAt` | string | RFC3339 capture time. |
 | `source` | ItemSource | Where the item came from. |
 | `status` | string | `ok`, `skipped`, `denied`, `disabled`, `failed`, `timeout` or `dropped`. |
-| `reason` | string | Why the item has its status. |
+| `reason` | string | Why the item has its status, such as `no install`, `timeout` or `missing kind`. |
 | `redactions` | integer | Values redacted in the file. |
+
+Some items stand for a file that was not written:
+
+- `inventory/detection` has status `timeout` when install detection ran out of time. The bundle is still written, and installs and Gateways may be missing.
+- A `skipped` item with reason `no install` marks controller output that was left out because no install was detected. It is recorded only when the absence is known.
+- `check/<group>/<resource>` has status `denied` when `check` could not read that input. The group is `core` for the core group, and a `#` in the resource becomes `-`, as in `pods-proxy`.
+- A `failed` item with reason `missing kind` marks an object that has no kind. It is refused and its content is not written.
 
 ### ItemSource
 
