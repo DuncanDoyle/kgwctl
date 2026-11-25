@@ -1004,6 +1004,8 @@ reader_checks() {
   [ -n "$proxies" ] && [ -n "$controllers" ] || { log "FAIL reader: no running proxy or controller Pods observed"; ok=1; }
   [ "$(proxy_replicas "$root" | sort)" = "$proxies" ] ||
     { log "FAIL reader: proxy replicas differ from the running proxy Pods"; ok=1; }
+  [ "$(jq -r '.item.replicas[] | select(.role == "controller") | "\(.namespace)/\(.pod)"' "$m" | sort)" = "$controllers" ] ||
+    { log "FAIL reader: controller replicas differ from the running controller Pods"; ok=1; }
   expect_proxy_files "$root" "$proxies" metrics.txt || ok=1
   for f in check/check.json cluster/version.json; do
     { jq -e . "$root/$f" >/dev/null 2>&1 &&
