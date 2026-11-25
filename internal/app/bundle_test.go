@@ -132,6 +132,23 @@ func TestBundleOutputExists(t *testing.T) {
 	assertNoRun(t, env, p)
 }
 
+// TestBundleSetupFailure: a spool that cannot be created fails setup before
+// the output exists: exit 2, no file and no cluster request (D-030).
+func TestBundleSetupFailure(t *testing.T) {
+	env := newEnv(t, testenv.Options{})
+	out := filepath.Join(t.TempDir(), "out.tar.gz")
+	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "missing"))
+	p := &probe{}
+	r := runBundle(t, env.Kubeconfig, []pb.Collector{p}, "-o", out)
+	if r.code != 2 || !strings.Contains(r.stderr, "create spool") {
+		t.Fatalf("exit %d, stderr %q; want 2 naming the spool", r.code, r.stderr)
+	}
+	if _, err := os.Stat(out); !os.IsNotExist(err) {
+		t.Errorf("output left behind: %v", err)
+	}
+	assertNoRun(t, env, p)
+}
+
 func TestBundleUnwritableDir(t *testing.T) {
 	env := newEnv(t, testenv.Options{})
 	p := &probe{}
@@ -494,6 +511,7 @@ func (g *guardProbe) Collect(ctx context.Context, env pb.Env, _ pb.Sink) error {
 
 // TestBundleInterrupt cancels the command while a collector blocks: the bundle
 // is still written, the collector is timeout and no spool directory remains.
+// Only the blocker runs, so the archive holds no cluster data: exit 2 (D-030).
 func TestBundleInterrupt(t *testing.T) {
 	env := newEnv(t, testenv.Options{})
 	tmp := t.TempDir()
@@ -509,9 +527,12 @@ func TestBundleInterrupt(t *testing.T) {
 	var errb bytes.Buffer
 	cfg := app.Config{Build: testBuild, Out: &bytes.Buffer{}, Err: &errb, Now: testNow, Collectors: []pb.Collector{blocker}}
 	root := app.NewRootWithBundleHooks(cfg, app.BundleTestHooks{Now: func() time.Time { return bundleNow }})
-	root.SetArgs([]string{"--kubeconfig", env.Kubeconfig, "bundle", "--skip", "version,check", "-o", out})
-	if err := root.ExecuteContext(ctx); err != nil {
-		t.Fatalf("err %v, stderr %q; want success", err, errb.String())
+	root.SetArgs([]string{"--kubeconfig", env.Kubeconfig, "bundle", "-o", out,
+		"--skip", "resources,workloads,install,version,check,logs,controller-metrics,proxy-metrics,proxy-admin"})
+	err := root.ExecuteContext(ctx)
+	var ee *app.ExitError
+	if !errors.As(err, &ee) || ee.Code != 2 || !strings.Contains(err.Error(), "no cluster data") {
+		t.Fatalf("err %v, stderr %q; want exit 2, no cluster data", err, errb.String())
 	}
 	f, err := os.Open(out)
 	if err != nil {
@@ -708,7 +729,10 @@ func TestNamespacedRequestSet(t *testing.T) {
 
 	// Install detection and the inventory alone, then check alone, then the full run.
 	all := "resources,workloads,install,version,check,logs,controller-metrics,proxy-metrics,proxy-admin"
-	archiveWith(t, env.Kubeconfig, nil, hooks, "-n", "team-a", "--skip", all)
+	// With every collector skipped the archive holds no cluster data: exit 2 (D-030).
+	if r := runBundleWith(t, env.Kubeconfig, nil, hooks, "-o", "-", "-n", "team-a", "--skip", all); r.code != 2 {
+		t.Fatalf("all skipped: exit %d, stderr %q; want 2", r.code, r.stderr)
+	}
 	boot := requestKeys(p.Requests())
 	n := len(p.Requests())
 	if r := runCheck(t, env, nil, hooks.Check, "check", "-n", "team-a"); r.stdout == "" {

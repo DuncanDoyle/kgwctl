@@ -180,8 +180,20 @@ func newBundleCmd(reg *extension.Registry, build BuildInfo, extra []pb.Collector
 			if err != nil {
 				return usageErr(err)
 			}
+			scrape := hooks.Scraper
+			if scrape == nil {
+				if scrape, err = collect.StatusScraper(grc); err != nil {
+					return usageErr(err)
+				}
+			}
+			// Remove is idempotent; the writer also removes the spool when it commits.
+			sp, err := ib.NewSpool("", limits.RAM, limits.MaxSize)
+			if err != nil {
+				return usageErr(fmt.Errorf("create spool: %w", err))
+			}
+			defer func() { _ = sp.Remove() }()
 
-			// The output is created before any cluster request, so a bad -o makes none.
+			// Setup that can fail is done; the output is created before any cluster request, so a bad -o makes none.
 			var dest ib.Dest
 			if output == "-" {
 				dest = ib.Stdout(cmd.OutOrStdout())
@@ -267,10 +279,6 @@ func newBundleCmd(reg *extension.Registry, build BuildInfo, extra []pb.Collector
 				scope = withReplicaNamespaces(scope, replicas)
 			}
 
-			sp, err := ib.NewSpool("", limits.RAM, limits.MaxSize)
-			if err != nil {
-				return usageErr(fmt.Errorf("create spool: %w", err))
-			}
 			// The writer hides the real host in error text; the manifest only gets the placeholder.
 			w := ib.NewWriter(dest, sp, root, limits, redact.Options{ExtraHeaders: redactHeaders, MaxSize: limits.MaxSize}, rc.Host, now)
 			inv := w.Sink(inventoryName)
@@ -312,12 +320,6 @@ func newBundleCmd(reg *extension.Registry, build BuildInfo, extra []pb.Collector
 			if logs == nil {
 				logs = collect.KubeLogSource(kube)
 			}
-			scrape := hooks.Scraper
-			if scrape == nil {
-				if scrape, err = collect.StatusScraper(grc); err != nil {
-					return usageErr(err)
-				}
-			}
 			// A cut detection or an unread detection input leaves an absent install unknown.
 			noInstall := res != nil && installsAbsent(res, detectLate)
 			cs = append(builtinCollectors(reg, build, collectorDeps{f: f, rc: grc, res: res, dialer: dialer, logs: logs, scrape: scrape,
@@ -339,7 +341,14 @@ func newBundleCmd(reg *extension.Registry, build BuildInfo, extra []pb.Collector
 			}
 			ok = true
 			summarize(cmd.ErrOrStderr(), m, output)
-			if noData != nil {
+			// The exit code follows what the archive holds, not how detection ended (D-030).
+			if !holdsClusterData(m) {
+				if noData == nil {
+					noData = errors.New("no collector wrote cluster data")
+					if detectLate {
+						noData = errors.New(msgDetectionTimeout + "; no collector wrote cluster data")
+					}
+				}
 				return &ExitError{Code: 2, Err: fmt.Errorf("bundle holds no cluster data: %s", noData.Error())}
 			}
 			return nil
@@ -378,6 +387,24 @@ func loadBundle(ctx context.Context, reg *extension.Registry, grc *rest.Config) 
 	// Proxy Pods give the version collector each Gateway's proxy image tags. The engine
 	// logger is discarded, as in check: a rejected install's error can quote cluster data (§7.1).
 	return load.Load(ctx, c, reg, load.Needs{ProxyPods: true, Logger: engineLogger(io.Discard)})
+}
+
+// holdsClusterData reports whether the archive holds what the cluster said:
+// an ok item other than version.json, or a collector other than version that
+// finished ok or partial, so an empty cluster still counts. version is left
+// out because it writes version.json even without a cluster answer. Items cut
+// from the manifest count, since only a large run loses any.
+func holdsClusterData(m ib.Manifest) bool {
+	if m.ItemsOmitted > 0 {
+		return true
+	}
+	versionFile := pb.Path{pb.ClusterDir, pb.VersionFile}.String()
+	if slices.ContainsFunc(m.Items, func(it ib.Item) bool { return it.Status == pb.ItemOK && it.Path != versionFile }) {
+		return true
+	}
+	return slices.ContainsFunc(m.Collectors, func(c ib.CollectorEntry) bool {
+		return c.Name != "version" && (c.Status == pb.CollectorOK || c.Status == pb.CollectorPartial)
+	})
 }
 
 // Fixed inventory/detection items (D-030); their status comes from ib.ItemStatus.

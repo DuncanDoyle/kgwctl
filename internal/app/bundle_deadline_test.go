@@ -88,7 +88,7 @@ func collectorStatus(m deadlineManifest, name string) string {
 // archive; detection and inventory are recorded as timeout. The model exists,
 // but its absence of installs is unknown: no "no install" warning or skip.
 // With only routes held, the ownership inputs load, so the filter's own
-// warning is tested too.
+// warning is tested too. No collector writes cluster data: exit 2 (D-030).
 func TestBundleTimeoutCoversDetection(t *testing.T) {
 	everything := map[string]string{"inventory/detection": "timeout", "proxies": "timeout"}
 	routes := map[string]string{"inventory/detection": "timeout"}
@@ -107,7 +107,10 @@ func TestBundleTimeoutCoversDetection(t *testing.T) {
 			held := releaseAfter(t, 20*time.Second)
 			env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindAcquire, Resource: tc.hold}, testenv.Action{Until: held})
 
-			m, stderr := timedBundle(t, env, 12*time.Second, append([]string{"--timeout", tc.timeout}, tc.args...)...)
+			m, stderr := timedBundleExit(t, env, 12*time.Second, 2, append([]string{"--timeout", tc.timeout}, tc.args...)...)
+			if !strings.Contains(stderr, "no cluster data") {
+				t.Errorf("stderr %q does not say the bundle holds no cluster data", stderr)
+			}
 			for path, want := range tc.items {
 				if got := itemStatus(m, path); got != want {
 					t.Errorf("item %s: status %q, want %q", path, got, want)
@@ -195,14 +198,14 @@ func TestBundleNoInstall(t *testing.T) {
 }
 
 // TestBundleTimeoutCoversInventory: with --request-timeout=0, a blocked
-// inventory read still ends at --timeout.
+// inventory read still ends at --timeout. No collector runs: exit 2 (D-030).
 func TestBundleTimeoutCoversInventory(t *testing.T) {
 	env := newEnv(t, testenv.Options{})
 	held := releaseAfter(t, 20*time.Second)
 	// Only the inventory lists proxy Pods by this selector; detection's adds a component label.
 	hits := env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindAcquire, Resource: "pods", LabelSelector: "kgateway=kube-gateway"}, testenv.Action{Until: held})
 
-	m, _ := timedBundle(t, env, 10*time.Second, "--timeout", "4s", "--request-timeout", "0")
+	m, _ := timedBundleExit(t, env, 10*time.Second, 2, "--timeout", "4s", "--request-timeout", "0")
 	// The read was sent and held, so the timeout below is the inventory's own.
 	if hits.N() != 1 {
 		t.Fatalf("inventory proxy list held %d times, want 1", hits.N())
