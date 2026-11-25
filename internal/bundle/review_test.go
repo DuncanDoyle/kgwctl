@@ -143,7 +143,7 @@ func TestStructuredIndentBounded(t *testing.T) {
 	deep := strings.Repeat("[", 3000) + strings.Repeat("]", 3000)
 	p := pb.Path{"x", "deep.json"}
 	var err error
-	if n := allocated(func() { err = s.ConfigDump(bg, p, strings.NewReader(deep), pb.Source{}) }); n > 32<<20 {
+	if n := allocated(func() { err = s.JSON(bg, JSONConfigDump, p, strings.NewReader(deep), pb.Source{}) }); n > 32<<20 {
 		t.Errorf("ConfigDump allocated %d bytes", n)
 	}
 	if err != nil {

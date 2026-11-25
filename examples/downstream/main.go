@@ -82,9 +82,9 @@ type evidence struct{}
 
 func (evidence) Name() string { return evidenceName }
 
-// Collect writes a Pod, a List of Pods and a log line, then Secrets and
-// ConfigMaps. The Sink records each refusal as a failed item, so Collect
-// ignores those errors.
+// Collect writes a Pod, a List of Pods and a log line, then Secrets,
+// ConfigMaps and kind-less objects. The Sink records each refusal as a failed
+// item, so Collect ignores those errors.
 func (evidence) Collect(ctx context.Context, _ bundle.Env, s bundle.Sink) error {
 	if err := s.Object(ctx, bundle.Path{"example", "pod.yaml"}, examplePod(), bundle.Source{}); err != nil {
 		return err
@@ -98,10 +98,13 @@ func (evidence) Collect(ctx context.Context, _ bundle.Env, s bundle.Sink) error 
 	}
 	secret := object("Secret", map[string]any{"data": map[string]any{"token": evidenceCanary}})
 	cm := object("ConfigMap", map[string]any{"data": map[string]any{"setting": evidenceCanary}})
+	// A typed clientset returns objects with no kind; the Sink refuses those too.
+	kindless := object("", map[string]any{"data": map[string]any{"setting": evidenceCanary}})
 	for file, u := range map[string]*unstructured.Unstructured{
 		"secret.yaml": secret, "configmap.yaml": cm,
 		"secrets.yaml": list("SecretList", secret), "configmaps.yaml": list("ConfigMapList", cm),
 		"list-secret.yaml": list("List", examplePod(), secret), "list-configmap.yaml": list("List", cm),
+		"kindless.yaml": kindless, "list-kindless.yaml": list("List", examplePod(), kindless),
 	} {
 		_ = s.Object(ctx, bundle.Path{"example", file}, u, bundle.Source{})
 	}

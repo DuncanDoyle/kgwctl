@@ -32,6 +32,7 @@ const (
 	ReasonStaging       = "staging"
 	ReasonSizeBudget    = "size budget"
 	ReasonForbiddenKind = "forbidden kind"
+	ReasonMissingKind   = "missing kind"
 	ReasonInvalidJSON   = "invalid JSON"
 	ReasonNotPrometheus = "not Prometheus text"
 	ReasonSealed        = "sealed"

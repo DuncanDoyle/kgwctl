@@ -17,8 +17,9 @@ var forbiddenKinds = map[string]bool{
 // Object redacts a Kubernetes object in place: it drops managedFields and the
 // last-applied annotation, then applies the header-value, JWKS, per-kind
 // field, key-name and header-pair rules and the pattern pass (design §7).
-// Secrets and ConfigMaps, also inside a List, give ErrForbiddenKind and are
-// left unchanged.
+// Secrets and ConfigMaps, also inside a List, give ErrForbiddenKind, and an
+// object or List item without a kind gives ErrMissingKind; both are left
+// unchanged.
 func Object(u *unstructured.Unstructured, o Options) ([]Finding, error) {
 	if err := checkKind(u.Object); err != nil {
 		return nil, err
@@ -45,7 +46,11 @@ func Object(u *unstructured.Unstructured, o Options) ([]Finding, error) {
 }
 
 func checkKind(obj map[string]any) error {
-	if k, _ := obj["kind"].(string); forbiddenKinds[k] {
+	k, _ := obj["kind"].(string)
+	if k == "" {
+		return ErrMissingKind // kind rules and the refusal both need it
+	}
+	if forbiddenKinds[k] {
 		return fmt.Errorf("%w: %s", ErrForbiddenKind, k)
 	}
 	items, _ := obj["items"].([]any)

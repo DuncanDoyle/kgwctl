@@ -48,7 +48,7 @@ kgwctl makes no API request for these:
 Enforcement has two layers:
 
 1. **Request guard.** One `RoundTripper` wraps the client configuration behind every client the bundle owns, including install detection, `check` and downstream collectors' clients. It refuses any request for core `secrets` or `configmaps` before the request is sent. The refusal is recorded as an error line.
-2. **Object Sink.** `redact.Object` refuses any object of kind `Secret`, `SecretList`, `ConfigMap` or `ConfigMapList`, in any API group, also inside a List. The writer records the item as `failed` with a forbidden-kind reason and writes nothing.
+2. **Object Sink.** `redact.Object` refuses any object of kind `Secret`, `SecretList`, `ConfigMap` or `ConfigMapList`, in any API group, also inside a List. The writer records the item as `failed` with a forbidden-kind reason and writes nothing. An object or List item without a kind is refused the same way, with reason `missing kind`.
 
 Certificate questions are answered from Envoy `/certs`, Gateway and listener status, and `check`.
 
@@ -58,8 +58,8 @@ Each Sink method takes one content type, and the writer runs that type's redacto
 
 | Content type | Used for | Rules, in order |
 |---|---|---|
-| `object` | resources, workloads, Events, install | Refuse Secret and ConfigMap. Each member of a List gets its own kind's rules. Drop `metadata.managedFields` and the `last-applied-configuration` annotation. Header-value rule, JWKS rule, per-kind field rules, key-name rule, header-pair rule, then the pattern pass on every other string. |
-| `config-dump` | Envoy `/config_dump` | Keep Envoy's own `[redacted]`. Header-value rule. Lua `inline_code` and `source_codes` redacted. JWKS rule under `local_jwks`. Every other `inline_string` and `inline_bytes` redacted. A JSON `StringValue`, such as dynamic-module config, is parsed and redacted inside. Then key-name rule, header-pair rule and pattern pass. |
+| `object` | resources, workloads, Events, install | Refuse Secret and ConfigMap, and any object without a kind. Each member of a List gets its own kind's rules. Drop `metadata.managedFields` and the `last-applied-configuration` annotation. Header-value rule, JWKS rule, per-kind field rules, key-name rule, header-pair rule, then the pattern pass on every other string. |
+| `config-dump` | Envoy `/config_dump` only. Downstream collectors cannot write it. | Keep Envoy's own `[redacted]`. Header-value rule. Lua `inline_code` and `source_codes` redacted. JWKS rule under `local_jwks`. Every other `inline_string` and `inline_bytes` redacted. A JSON `StringValue`, such as dynamic-module config, is parsed and redacted inside. Then key-name rule, header-pair rule and pattern pass. |
 | `json` | `version.json`, `check.json`, `server_info.json`, `certs.json` only. Downstream collectors cannot write it. | Key-name rule, header-pair rule, pattern pass. Invalid JSON is dropped with an error. |
 | `prometheus` | metrics | Must parse as Prometheus text exposition, or it is dropped with an error. Pattern pass on label values, `HELP` text and comments, read with the parser's grammar (leading blanks and tabs included). Metric names, label names and samples stay. The output is parsed again; if that fails, it is dropped. |
 | `text` | logs, `stats.txt`, `clusters.txt` | Open PEM private-key blocks, the debug header-line rule, then the pattern pass, line by line. A kubelet timestamp prefix is kept. |
@@ -111,7 +111,7 @@ A `403` marks the affected items `denied`, and the run continues. `errors.txt` e
 
 ## Trust boundary
 
-Downstream builds can register their own collectors. These are trusted in-process code with the same privileges as kgwctl. The Sink and the request guard protect against their mistakes: an untyped body, a bad path, a Secret or ConfigMap object, or a registry kind that resolves to `secrets`. The public Sink has no JSON method, so a serialized Kubernetes object cannot bypass the `object` rules through it (D-029). An object serialized into `Text` still gets only the pattern pass, so collectors must pass resources to `Object`. The Sink and the guard do not protect against a malicious collector, which could open its own client or write to disk directly. The path grammar cannot tell a real name from captured data that happens to fit it, so collectors must build paths from names read from the API, never from log or response content.
+Downstream builds can register their own collectors. These are trusted in-process code with the same privileges as kgwctl. The Sink and the request guard protect against their mistakes: an untyped body, a bad path, a Secret or ConfigMap object, or a registry kind that resolves to `secrets`. The public Sink has no JSON or config-dump method, so a serialized Kubernetes object cannot bypass the `object` rules through either (D-029). An object serialized into `Text` still gets only the pattern pass, so collectors must pass resources to `Object`. The Sink and the guard do not protect against a malicious collector, which could open its own client or write to disk directly. The path grammar cannot tell a real name from captured data that happens to fit it, so collectors must build paths from names read from the API, never from log or response content.
 
 ## Residual risks and limitations
 

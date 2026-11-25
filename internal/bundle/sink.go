@@ -16,8 +16,8 @@ import (
 	pb "github.com/DuncanDoyle/kgwctl/pkg/bundle"
 )
 
-// sink is a collector's view of the writer. It has only the Sink methods, so
-// no content type without a redactor can be written.
+// sink is a collector's view of the writer: the Sink methods plus the built-in
+// JSON writer, so no content type without a redactor can be written.
 type sink struct {
 	w    *Writer
 	name string
@@ -33,6 +33,9 @@ func (s *sink) Object(ctx context.Context, p pb.Path, u *unstructured.Unstructur
 	if errors.Is(err, redact.ErrForbiddenKind) {
 		return s.w.finish(c, outcome{status: pb.ItemFailed, reason: ReasonForbiddenKind, err: fmt.Errorf("%w: %s", pb.ErrForbiddenKind, obj.GetKind())})
 	}
+	if errors.Is(err, redact.ErrMissingKind) {
+		return s.w.finish(c, outcome{status: pb.ItemFailed, reason: ReasonMissingKind, err: pb.ErrMissingKind})
+	}
 	if err != nil {
 		return s.w.finish(c, outcome{status: pb.ItemFailed, reason: s.w.errorText(err), err: err})
 	}
@@ -44,14 +47,6 @@ func (s *sink) Object(ctx context.Context, p pb.Path, u *unstructured.Unstructur
 		return s.w.finish(c, outcome{status: pb.ItemDropped, reason: ReasonSizeCap, err: fmt.Errorf("%w: %s", pb.ErrBudget, ReasonSizeCap)})
 	}
 	return s.w.finish(c, outcome{body: body, findings: fs})
-}
-
-func (s *sink) ConfigDump(ctx context.Context, p pb.Path, r io.Reader, src pb.Source) error {
-	c, err := s.w.begin(ctx, s.name, p, ContentConfigDump, src, false)
-	if err != nil {
-		return err
-	}
-	return s.w.structured(c, r, s.w.lim.ConfigDump, redact.ConfigDump)
 }
 
 // JSONArtifact names a built-in JSON artifact. Code outside this module cannot
@@ -68,11 +63,26 @@ const (
 	JSONServerInfo
 	// JSONCerts is an Envoy certs.json.
 	JSONCerts
+	// JSONConfigDump is an Envoy config_dump.json.
+	JSONConfigDump
 )
 
-// jsonRedactors is the redactor each built-in JSON artifact owns (D-026).
-var jsonRedactors = map[JSONArtifact]func([]byte, redact.Options) ([]byte, []redact.Finding, error){
-	JSONCheckReport: redact.JSON, JSONVersion: redact.JSON, JSONServerInfo: redact.JSON, JSONCerts: redact.JSON,
+// jsonWriter is a built-in JSON artifact's content type, size cap and redactor (D-026).
+type jsonWriter struct {
+	content string
+	limit   func(Limits) int64
+	redact  func([]byte, redact.Options) ([]byte, []redact.Finding, error)
+}
+
+func otherLimit(l Limits) int64      { return l.Other }
+func configDumpLimit(l Limits) int64 { return l.ConfigDump }
+
+var jsonWriters = map[JSONArtifact]jsonWriter{
+	JSONCheckReport: {ContentJSON, otherLimit, redact.JSON},
+	JSONVersion:     {ContentJSON, otherLimit, redact.JSON},
+	JSONServerInfo:  {ContentJSON, otherLimit, redact.JSON},
+	JSONCerts:       {ContentJSON, otherLimit, redact.JSON},
+	JSONConfigDump:  {ContentConfigDump, configDumpLimit, redact.ConfigDump},
 }
 
 // errNoJSON is recorded when a JSON artifact reaches a Sink that cannot write it.
@@ -98,16 +108,16 @@ func WriteJSON(ctx context.Context, s pb.Sink, a JSONArtifact, p pb.Path, r io.R
 }
 
 func (s *sink) JSON(ctx context.Context, a JSONArtifact, p pb.Path, r io.Reader, src pb.Source) error {
-	fn, ok := jsonRedactors[a]
+	jw, ok := jsonWriters[a]
 	if !ok {
 		s.Error(p, src, errNoJSON)
 		return errNoJSON
 	}
-	c, err := s.w.begin(ctx, s.name, p, ContentJSON, src, false)
+	c, err := s.w.begin(ctx, s.name, p, jw.content, src, false)
 	if err != nil {
 		return err
 	}
-	return s.w.structured(c, r, s.w.lim.Other, fn)
+	return s.w.structured(c, r, jw.limit(s.w.lim), jw.redact)
 }
 
 func (s *sink) Prometheus(ctx context.Context, p pb.Path, r io.Reader, src pb.Source) error {

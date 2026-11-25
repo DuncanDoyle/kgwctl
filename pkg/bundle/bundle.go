@@ -145,15 +145,14 @@ const (
 // re-read. The identity never fails the item. A nil ctx is treated as
 // context.Background(). Error drops a caller-set Source.Identity.
 //
-// There is no generic JSON write (D-029). Pass Kubernetes resources and lists
-// to Object with their kind metadata intact, plain text to Text and metrics to
-// Prometheus.
+// There is no JSON or config-dump write (D-029). Pass Kubernetes resources and
+// lists to Object with their kind metadata intact, plain text to Text and
+// metrics to Prometheus.
 type Sink interface {
 	// Object writes a Kubernetes object or list as YAML. It refuses Secrets
-	// and ConfigMaps, their list kinds, and a List holding either.
+	// and ConfigMaps, their list kinds, a List holding either, and an object
+	// or List item without a kind.
 	Object(ctx context.Context, p Path, u *unstructured.Unstructured, src Source) error
-	// ConfigDump writes an Envoy config dump.
-	ConfigDump(ctx context.Context, p Path, r io.Reader, src Source) error
 	// Prometheus writes Prometheus text.
 	Prometheus(ctx context.Context, p Path, r io.Reader, src Source) error
 	// Text writes plain text line by line.

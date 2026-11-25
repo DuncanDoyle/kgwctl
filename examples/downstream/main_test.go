@@ -150,7 +150,8 @@ func TestWithBundleCollectors(t *testing.T) {
 }
 
 // TestDownstreamCanaries checks the Sink contract at the downstream boundary:
-// Pods come out as YAML with env values redacted; Secrets and ConfigMaps are refused.
+// Pods come out as YAML with env values redacted; Secrets, ConfigMaps and
+// kind-less objects are refused.
 func TestDownstreamCanaries(t *testing.T) {
 	env := newEnv(t)
 	a := bundleArchive(t, env)
@@ -167,9 +168,13 @@ func TestDownstreamCanaries(t *testing.T) {
 	if _, ok := a.File("example/evidence.txt"); !ok {
 		t.Error("archive lacks example/evidence.txt")
 	}
-	refused := []string{"example/secret.yaml", "example/configmap.yaml", "example/secrets.yaml",
-		"example/configmaps.yaml", "example/list-secret.yaml", "example/list-configmap.yaml"}
-	for _, name := range refused {
+	refused := map[string]string{
+		"example/secret.yaml": "forbidden kind", "example/configmap.yaml": "forbidden kind",
+		"example/secrets.yaml": "forbidden kind", "example/configmaps.yaml": "forbidden kind",
+		"example/list-secret.yaml": "forbidden kind", "example/list-configmap.yaml": "forbidden kind",
+		"example/kindless.yaml": "missing kind", "example/list-kindless.yaml": "missing kind",
+	}
+	for name := range refused {
 		if _, ok := a.File(name); ok {
 			t.Errorf("archive holds the refused item %s", name)
 		}
@@ -187,9 +192,9 @@ func TestDownstreamCanaries(t *testing.T) {
 	for _, it := range m.Item.Items {
 		status[it.Path] = it.Status + ": " + it.Reason
 	}
-	for _, p := range refused {
-		if status[p] != "failed: forbidden kind" {
-			t.Errorf("%s = %q, want failed: forbidden kind (items: %v)", p, status[p], status)
+	for p, reason := range refused {
+		if status[p] != "failed: "+reason {
+			t.Errorf("%s = %q, want failed: %s (items: %v)", p, status[p], reason, status)
 		}
 	}
 }

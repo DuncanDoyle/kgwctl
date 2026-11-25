@@ -20,6 +20,8 @@ const envoyMarkerBytes = "W3JlZGFjdGVkXQ=="
 var (
 	// ErrForbiddenKind is returned by Object for Secrets and ConfigMaps.
 	ErrForbiddenKind = errors.New("redact: forbidden kind")
+	// ErrMissingKind is returned by Object for an object or List item without a kind.
+	ErrMissingKind = errors.New("redact: missing kind")
 	// ErrInvalidJSON is returned for a body that does not parse as JSON. The
 	// error holds no part of the body.
 	ErrInvalidJSON = errors.New("redact: invalid JSON")

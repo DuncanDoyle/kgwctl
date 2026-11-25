@@ -44,8 +44,10 @@ func (s *recordSink) Object(_ context.Context, p pb.Path, u *unstructured.Unstru
 	s.objects[p.String()] = u.DeepCopy()
 	return nil
 }
-func (*recordSink) ConfigDump(context.Context, pb.Path, io.Reader, pb.Source) error { return nil }
-func (s *recordSink) JSON(_ context.Context, _ ib.JSONArtifact, p pb.Path, r io.Reader, src pb.Source) error {
+func (s *recordSink) JSON(_ context.Context, a ib.JSONArtifact, p pb.Path, r io.Reader, src pb.Source) error {
+	if a == ib.JSONConfigDump {
+		return nil // config dumps are not recorded
+	}
 	b, err := io.ReadAll(r)
 	if err != nil {
 		return err

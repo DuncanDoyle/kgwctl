@@ -25,12 +25,12 @@ type adminCapture struct {
 	write func(pb.Sink) func(context.Context, pb.Path, io.Reader, pb.Source) error
 }
 
-func configDumpWrite(s pb.Sink) func(context.Context, pb.Path, io.Reader, pb.Source) error {
-	return s.ConfigDump
-}
-func certsWrite(s pb.Sink) func(context.Context, pb.Path, io.Reader, pb.Source) error {
-	return func(ctx context.Context, p pb.Path, r io.Reader, src pb.Source) error {
-		return ib.WriteJSON(ctx, s, ib.JSONCerts, p, r, src)
+// builtinWrite writes built-in artifact a through the internal JSON writer (D-029).
+func builtinWrite(a ib.JSONArtifact) func(pb.Sink) func(context.Context, pb.Path, io.Reader, pb.Source) error {
+	return func(s pb.Sink) func(context.Context, pb.Path, io.Reader, pb.Source) error {
+		return func(ctx context.Context, p pb.Path, r io.Reader, src pb.Source) error {
+			return ib.WriteJSON(ctx, s, a, p, r, src)
+		}
 	}
 }
 func textWrite(s pb.Sink) func(context.Context, pb.Path, io.Reader, pb.Source) error { return s.Text }
@@ -50,9 +50,9 @@ func ProxyAdmin(d proxydump.Dialer, noEndpoints bool) pb.Collector {
 		dump = proxydump.OpConfigDump
 	}
 	caps := []adminCapture{
-		{dump, pb.ConfigDumpFile, configDumpWrite},
+		{dump, pb.ConfigDumpFile, builtinWrite(ib.JSONConfigDump)},
 		{proxydump.OpStats, pb.StatsFile, textWrite},
-		{proxydump.OpCerts, pb.CertsFile, certsWrite},
+		{proxydump.OpCerts, pb.CertsFile, builtinWrite(ib.JSONCerts)},
 	}
 	if !noEndpoints {
 		caps = append(caps, adminCapture{proxydump.OpClusters, pb.ClustersFile, textWrite})

@@ -56,6 +56,9 @@ var (
 	ErrInvalidPath = errors.New("bundle: invalid path")
 	// ErrForbiddenKind is returned for a kind the bundle never collects.
 	ErrForbiddenKind = errors.New("bundle: forbidden kind")
+	// ErrMissingKind is returned by Object for an object, or a List item,
+	// without a kind.
+	ErrMissingKind = errors.New("bundle: missing kind")
 )
 
 var collectorName = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)

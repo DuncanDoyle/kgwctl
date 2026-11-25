@@ -124,7 +124,7 @@ func TestWriterCorpusReplay(t *testing.T) {
 			case bundletest.MethodObject:
 				err = s.Object(bg, p, objectFromYAML(t, fx.Input), src)
 			case bundletest.MethodConfigDump:
-				err = s.ConfigDump(bg, p, bytes.NewReader(fx.Input), src)
+				err = s.JSON(bg, JSONConfigDump, p, bytes.NewReader(fx.Input), src)
 			case bundletest.MethodJSON:
 				err = s.JSON(bg, JSONVersion, p, bytes.NewReader(fx.Input), src)
 			case bundletest.MethodPrometheus:
@@ -387,7 +387,7 @@ func TestWriterItemCaps(t *testing.T) {
 
 	big := io.MultiReader(strings.NewReader(`{"a":"`), io.LimitReader(repeatReader('a'), 70<<20), strings.NewReader(`"}`))
 	dump := pb.Path{"proxies", "ns", "gw", pb.ConfigDumpFile}
-	if err := s.ConfigDump(bg, dump, big, pb.Source{}); !errors.Is(err, pb.ErrBudget) {
+	if err := s.JSON(bg, JSONConfigDump, dump, big, pb.Source{}); !errors.Is(err, pb.ErrBudget) {
 		t.Fatalf("70 MiB config dump: err = %v, want ErrBudget", err)
 	}
 	log := pb.Path{"controller", "ns", "pod", "logs", "c.log"}
@@ -594,7 +594,7 @@ func TestWriterRegularEntries(t *testing.T) {
 	must(s.Object(bg, pb.Path{pb.ResourcesDir, "gateway.networking.k8s.io", "HTTPRoute", "ns", "r.yaml"}, u, pb.Source{}))
 	must(s.JSON(bg, JSONVersion, pb.Path{pb.ClusterDir, pb.VersionFile}, strings.NewReader(`{"v":"1"}`), pb.Source{}))
 	must(s.Prometheus(bg, pb.Path{"controller", "ns", "p", pb.MetricsFile}, strings.NewReader("# TYPE up gauge\nup 1\n"), pb.Source{}))
-	must(s.ConfigDump(bg, pb.Path{"proxies", "ns", "p", pb.ConfigDumpFile}, strings.NewReader(`{"configs":[]}`), pb.Source{}))
+	must(s.JSON(bg, JSONConfigDump, pb.Path{"proxies", "ns", "p", pb.ConfigDumpFile}, strings.NewReader(`{"configs":[]}`), pb.Source{}))
 	must(s.Text(bg, pb.Path{"proxies", "ns", "p", pb.StatsFile}, strings.NewReader("a: 1\n"), pb.Source{}))
 	h.w.Seal()
 	a := h.finish(t, Manifest{}, "c")
