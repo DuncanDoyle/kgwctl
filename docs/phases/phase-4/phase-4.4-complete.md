@@ -49,5 +49,5 @@ No new modules (`k8s.io/apiextensions-apiserver` moved from indirect to direct).
 - **Minor (phase review to triage):**
   - 4.4.1 M2–M5; `pkg/cli/cli.go:45` "run after the built-in ones" comment; README port-forward advice for a shared controller/Gateway namespace.
   - 4.4.3 M2 failed (not denied) items pass silently; M3 expected grant lines derive from the manifest; `bundlecheck` `extract` errors could print a member path; Ctrl-C during `dump_until` leaves `canary-wait.json`.
-- **Downstream:** the enterprise build has no reader role or CRD guard for its own kinds; owner to decide.
+- **Downstream:** the downstream build has no reader role or CRD guard for its own kinds; owner to decide.
 - **Carried:** xdsview bump to v0.6.0 plus goldens; Snellius v0.9.0 `Scope.Excluded`; generated command reference; the 4.2 and 4.3 minors.
