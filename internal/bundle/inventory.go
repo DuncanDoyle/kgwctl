@@ -14,6 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/kubernetes"
 
 	pb "github.com/DuncanDoyle/kgwctl/pkg/bundle"
@@ -59,8 +60,9 @@ var errUnverified = errors.New("proxy Pod has no " + GatewayFullNameAnnotation +
 // Inventory lists the run's controller and proxy replicas once (design
 // §8.2): controller Pods by each install's selector, then proxy Pods in s's
 // namespace bound whose annotation names a GatewaySet Gateway, or any
-// Gateway with s.AllControllers. A proxy Pod without the annotation is kept
-// as unverified with an error, and the owner chain is never read.
+// Gateway with s.AllControllers; only a GatewaySet Gateway is recorded as its
+// owner. A proxy Pod without the annotation is kept as unverified with an
+// error, and the owner chain is never read.
 func Inventory(ctx context.Context, kube kubernetes.Interface, s pb.Scope, gws GatewaySet, ctrls []ControllerSelector) ([]pb.Replica, []error) {
 	var (
 		out  []pb.Replica
@@ -105,10 +107,16 @@ func Inventory(ctx context.Context, kube kubernetes.Interface, s pb.Scope, gws G
 				Source: pb.Source{Namespace: p.Namespace, Pod: p.Name, UID: p.UID}, Err: errUnverified})
 			continue
 		}
-		if _, ok := gws[types.NamespacedName{Namespace: p.Namespace, Name: gw}]; !ok && !s.AllControllers {
+		_, known := gws[types.NamespacedName{Namespace: p.Namespace, Name: gw}]
+		if !known && !s.AllControllers {
 			continue
 		}
-		proxies = append(proxies, replica(p, pb.RoleProxy, p.Namespace+"/"+gw, pb.IdentityAnnotation, ProxyMetricsPort))
+		// Only a valid name of a known Gateway becomes the owner; other annotation values stay out of the manifest.
+		owner := ""
+		if known && len(validation.IsDNS1123Subdomain(gw)) == 0 {
+			owner = p.Namespace + "/" + gw
+		}
+		proxies = append(proxies, replica(p, pb.RoleProxy, owner, pb.IdentityAnnotation, ProxyMetricsPort))
 	}
 	slices.SortFunc(proxies, func(a, b pb.Replica) int {
 		return cmp.Or(cmp.Compare(a.Namespace, b.Namespace), cmp.Compare(a.Pod, b.Pod))

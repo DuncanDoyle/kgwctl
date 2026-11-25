@@ -150,6 +150,8 @@ func newBundleCmd(reg *extension.Registry, build BuildInfo, extra []pb.Collector
 			// Every bundle-owned client, install detection included, goes through the guard (§6.1).
 			// Collectors list per kind and namespace, so they get install detection's throttle.
 			grc := load.ThrottleDefaults(ib.Guard(rc))
+			// Server Warning headers are dropped: their text never reaches stderr (§7.1).
+			grc.WarningHandler, grc.WarningHandlerWithContext = rest.NoWarnings{}, rest.NoWarnings{}
 			kube, err := kubernetes.NewForConfig(grc)
 			if err != nil {
 				return usageErr(err)
@@ -267,8 +269,9 @@ func loadBundle(cmd *cobra.Command, f *Flags, reg *extension.Registry, grc *rest
 	if err != nil {
 		return nil, err
 	}
-	// Proxy Pods give the version collector each Gateway's proxy image tags.
-	return load.Load(ctx, c, reg, load.Needs{ProxyPods: true, Logger: engineLogger(cmd.ErrOrStderr())})
+	// Proxy Pods give the version collector each Gateway's proxy image tags. The engine
+	// logger is discarded, as in check: a rejected install's error can quote cluster data (§7.1).
+	return load.Load(ctx, c, reg, load.Needs{ProxyPods: true, Logger: engineLogger(io.Discard)})
 }
 
 // loadError classifies a failed install detection: interrupted, no reachable

@@ -229,6 +229,27 @@ func TestInventoryAllControllers(t *testing.T) {
 	}
 }
 
+// TestInventoryAllControllersOwner: with --all-controllers the annotation is
+// the owner only when it names a known Gateway; the Pod is still listed.
+func TestInventoryAllControllersOwner(t *testing.T) {
+	kube := kubefake.NewClientset(proxyPod("team-a", "known", "gw"), proxyPod("team-a", "invalid", "Not A Name!"),
+		proxyPod("team-a", "unknown", "gone"))
+	rs, _ := Inventory(context.Background(), kube, pb.Scope{AllControllers: true}, GatewaySet{gwKey("team-a", "gw"): ""}, nil)
+	owners := map[string]string{}
+	for _, r := range rs {
+		owners[r.Pod] = r.Owner
+	}
+	want := map[string]string{"known": "team-a/gw", "invalid": "", "unknown": ""}
+	if len(owners) != len(want) {
+		t.Fatalf("replicas %v, want %v", owners, want)
+	}
+	for pod, o := range want {
+		if owners[pod] != o {
+			t.Errorf("%s owner %q, want %q", pod, owners[pod], o)
+		}
+	}
+}
+
 func TestReidentify(t *testing.T) {
 	r := pb.Replica{Namespace: "team-a", Pod: "p", UID: "uid-p"}
 	ctx := context.Background()

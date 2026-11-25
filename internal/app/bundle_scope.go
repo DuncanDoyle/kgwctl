@@ -109,10 +109,32 @@ func resolveScope(f *Flags, explicitNamespace bool, res *load.Result) (pb.Scope,
 	return sc, gws, keep, warns, nil
 }
 
+// scopeReason maps a Snellius scope error to a fixed reason code, since the
+// error can quote cluster data such as an invalid label value (§7.1).
+func scopeReason(err string) string {
+	switch {
+	case err == "":
+		return ""
+	case strings.HasPrefix(err, "invalid selector:"):
+		return "invalid selector"
+	case strings.HasPrefix(err, "invalid "+install.DiscoveryNamespaceSelectorsEnv+":"):
+		return "invalid selector list"
+	case strings.Contains(err, "envFrom"):
+		return "envFrom"
+	case strings.Contains(err, "valueFrom"):
+		return "valueFrom"
+	case strings.HasPrefix(err, "no controller pod or deployment"):
+		return "no controller"
+	case strings.HasPrefix(err, "container "):
+		return "no controller container"
+	}
+	return "unresolved"
+}
+
 // discoveryScope records an install's Snellius scope for the manifest.
 // Unwatched is a local loop until Snellius ships Scope.Excluded.
 func discoveryScope(s install.Scope, nsReadable bool, nss []*corev1.Namespace) pb.DiscoveryScope {
-	d := pb.DiscoveryScope{Mode: string(s.Mode), Reason: s.Err, Source: discoverySource}
+	d := pb.DiscoveryScope{Mode: string(s.Mode), Reason: scopeReason(s.Err), Source: discoverySource}
 	switch {
 	case strings.HasPrefix(s.Source, "pod "):
 		d.Source += " on pod"
