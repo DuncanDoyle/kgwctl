@@ -5,11 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"net/url"
 	"slices"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/DuncanDoyle/snellius/pkg/extension"
@@ -197,12 +195,11 @@ func newBundleCmd(reg *extension.Registry, build BuildInfo, extra []pb.Collector
 			rctx, rcancel := context.WithDeadline(cmd.Context(), deadline)
 			defer rcancel()
 			dctx, dcancel := f.Context(rctx)
-			var reached atomic.Bool
-			res, err := loadBundle(dctx, reg, grc, &reached)
+			res, err := loadBundle(dctx, reg, grc)
 			dcancel()
-			// A deadline during detection after the cluster answered still seals a bundle (§3.1).
+			// A deadline during detection seals a bundle (§3.1); a fast connection error does not.
 			var te *load.TimeoutError
-			if err != nil && (cmd.Context().Err() != nil || !errors.As(err, &te) || !reached.Load()) {
+			if err != nil && (cmd.Context().Err() != nil || !errors.As(err, &te)) {
 				return &ExitError{Code: 2, Err: loadError(cmd.Context(), err, rc.Host)}
 			}
 			detectLate := err != nil || stillLoading(res)
@@ -341,14 +338,11 @@ func usageErr(err error) error { return &ExitError{Code: 2, Err: err} }
 const inventoryName = "inventory"
 
 // loadBundle detects installs and loads the model over the guarded config,
-// bounded by ctx; an unreachable API server fails it. reached is set once
-// the API server sends any response. It loads every kind the resources
-// collector lists, so the scope rules see them (design §3.2).
-func loadBundle(ctx context.Context, reg *extension.Registry, grc *rest.Config, reached *atomic.Bool) (*load.Result, error) {
+// bounded by ctx; an unreachable API server fails it. It loads every kind the
+// resources collector lists, so the scope rules see them (design §3.2).
+func loadBundle(ctx context.Context, reg *extension.Registry, grc *rest.Config) (*load.Result, error) {
 	reg = collect.Registry(reg)
-	cfg := rest.CopyConfig(grc)
-	cfg.Wrap(func(next http.RoundTripper) http.RoundTripper { return &reachedTransport{next: next, reached: reached} })
-	c, err := load.NewClients(ctx, cfg)
+	c, err := load.NewClients(ctx, grc)
 	if err != nil {
 		return nil, err
 	}
@@ -356,24 +350,6 @@ func loadBundle(ctx context.Context, reg *extension.Registry, grc *rest.Config, 
 	// logger is discarded, as in check: a rejected install's error can quote cluster data (§7.1).
 	return load.Load(ctx, c, reg, load.Needs{ProxyPods: true, Logger: engineLogger(io.Discard)})
 }
-
-// reachedTransport sets reached when a response arrives.
-type reachedTransport struct {
-	next    http.RoundTripper
-	reached *atomic.Bool
-}
-
-// RoundTrip implements http.RoundTripper.
-func (t *reachedTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	resp, err := t.next.RoundTrip(r)
-	if resp != nil {
-		t.reached.Store(true)
-	}
-	return resp, err
-}
-
-// WrappedRoundTripper lets client-go reach the transport underneath.
-func (t *reachedTransport) WrappedRoundTripper() http.RoundTripper { return t.next }
 
 // stillLoading reports whether detection ended with inputs still loading,
 // which happens only when its context ended first.

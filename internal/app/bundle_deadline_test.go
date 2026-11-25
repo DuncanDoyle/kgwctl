@@ -206,11 +206,11 @@ func TestBundleTimeoutCoversInventory(t *testing.T) {
 }
 
 // TestBundleTimeoutDuringDetectionDiscovery: --timeout ends while detection
-// is held, in discovery or while listing. The cluster was reached, so the
-// archive is still sealed: detection is timeout, every collector timeout,
-// exit 0. With --install, the cut detection is not reported as an unknown install.
+// is held, in discovery or while listing. The archive is still sealed:
+// detection is timeout, every collector timeout, exit 0. With --install, the
+// cut detection is not reported as an unknown install.
 func TestBundleTimeoutDuringDetectionDiscovery(t *testing.T) {
-	// Other group versions answer before heldGV, so the cluster is reached.
+	// Other group versions answer before heldGV.
 	discovery := testenv.Match{Kind: testenv.KindDiscovery, Resource: heldGV}
 	lists := testenv.Match{Kind: testenv.KindAcquire, Resource: "*"}
 	install := []string{"--install", "kgateway-system/kgateway"}
@@ -275,6 +275,39 @@ func TestBundleRequestTimeoutCutsDetection(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "install detection timed out") {
 		t.Errorf("stderr %q does not say detection timed out", stderr)
+	}
+}
+
+// TestBundleDeadlineBeforeFirstResponse: the API server accepts detection's
+// first request and never answers. Either deadline still seals an archive
+// with detection timeout and every collector timeout.
+func TestBundleDeadlineBeforeFirstResponse(t *testing.T) {
+	for name, args := range map[string][]string{
+		"timeout":         {"--timeout", "2s"},
+		"request-timeout": {"--request-timeout", "2s", "--timeout", "5m"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			env := newEnv(t, testenv.Options{})
+			held := releaseAfter(t, 30*time.Second)
+			// Detection starts with discovery, so no request gets a response.
+			hits := env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindDiscovery, Resource: "*"}, testenv.Action{Until: held})
+
+			m, stderr := timedBundle(t, env, 12*time.Second, args...)
+			if hits.N() == 0 {
+				t.Fatal("detection's discovery was not held")
+			}
+			if got := itemStatus(m, "inventory/detection"); got != "timeout" {
+				t.Errorf("item inventory/detection: status %q, want timeout", got)
+			}
+			for _, c := range m.Item.Collectors {
+				if c.Status != "timeout" && c.Status != "skipped" {
+					t.Errorf("collector %s: status %q, want timeout", c.Name, c.Status)
+				}
+			}
+			if !strings.Contains(stderr, "install detection timed out") {
+				t.Errorf("stderr %q does not say detection timed out", stderr)
+			}
+		})
 	}
 }
 
