@@ -391,6 +391,34 @@ func TestCheckCollectorDenialBody(t *testing.T) {
 	bundletest.AssertNoCanary(t, a, []string{canary})
 }
 
+// TestCheckCollectorRedirectBody: a terminal 3xx whose Status body carries a
+// pattern-free value is recorded by code only; the body reaches no member.
+func TestCheckCollectorRedirectBody(t *testing.T) {
+	const canary = "kgwctl-canary-redirect-body"
+	env := newEnv(t, testenv.Options{Fixtures: []string{healthyFixture}})
+	body := []byte(`{"kind":"Status","apiVersion":"v1","status":"Failure","code":300,"message":"` + canary + `"}`)
+	hits := env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindAcquire, Resource: httpRoutes}, testenv.Action{Status: http.StatusMultipleChoices, Body: body})
+	a := archiveWith(t, env.Kubeconfig, nil, app.BundleTestHooks{Check: fastHooks(metricsScraper{})}, "--skip", "version")
+	if hits.N() == 0 {
+		t.Fatal("the rule never applied")
+	}
+	b, _ := a.File("check/check.json")
+	var doc struct {
+		Item struct {
+			Incomplete []struct{ Input, State, Reason string } `json:"incomplete"`
+		} `json:"item"`
+	}
+	if err := json.Unmarshal(b, &doc); err != nil {
+		t.Fatalf("check.json: %v\n%s", err, b)
+	}
+	if !slices.ContainsFunc(doc.Item.Incomplete, func(in struct{ Input, State, Reason string }) bool {
+		return strings.HasPrefix(in.Input, "httproutes") && strings.Contains(in.Reason, "300 Multiple Choices")
+	}) {
+		t.Errorf("check.json incomplete %+v, want httproutes with 300 Multiple Choices", doc.Item.Incomplete)
+	}
+	bundletest.AssertNoCanary(t, a, []string{canary})
+}
+
 // TestCheckCollectorUnwatchedRoute: check names team-b's route, which the
 // install's discovery selector leaves out, with KGWUI-004.
 func TestCheckCollectorUnwatchedRoute(t *testing.T) {

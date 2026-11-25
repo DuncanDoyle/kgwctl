@@ -29,16 +29,26 @@ var refusedPhrase = []byte("connect: connection refused")
 
 // Guard returns a copy of cfg whose transport refuses every request for core
 // secrets and configmaps with pb.ErrForbiddenKind, unsent, and replaces each
-// 4xx and 5xx response body with a Status holding only code, reason and the
-// refused cause (design §6.1, §7.1). Bodies are never stored. Guarding a
-// guarded config is safe: the inner guard's body and cause pass through.
+// 3xx, 4xx and 5xx response body with a Status holding only code, reason and
+// the refused cause (design §6.1, §7.1). A 3xx keeps its headers, so redirects
+// still follow or stop as the client decides. Request paths are resolved below
+// the server URL's path. Bodies are never stored. Guarding a guarded config is
+// safe: the inner guard's body and cause pass through.
 func Guard(cfg *rest.Config) *rest.Config {
 	c := rest.CopyConfig(cfg)
-	c.Wrap(func(rt http.RoundTripper) http.RoundTripper { return &guard{next: rt} })
+	var base string
+	if u, _, err := rest.DefaultServerUrlFor(c); err == nil {
+		base = strings.Trim(u.Path, "/")
+	}
+	c.Wrap(func(rt http.RoundTripper) http.RoundTripper { return &guard{next: rt, base: base} })
 	return c
 }
 
-type guard struct{ next http.RoundTripper }
+type guard struct {
+	next http.RoundTripper
+	// base is the server URL's path without slashes; client-go prefixes it to every request.
+	base string
+}
 
 // guardedBody is a body the guard wrote; a server cannot forge its type, so
 // an outer guard passes it through and Guard is idempotent.
@@ -50,16 +60,16 @@ func (guardedBody) Close() error { return nil }
 func (g *guard) WrappedRoundTripper() http.RoundTripper { return g.next }
 
 func (g *guard) RoundTrip(req *http.Request) (*http.Response, error) {
-	res, sub := coreResource(req.URL.Path)
-	if res == "secrets" || res == "configmaps" {
+	res, sub := resolve(req.URL.Path, g.base)
+	if forbidden(res) {
 		if req.Body != nil {
 			_ = req.Body.Close()
 		}
 		return nil, fmt.Errorf("%w: %s", pb.ErrForbiddenKind, res)
 	}
 	resp, err := g.next.RoundTrip(req)
-	// 1xx (upgrades), 2xx and 3xx pass; 4xx and 5xx bodies are replaced.
-	if err != nil || resp.StatusCode < 400 {
+	// 1xx (upgrades) and 2xx pass; 3xx, 4xx and 5xx bodies are replaced.
+	if err != nil || resp.StatusCode < 300 {
 		return resp, err
 	}
 	// An inner guard already replaced the body; keep its refused cause.
@@ -85,18 +95,32 @@ func (g *guard) RoundTrip(req *http.Request) (*http.Response, error) {
 	return resp, nil
 }
 
-// coreResource returns the core API resource of path and, for a named
-// namespaced object, its subresource; "" for any other path.
-func coreResource(path string) (resource, sub string) {
-	segs := strings.Split(strings.Trim(path, "/"), "/")
-	i := 0
-	for i+1 < len(segs) && (segs[i] != "api" || segs[i+1] != "v1") {
-		i++
+// forbidden reports whether res is a core resource the bundle never requests.
+func forbidden(res string) bool { return res == "secrets" || res == "configmaps" }
+
+// resolve returns the core resource and subresource of path below base. A path
+// outside base is refused if any api/v1 in it names a forbidden resource.
+func resolve(path, base string) (resource, sub string) {
+	p := strings.Trim(path, "/")
+	if base == "" || p == base || strings.HasPrefix(p, base+"/") {
+		return coreResource(strings.Split(strings.TrimPrefix(strings.TrimPrefix(p, base), "/"), "/"))
 	}
-	if i+1 >= len(segs) {
+	segs := strings.Split(p, "/")
+	for i := range segs {
+		if r, s := coreResource(segs[i:]); forbidden(r) {
+			return r, s
+		}
+	}
+	return coreResource(segs)
+}
+
+// coreResource returns the core API resource of a path that starts at api/v1
+// and, for a named namespaced object, its subresource; "" for any other path.
+func coreResource(segs []string) (resource, sub string) {
+	if len(segs) < 2 || segs[0] != "api" || segs[1] != "v1" {
 		return "", ""
 	}
-	tail := segs[i+2:]
+	tail := segs[2:]
 	if len(tail) > 0 && tail[0] == "watch" {
 		tail = tail[1:]
 	}

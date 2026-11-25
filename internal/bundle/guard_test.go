@@ -2,6 +2,7 @@ package bundle
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -187,23 +188,105 @@ func TestGuardTwice(t *testing.T) {
 	}
 }
 
-// TestGuardPassesRedirects: 3xx responses, 304 included, pass untouched.
-func TestGuardPassesRedirects(t *testing.T) {
+// TestGuardPrefixedServer: with a server URL path, the guard resolves the
+// resource below that path, also when the path itself holds api/v1.
+func TestGuardPrefixedServer(t *testing.T) {
+	const canary = "kgwctl-canary-guard-prefix"
+	prefixes := []string{
+		"/k8s/clusters/c-1",
+		"/api/v1",
+		"/api/v1/",
+		"/api/v1/namespaces/host/services/https:vc:443/proxy",
+		"/api/v1/namespaces/host/secrets/s/proxy",
+	}
+	for _, prefix := range prefixes {
+		t.Run(prefix, func(t *testing.T) {
+			rec := &recorder{h: func(w http.ResponseWriter, r *http.Request) {
+				if strings.Contains(r.URL.Path, "/pods/refused") {
+					w.WriteHeader(http.StatusServiceUnavailable)
+					io.WriteString(w, "dial tcp 10.1.2.3:9091: connect: connection refused "+canary)
+					return
+				}
+				if strings.Contains(r.URL.Path, "/apis/apps/v1/") {
+					w.Header().Set("Content-Type", "application/json")
+					fmt.Fprint(w, `{"kind":"DeploymentList","apiVersion":"apps/v1","metadata":{},"items":[]}`)
+					return
+				}
+				emptyPodList(w, r)
+			}}
+			srv := httptest.NewServer(rec)
+			t.Cleanup(srv.Close)
+			kube, err := kubernetes.NewForConfig(Guard(&rest.Config{Host: srv.URL + prefix}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx := context.Background()
+			core := kube.CoreV1()
+			calls := map[string]func() error{
+				"get secret":      func() error { _, err := core.Secrets("ns").Get(ctx, "s", metav1.GetOptions{}); return err },
+				"list secrets":    func() error { _, err := core.Secrets("").List(ctx, metav1.ListOptions{}); return err },
+				"watch secrets":   func() error { _, err := core.Secrets("ns").Watch(ctx, metav1.ListOptions{}); return err },
+				"get configmap":   func() error { _, err := core.ConfigMaps("ns").Get(ctx, "c", metav1.GetOptions{}); return err },
+				"list configmaps": func() error { _, err := core.ConfigMaps("ns").List(ctx, metav1.ListOptions{}); return err },
+				"legacy watch": func() error {
+					return core.RESTClient().Get().AbsPath("/api/v1/watch/namespaces/ns/secrets").Do(ctx).Error()
+				},
+				"abs configmap get": func() error {
+					return core.RESTClient().Get().AbsPath("/api/v1/namespaces/ns/configmaps/c").Do(ctx).Error()
+				},
+			}
+			for name, call := range calls {
+				if err := call(); !errors.Is(err, pb.ErrForbiddenKind) {
+					t.Errorf("%s: err %v, want ErrForbiddenKind", name, err)
+				}
+			}
+			if reqs := rec.requests(); len(reqs) != 0 {
+				t.Fatalf("server saw %v, want no request", reqs)
+			}
+			// Core and named-group reads still pass; pods/proxy keeps its refused cause.
+			if _, err := core.Pods("ns").List(ctx, metav1.ListOptions{}); err != nil {
+				t.Errorf("pods list: %v", err)
+			}
+			if _, err := kube.AppsV1().Deployments("ns").List(ctx, metav1.ListOptions{}); err != nil {
+				t.Errorf("deployments list: %v", err)
+			}
+			err = core.RESTClient().Get().Namespace("ns").Resource("pods").Name("refused:9091").
+				SubResource("proxy").Suffix("metrics").Do(ctx).Error()
+			if !Refused(err) || statusCode(err) != 503 || strings.Contains(fmt.Sprintf("%v %#v", err, err), canary) {
+				t.Errorf("pods/proxy: got %v (code %d, refused %t), want 503 with the refused cause and no body", err, statusCode(err), Refused(err))
+			}
+		})
+	}
+}
+
+// TestGuardSanitizesRedirects: a 3xx keeps its code and headers, so redirects
+// still follow or stop, but its body is replaced like any non-2xx.
+func TestGuardSanitizesRedirects(t *testing.T) {
+	const canary = "kgwctl-canary-guard-3xx"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/moved") {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/moved"):
 			w.Header().Set("Location", "/elsewhere")
 			w.WriteHeader(http.StatusFound)
-			io.WriteString(w, "moved body")
-			return
+			io.WriteString(w, "moved body "+canary)
+		case r.URL.Path == "/elsewhere":
+			io.WriteString(w, "arrived")
+		case strings.HasSuffix(r.URL.Path, "/pods"):
+			// A terminal 3xx without Location, holding a Status message.
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusMultipleChoices)
+			fmt.Fprintf(w, `{"kind":"Status","apiVersion":"v1","status":"Failure","code":300,"message":%q}`, canary)
+		default:
+			w.WriteHeader(http.StatusNotModified)
 		}
-		w.WriteHeader(http.StatusNotModified)
 	}))
 	t.Cleanup(srv.Close)
-	rt, err := rest.TransportFor(Guard(&rest.Config{Host: srv.URL}))
+	cfg := Guard(&rest.Config{Host: srv.URL})
+	rt, err := rest.TransportFor(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for path, want := range map[string]int{"/api/v1/namespaces/a/pods/p/proxy/moved": 302, "/api/v1/pods": 304} {
+	for path, want := range map[string]int{"/api/v1/namespaces/a/pods/p/proxy/moved": 302, "/api/v1/namespaces/a/services": 304} {
 		req, _ := http.NewRequest(http.MethodGet, srv.URL+path, nil)
 		resp, err := rt.RoundTrip(req)
 		if err != nil {
@@ -211,12 +294,47 @@ func TestGuardPassesRedirects(t *testing.T) {
 		}
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		if resp.StatusCode != want || resp.Header.Get("Content-Type") == "application/json" {
-			t.Errorf("%s: status %d, content type %q; want %d untouched", path, resp.StatusCode, resp.Header.Get("Content-Type"), want)
+		var st metav1.Status
+		if resp.StatusCode != want || json.Unmarshal(body, &st) != nil || st.Code != int32(want) || strings.Contains(string(body), canary) {
+			t.Errorf("%s: status %d, body %q; want %d with a code-only Status", path, resp.StatusCode, body, want)
 		}
-		if want == 302 && (string(body) != "moved body" || resp.Header.Get("Location") != "/elsewhere") {
-			t.Errorf("%s: body %q, location %q; want them untouched", path, body, resp.Header.Get("Location"))
+		if want == 302 && resp.Header.Get("Location") != "/elsewhere" {
+			t.Errorf("%s: location %q, want /elsewhere", path, resp.Header.Get("Location"))
 		}
+	}
+
+	// http.Client still follows a guarded redirect, and still stops on request.
+	hc, err := rest.HTTPClientFor(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := hc.Get(srv.URL + "/api/v1/namespaces/a/pods/p/proxy/moved")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || string(body) != "arrived" {
+		t.Errorf("followed redirect: status %d, body %q; want 200 arrived", resp.StatusCode, body)
+	}
+	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	resp, err = hc.Get(srv.URL + "/api/v1/namespaces/a/pods/p/proxy/moved")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusFound {
+		t.Errorf("refused redirect: status %d, want 302", resp.StatusCode)
+	}
+
+	// A typed client gets a status-only error from a terminal 3xx.
+	kube, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = kube.CoreV1().Pods("a").List(context.Background(), metav1.ListOptions{})
+	if err == nil || statusCode(err) != 300 || strings.Contains(fmt.Sprintf("%v %#v", err, err), canary) {
+		t.Errorf("terminal 300: got %v (code %d), want a status-only 300 error", err, statusCode(err))
 	}
 }
 
