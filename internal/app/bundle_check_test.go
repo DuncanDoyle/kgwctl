@@ -419,14 +419,16 @@ func TestCheckCollectorRedirectBody(t *testing.T) {
 	bundletest.AssertNoCanary(t, a, []string{canary})
 }
 
-// TestBundleRedirectLocation: a 3xx Location that is unparseable or leaves the
-// server's origin leaves its value in no member; net/http would quote it.
+// TestBundleRedirectLocation: a 3xx is never followed, and its Location value
+// reaches no member; net/http would quote it in its error text.
 func TestBundleRedirectLocation(t *testing.T) {
 	const canary = "kgwctl-canary-location"
 	for name, loc := range map[string]string{
 		"unparseable":  "%zz " + canary,
 		"opaque":       "x:" + canary,
 		"foreign host": "//" + canary + ".invalid/p",
+		// Same path, new query: the rule matches again, so it loops.
+		"same-origin loop": "?" + canary,
 	} {
 		t.Run(name, func(t *testing.T) {
 			env := newEnv(t, testenv.Options{Fixtures: []string{healthyFixture}})

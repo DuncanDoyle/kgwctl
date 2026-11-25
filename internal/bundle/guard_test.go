@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -260,10 +261,11 @@ func TestGuardPrefixedServer(t *testing.T) {
 	}
 }
 
-// TestGuardSanitizesRedirects: a 3xx keeps its code and headers, so redirects
-// still follow or stop, but its body is replaced like any non-2xx.
+// TestGuardSanitizesRedirects: a 3xx keeps its code, loses its Location and
+// body, and is never followed; clients get a status-only failure.
 func TestGuardSanitizesRedirects(t *testing.T) {
 	const canary = "kgwctl-canary-guard-3xx"
+	var arrived atomic.Bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/moved"):
@@ -271,6 +273,7 @@ func TestGuardSanitizesRedirects(t *testing.T) {
 			w.WriteHeader(http.StatusFound)
 			io.WriteString(w, "moved body "+canary)
 		case r.URL.Path == "/elsewhere":
+			arrived.Store(true)
 			io.WriteString(w, "arrived")
 		case strings.HasSuffix(r.URL.Path, "/pods"):
 			// A terminal 3xx without Location, holding a Status message.
@@ -299,12 +302,12 @@ func TestGuardSanitizesRedirects(t *testing.T) {
 		if resp.StatusCode != want || json.Unmarshal(body, &st) != nil || st.Code != int32(want) || strings.Contains(string(body), canary) {
 			t.Errorf("%s: status %d, body %q; want %d with a code-only Status", path, resp.StatusCode, body, want)
 		}
-		if want == 302 && resp.Header.Get("Location") != "/elsewhere" {
-			t.Errorf("%s: location %q, want /elsewhere", path, resp.Header.Get("Location"))
+		if loc := resp.Header.Get("Location"); loc != "" {
+			t.Errorf("%s: location %q, want none", path, loc)
 		}
 	}
 
-	// http.Client still follows a guarded redirect, and still stops on request.
+	// http.Client with its default policy does not follow a guarded 302.
 	hc, err := rest.HTTPClientFor(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -313,29 +316,27 @@ func TestGuardSanitizesRedirects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK || string(body) != "arrived" {
-		t.Errorf("followed redirect: status %d, body %q; want 200 arrived", resp.StatusCode, body)
-	}
-	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	resp, err = hc.Get(srv.URL + "/api/v1/namespaces/a/pods/p/proxy/moved")
-	if err != nil {
-		t.Fatal(err)
-	}
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusFound {
-		t.Errorf("refused redirect: status %d, want 302", resp.StatusCode)
+		t.Errorf("redirect: status %d, want 302 unfollowed", resp.StatusCode)
+	}
+	if arrived.Load() {
+		t.Error("the redirect target was requested")
 	}
 
-	// A typed client gets a status-only error from a terminal 3xx.
+	// A typed client gets a status-only error from a 3xx, with or without Location.
 	kube, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = kube.CoreV1().Pods("a").List(context.Background(), metav1.ListOptions{})
+	ctx := context.Background()
+	_, err = kube.CoreV1().Pods("a").List(ctx, metav1.ListOptions{})
 	if err == nil || statusCode(err) != 300 || strings.Contains(fmt.Sprintf("%v %#v", err, err), canary) {
 		t.Errorf("terminal 300: got %v (code %d), want a status-only 300 error", err, statusCode(err))
+	}
+	err = kube.CoreV1().RESTClient().Get().AbsPath("/api/v1/namespaces/a/pods/p/proxy/moved").Do(ctx).Error()
+	if err == nil || statusCode(err) != 302 || strings.Contains(fmt.Sprintf("%v %#v", err, err), canary) || arrived.Load() {
+		t.Errorf("302: got %v (code %d), want a status-only 302 error, unfollowed", err, statusCode(err))
 	}
 }
 

@@ -31,9 +31,9 @@ var refusedPhrase = []byte("connect: connection refused")
 // Guard returns a copy of cfg whose transport refuses every request for core
 // secrets and configmaps with pb.ErrForbiddenKind, unsent, and replaces each
 // 3xx, 4xx and 5xx response body with a Status holding only code, reason and
-// the refused cause (design §6.1, §7.1). A 3xx keeps its headers, so redirects
-// still follow or stop as the client decides. Request paths are resolved below
-// the server URL's path. Bodies are never stored. Guarding a guarded config is
+// the refused cause (design §6.1, §7.1). Every 3xx also loses its Location, so
+// no redirect is followed and the client gets a status-only failure. Request
+// paths are resolved below the server URL's path. Bodies are never stored. Guarding a guarded config is
 // safe: the inner guard's body and cause pass through.
 func Guard(cfg *rest.Config) *rest.Config {
 	c := rest.CopyConfig(cfg)
@@ -91,12 +91,8 @@ func (g *guard) RoundTrip(req *http.Request) (*http.Response, error) {
 		resp.Header = http.Header{}
 	}
 	resp.Header.Del("Content-Encoding")
-	// net/http quotes a bad or foreign Location in its error text; keep only same-origin ones.
-	if loc := resp.Header.Get("Location"); loc != "" {
-		if u, err := req.URL.Parse(loc); err != nil || u.Scheme != req.URL.Scheme || !strings.EqualFold(u.Host, req.URL.Host) {
-			resp.Header.Del("Location")
-		}
-	}
+	// Bundle clients never follow redirects; net/http would quote Location in its errors.
+	resp.Header.Del("Location")
 	resp.Header.Set("Content-Type", "application/json")
 	resp.Header.Set("Content-Length", strconv.Itoa(len(body)))
 	return resp, nil
