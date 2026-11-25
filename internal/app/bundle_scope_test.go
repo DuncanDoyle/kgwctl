@@ -149,7 +149,7 @@ func docs(ds ...string) string { return strings.Join(ds, "\n---\n") }
 // mustScope runs resolveScope and fails on error.
 func mustScope(t *testing.T, f *Flags, explicit bool, res *load.Result) (pb.Scope, ib.GatewaySet, func(*unstructured.Unstructured) pb.ExcludeReason, []string) {
 	t.Helper()
-	sc, gws, keep, warns, err := resolveScope(f, explicit, res)
+	sc, gws, keep, warns, err := resolveScope(f, explicit, false, res)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +187,7 @@ func TestResolveScope(t *testing.T) {
 	if sc.Installs[0].Chosen != "flag" {
 		t.Errorf("--install: chosen %q, want flag", sc.Installs[0].Chosen)
 	}
-	_, _, _, _, err := resolveScope(&Flags{Install: "x/y"}, false, res)
+	_, _, _, _, err := resolveScope(&Flags{Install: "x/y"}, false, false, res)
 	var ee *ExitError
 	if !errors.As(err, &ee) || ee.Code != 2 {
 		t.Errorf("--install x/y: err %v, want exit 2", err)

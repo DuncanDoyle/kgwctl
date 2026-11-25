@@ -1,6 +1,7 @@
 package bundle
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"sync"
@@ -20,6 +21,10 @@ type RunOptions struct {
 	Skip map[string]bool
 	// Deadline ends collection; the zero time means only ctx ends it.
 	Deadline time.Time
+	// NotStarted, if set, replaces "collection deadline reached" as the error
+	// of every collector unfinished at the seal. Set it only when collection
+	// ends at once for another reason, so that no collector starts.
+	NotStarted string
 }
 
 // result is the outcome of one collector, set once.
@@ -138,7 +143,7 @@ func Run(ctx context.Context, cs []pb.Collector, env pb.Env, w *Writer, m Manife
 		e := &res[i].entry
 		if !res[i].done {
 			e.Status, e.DurationMs, res[i].done = pb.CollectorTimeout, now().Sub(start).Milliseconds(), true
-			e.Error = "collection deadline reached"
+			e.Error = cmp.Or(o.NotStarted, "collection deadline reached")
 		}
 		e.Late = late[e.Name]
 		m.Collectors = append(m.Collectors, *e)

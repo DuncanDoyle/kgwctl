@@ -44,8 +44,9 @@ func baseScope(f *Flags, explicitNamespace bool) pb.Scope {
 
 // resolveScope resolves the root flags once into the run's Scope, the kept
 // Gateways, the keep function and stderr warnings (design §3.2). An
-// --install that names no detected install is a usage error (exit 2).
-func resolveScope(f *Flags, explicitNamespace bool, res *load.Result) (pb.Scope, ib.GatewaySet, func(*unstructured.Unstructured) pb.ExcludeReason, []string, error) {
+// --install that names no detected install is a usage error (exit 2). With
+// detectionIncomplete, no warning claims that no install exists.
+func resolveScope(f *Flags, explicitNamespace, detectionIncomplete bool, res *load.Result) (pb.Scope, ib.GatewaySet, func(*unstructured.Unstructured) pb.ExcludeReason, []string, error) {
 	sc := baseScope(f, explicitNamespace)
 	all := res.Model.Installs
 	selected := all
@@ -78,9 +79,10 @@ func resolveScope(f *Flags, explicitNamespace bool, res *load.Result) (pb.Scope,
 		sc.Installs = append(sc.Installs, in)
 	}
 
-	filter, warns := view.NewFilter(res, view.Scope{AllNamespaces: true, Install: f.Install, AllControllers: f.AllControllers})
+	filter, warns := view.NewFilter(res, view.Scope{AllNamespaces: true, Install: f.Install, AllControllers: f.AllControllers,
+		DetectionIncomplete: detectionIncomplete})
 	switch {
-	case len(all) == 0 && f.AllControllers:
+	case len(all) == 0 && f.AllControllers && !detectionIncomplete:
 		warns = append(warns, "no kgateway install detected; controller collectors are skipped")
 	case len(selected) > 1:
 		warns = append(warns, fmt.Sprintf("%d kgateway installs detected; the bundle covers all of them, --install selects one", len(selected)))

@@ -26,8 +26,8 @@ func releaseAfter(t *testing.T, d time.Duration) <-chan struct{} {
 // deadlineManifest is the part of manifest.json the deadline tests read.
 type deadlineManifest struct {
 	Item struct {
-		Collectors []struct{ Name, Status string } `json:"collectors"`
-		Items      []struct{ Path, Status string } `json:"items"`
+		Collectors []struct{ Name, Status, Error string } `json:"collectors"`
+		Items      []struct{ Path, Status string }        `json:"items"`
 	} `json:"item"`
 }
 
@@ -156,6 +156,34 @@ func TestBundleTimeoutDuringDetectionDiscovery(t *testing.T) {
 				t.Errorf("stderr %q claims no install", stderr)
 			}
 		})
+	}
+}
+
+// TestBundleRequestTimeoutCutsDetection: --request-timeout cuts detection's
+// discovery while --timeout has time left. Collectors are timeout, and their
+// error says detection timed out, not that the collection deadline passed.
+func TestBundleRequestTimeoutCutsDetection(t *testing.T) {
+	env := newEnv(t, testenv.Options{})
+	held := releaseAfter(t, 30*time.Second)
+	hits := env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindDiscovery, Resource: heldGV}, testenv.Action{Until: held})
+
+	m, stderr := timedBundle(t, env, 12*time.Second, "--request-timeout", "2s", "--timeout", "5m")
+	if hits.N() == 0 {
+		t.Fatal("detection's discovery was not held")
+	}
+	if got := itemStatus(m, "inventory/detection"); got != "timeout" {
+		t.Errorf("item inventory/detection: status %q, want timeout", got)
+	}
+	for _, c := range m.Item.Collectors {
+		if c.Status == "skipped" {
+			continue
+		}
+		if c.Status != "timeout" || c.Error != "install detection timed out" {
+			t.Errorf("collector %s: %s %q, want timeout %q", c.Name, c.Status, c.Error, "install detection timed out")
+		}
+	}
+	if !strings.Contains(stderr, "install detection timed out") {
+		t.Errorf("stderr %q does not say detection timed out", stderr)
 	}
 }
 

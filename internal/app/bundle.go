@@ -192,7 +192,7 @@ func newBundleCmd(reg *extension.Registry, build BuildInfo, extra []pb.Collector
 				replicas []pb.Replica
 			)
 			if res != nil {
-				scope, gws, keep, warns, err = resolveScope(f, explicitNs, res)
+				scope, gws, keep, warns, err = resolveScope(f, explicitNs, detectLate, res)
 				// The pinned install may just not have loaded yet.
 				if errors.Is(err, errNoSuchInstall) && detectLate {
 					res, scope, err = nil, baseScope(f, explicitNs), nil
@@ -208,8 +208,6 @@ func newBundleCmd(reg *extension.Registry, build BuildInfo, extra []pb.Collector
 				}
 			}
 			if detectLate {
-				// What detection did not load is unknown, not absent.
-				warns = slices.DeleteFunc(warns, func(w string) bool { return strings.HasPrefix(w, "no kgateway install detected") })
 				warns = append([]string{"install detection timed out; installs and Gateways may be missing"}, warns...)
 			}
 			for _, w := range warns {
@@ -273,10 +271,15 @@ func newBundleCmd(reg *extension.Registry, build BuildInfo, extra []pb.Collector
 				}
 			}
 			cs = append(builtinCollectors(reg, build, collectorDeps{f: f, rc: grc, res: res, dialer: dialer, logs: logs, scrape: scrape, noEndpoints: noEndpoints}, hooks), extra...)
+			ro := ib.RunOptions{Skip: skipSet, Deadline: deadline}
 			if res == nil {
-				deadline = time.Now() // no model: collection ends before any collector starts
+				// No model: no collector starts. Say why unless --timeout itself has passed.
+				ro.Deadline = time.Now()
+				if rctx.Err() == nil {
+					ro.NotStarted = "install detection timed out"
+				}
 			}
-			m, err = ib.Run(cmd.Context(), cs, env, w, m, ib.RunOptions{Skip: skipSet, Deadline: deadline})
+			m, err = ib.Run(cmd.Context(), cs, env, w, m, ro)
 			if err != nil {
 				return &ExitError{Code: 2, Err: fmt.Errorf("write bundle: %w", err)}
 			}
