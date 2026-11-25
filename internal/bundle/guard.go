@@ -91,9 +91,9 @@ func (g *guard) RoundTrip(req *http.Request) (*http.Response, error) {
 		resp.Header = http.Header{}
 	}
 	resp.Header.Del("Content-Encoding")
-	// net/http quotes a Location it cannot parse in its error text.
+	// net/http quotes a bad or foreign Location in its error text; keep only same-origin ones.
 	if loc := resp.Header.Get("Location"); loc != "" {
-		if _, err := req.URL.Parse(loc); err != nil {
+		if u, err := req.URL.Parse(loc); err != nil || u.Scheme != req.URL.Scheme || !strings.EqualFold(u.Host, req.URL.Host) {
 			resp.Header.Del("Location")
 		}
 	}

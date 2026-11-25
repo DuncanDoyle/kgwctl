@@ -419,22 +419,30 @@ func TestCheckCollectorRedirectBody(t *testing.T) {
 	bundletest.AssertNoCanary(t, a, []string{canary})
 }
 
-// TestBundleRedirectLocation: a 3xx whose Location does not parse leaves its
-// value in no member; net/http would quote it in the error text.
+// TestBundleRedirectLocation: a 3xx Location that is unparseable or leaves the
+// server's origin leaves its value in no member; net/http would quote it.
 func TestBundleRedirectLocation(t *testing.T) {
 	const canary = "kgwctl-canary-location"
-	env := newEnv(t, testenv.Options{Fixtures: []string{healthyFixture}})
-	hits := env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindAcquire, Resource: httpRoutes}, testenv.Action{
-		Status: http.StatusFound,
-		Body:   []byte(`{}`),
-		Header: http.Header{"Location": {"%zz " + canary}},
-	})
-	a := archiveWith(t, env.Kubeconfig, nil, app.BundleTestHooks{Check: fastHooks(metricsScraper{})}, "--skip", "version")
-	if hits.N() == 0 {
-		t.Fatal("the rule never applied")
+	for name, loc := range map[string]string{
+		"unparseable":  "%zz " + canary,
+		"opaque":       "x:" + canary,
+		"foreign host": "//" + canary + ".invalid/p",
+	} {
+		t.Run(name, func(t *testing.T) {
+			env := newEnv(t, testenv.Options{Fixtures: []string{healthyFixture}})
+			hits := env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindAcquire, Resource: httpRoutes}, testenv.Action{
+				Status: http.StatusFound,
+				Body:   []byte(`{}`),
+				Header: http.Header{"Location": {loc}},
+			})
+			a := archiveWith(t, env.Kubeconfig, nil, app.BundleTestHooks{Check: fastHooks(metricsScraper{})}, "--skip", "version")
+			if hits.N() == 0 {
+				t.Fatal("the rule never applied")
+			}
+			fileHas(t, a, "errors.txt", "resources/gateway.networking.k8s.io/HTTPRoute")
+			bundletest.AssertNoCanary(t, a, []string{canary})
+		})
 	}
-	fileHas(t, a, "errors.txt", "resources/gateway.networking.k8s.io/HTTPRoute")
-	bundletest.AssertNoCanary(t, a, []string{canary})
 }
 
 // TestCheckCollectorUnwatchedRoute: check names team-b's route, which the
