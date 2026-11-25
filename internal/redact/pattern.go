@@ -55,6 +55,13 @@ var patterns = []patternRule{
 	{re: regexp.MustCompile(`\b(sk-(?:ant-|proj-)?|sk_live_|sk_test_|rk_live_|ghp_|gho_|ghu_|ghs_|ghr_|github_pat_|glpat-|xox[abprs]-|AIza)[A-Za-z0-9_-]{16,}`), keep: 1},
 }
 
+// Pattern applies the pattern pass to s, for short cluster-sourced strings
+// such as manifest discovery selectors.
+func Pattern(s string) string {
+	s, _ = patternPass(s)
+	return s
+}
+
 // patternPass applies the pattern rules to s and returns the number of matches.
 func patternPass(s string) (string, int) {
 	n := 0

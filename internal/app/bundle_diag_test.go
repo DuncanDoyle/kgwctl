@@ -42,26 +42,59 @@ func writeFixture(t *testing.T, name, body string) string {
 	return path
 }
 
-// TestBundleManifestKeepsClusterTextOut: an invalid discovery selector is
-// recorded as a fixed reason, and under --all-controllers a proxy whose
-// full-name annotation is no known Gateway gets no owner.
-func TestBundleManifestKeepsClusterTextOut(t *testing.T) {
+// selectorFixture writes the healthy install with a discovery selector on
+// team=value, set on the Deployment template and the controller Pod.
+func selectorFixture(t *testing.T, value string) string {
+	t.Helper()
 	healthy, err := os.ReadFile(healthyFixture)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The selector env goes on the Deployment template and the controller Pod, which scope reads first.
 	withEnv := func(indent string) (string, string) {
 		image := indent + "image: cr.kgateway.dev/kgateway-dev/kgateway:v2.5.0\n" + indent + "ports:\n"
 		return image, strings.Replace(image, indent+"ports:", indent+"env:\n"+indent+"  - name: KGW_DISCOVERY_NAMESPACE_SELECTORS\n"+
-			indent+"    value: '[{\"matchLabels\":{\"team\":\""+selectorCanary+"\"}}]'\n"+indent+"ports:", 1)
+			indent+"    value: '[{\"matchLabels\":{\"team\":\""+value+"\"}}]'\n"+indent+"ports:", 1)
 	}
 	d0, d1 := withEnv("          ")
 	p0, p1 := withEnv("      ")
 	if bytes.Count(healthy, []byte(d0)) != 1 || bytes.Count(healthy, []byte(p0)) != 1 {
 		t.Fatal("healthy fixture: want one Deployment and one Pod controller container")
 	}
-	inst := writeFixture(t, "install.yaml", strings.NewReplacer(d0, d1, p0, p1).Replace(string(healthy)))
+	return writeFixture(t, "install.yaml", strings.NewReplacer(d0, d1, p0, p1).Replace(string(healthy)))
+}
+
+// TestBundleManifestRedactsValidSelector: a valid selector holding a
+// token-shaped value reaches manifest.json only after the pattern pass.
+func TestBundleManifestRedactsValidSelector(t *testing.T) {
+	canary := "ghp_" + strings.Repeat("kgwctlCanary", 3)
+	e := newEnv(t, testenv.Options{Fixtures: []string{selectorFixture(t, canary)}})
+	a := bundleArchive(t, e)
+	b, _ := a.File("manifest.json")
+	if bytes.Contains(b, []byte(canary)) {
+		t.Error("manifest.json holds the selector canary")
+	}
+	var doc struct {
+		Item struct {
+			Scope pb.Scope `json:"scope"`
+		} `json:"item"`
+	}
+	if err := json.Unmarshal(b, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Item.Scope.Installs) != 1 {
+		t.Fatalf("installs %d, want one", len(doc.Item.Scope.Installs))
+	}
+	d := doc.Item.Scope.Installs[0].Discovery
+	if d.Mode != "selectors" || len(d.Selectors) != 1 || !strings.Contains(d.Selectors[0], "team=") {
+		t.Errorf("discovery mode %q with %d selectors, want one team selector", d.Mode, len(d.Selectors))
+	}
+}
+
+// TestBundleManifestKeepsClusterTextOut: an invalid discovery selector is
+// recorded as a fixed reason, and under --all-controllers a proxy whose
+// full-name annotation is no known Gateway gets no owner.
+func TestBundleManifestKeepsClusterTextOut(t *testing.T) {
+	inst := selectorFixture(t, selectorCanary)
 	bogus := strings.NewReplacer("name: http-a\n", "name: bogus\n",
 		"gateway-full-name: http}", "gateway-full-name: '"+ownerCanary+"'}").Replace(proxyPodYAML("http-a"))
 	proxies := writeFixture(t, "proxies.yaml", proxyPodYAML("http-a")+"---\n"+bogus)

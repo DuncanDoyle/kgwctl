@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/DuncanDoyle/kgwctl/internal/print"
+	"github.com/DuncanDoyle/kgwctl/internal/redact"
 	pb "github.com/DuncanDoyle/kgwctl/pkg/bundle"
 )
 
@@ -233,7 +234,8 @@ func max2(a, b int) int {
 	return b
 }
 
-// capStrings applies the per-string and per-install caps.
+// capStrings applies the per-string and per-install caps. Selectors get the
+// pattern pass before the cut, since a valid label value can hold a credential.
 func capStrings(m *Manifest) {
 	m.Build.Version = cut(m.Build.Version, maxString)
 	m.Build.Commit = cut(m.Build.Commit, maxString)
@@ -247,7 +249,7 @@ func capStrings(m *Manifest) {
 		}
 		sel := make([]string, len(d.Selectors))
 		for j, s := range d.Selectors {
-			sel[j] = cut(s, maxString)
+			sel[j] = cut(redact.Pattern(s), maxString)
 		}
 		if len(sel) > 0 {
 			d.Selectors = sel
