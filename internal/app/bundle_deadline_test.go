@@ -32,17 +32,24 @@ type deadlineManifest struct {
 	} `json:"item"`
 }
 
-// timedBundle runs bundle to stdout, fails past limit, and returns the
-// manifest and stderr.
+// timedBundle runs bundle to stdout, wants exit 0, fails past limit, and
+// returns the manifest and stderr.
 func timedBundle(t *testing.T, env *testenv.Env, limit time.Duration, args ...string) (deadlineManifest, string) {
+	t.Helper()
+	return timedBundleExit(t, env, limit, 0, args...)
+}
+
+// timedBundleExit is timedBundle wanting exit code. Exit 2 is a sealed
+// archive without cluster data (D-030).
+func timedBundleExit(t *testing.T, env *testenv.Env, limit time.Duration, code int, args ...string) (deadlineManifest, string) {
 	t.Helper()
 	start := time.Now()
 	r := runBundle(t, env.Kubeconfig, nil, append([]string{"-o", "-"}, args...)...)
 	if el := time.Since(start); el > limit {
 		t.Errorf("run took %v, want at most %v", el.Round(time.Millisecond), limit)
 	}
-	if r.code != 0 {
-		t.Fatalf("exit %d, stderr %q", r.code, r.stderr)
+	if r.code != code {
+		t.Fatalf("exit %d, stderr %q; want %d", r.code, r.stderr, code)
 	}
 	a := bundletest.Extract(t, strings.NewReader(r.stdout))
 	b, ok := a.File("manifest.json")
@@ -206,9 +213,9 @@ func TestBundleTimeoutCoversInventory(t *testing.T) {
 }
 
 // TestBundleTimeoutDuringDetectionDiscovery: --timeout ends while detection
-// is held, in discovery or while listing. The archive is still sealed:
-// detection is timeout, every collector timeout, exit 0. With --install, the
-// cut detection is not reported as an unknown install.
+// is held, in discovery or while listing. The archive is still sealed with
+// no cluster data: detection is timeout, every collector timeout, exit 2
+// (D-030). With --install, the cut detection is not reported as an unknown install.
 func TestBundleTimeoutDuringDetectionDiscovery(t *testing.T) {
 	// Other group versions answer before heldGV.
 	discovery := testenv.Match{Kind: testenv.KindDiscovery, Resource: heldGV}
@@ -228,7 +235,7 @@ func TestBundleTimeoutDuringDetectionDiscovery(t *testing.T) {
 			held := releaseAfter(t, 20*time.Second)
 			hits := env.Proxies[0].Rule(tc.hold, testenv.Action{Until: held})
 
-			m, stderr := timedBundle(t, env, 10*time.Second, append([]string{"--timeout", "2s"}, tc.args...)...)
+			m, stderr := timedBundleExit(t, env, 10*time.Second, 2, append([]string{"--timeout", "2s"}, tc.args...)...)
 			if hits.N() == 0 {
 				t.Fatal("detection's discovery was not held")
 			}
@@ -243,7 +250,7 @@ func TestBundleTimeoutDuringDetectionDiscovery(t *testing.T) {
 			if !strings.Contains(stderr, "install detection timed out") {
 				t.Errorf("stderr %q does not say detection timed out", stderr)
 			}
-			if strings.Contains(stderr, "no kgateway install detected") {
+			if strings.Contains(stderr, "no kgateway install detected") || strings.Contains(stderr, "no such install") {
 				t.Errorf("stderr %q claims no install", stderr)
 			}
 		})
@@ -253,12 +260,13 @@ func TestBundleTimeoutDuringDetectionDiscovery(t *testing.T) {
 // TestBundleRequestTimeoutCutsDetection: --request-timeout cuts detection's
 // discovery while --timeout has time left. Collectors are timeout, and their
 // error says detection timed out, not that the collection deadline passed.
+// The archive has no cluster data: exit 2 (D-030).
 func TestBundleRequestTimeoutCutsDetection(t *testing.T) {
 	env := newEnv(t, testenv.Options{})
 	held := releaseAfter(t, 30*time.Second)
 	hits := env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindDiscovery, Resource: heldGV}, testenv.Action{Until: held})
 
-	m, stderr := timedBundle(t, env, 12*time.Second, "--request-timeout", "2s", "--timeout", "5m")
+	m, stderr := timedBundleExit(t, env, 12*time.Second, 2, "--request-timeout", "2s", "--timeout", "5m")
 	if hits.N() == 0 {
 		t.Fatal("detection's discovery was not held")
 	}
@@ -280,7 +288,7 @@ func TestBundleRequestTimeoutCutsDetection(t *testing.T) {
 
 // TestBundleDeadlineBeforeFirstResponse: the API server accepts detection's
 // first request and never answers. Either deadline still seals an archive
-// with detection timeout and every collector timeout.
+// with detection timeout and every collector timeout, exit 2 (D-030).
 func TestBundleDeadlineBeforeFirstResponse(t *testing.T) {
 	for name, args := range map[string][]string{
 		"timeout":         {"--timeout", "2s"},
@@ -292,7 +300,7 @@ func TestBundleDeadlineBeforeFirstResponse(t *testing.T) {
 			// Detection starts with discovery, so no request gets a response.
 			hits := env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindDiscovery, Resource: "*"}, testenv.Action{Until: held})
 
-			m, stderr := timedBundle(t, env, 12*time.Second, args...)
+			m, stderr := timedBundleExit(t, env, 12*time.Second, 2, args...)
 			if hits.N() == 0 {
 				t.Fatal("detection's discovery was not held")
 			}

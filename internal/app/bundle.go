@@ -5,16 +5,18 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/url"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/DuncanDoyle/snellius/pkg/extension"
+	"github.com/DuncanDoyle/snellius/pkg/install"
 	"github.com/spf13/cobra"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
@@ -147,25 +149,12 @@ func newBundleCmd(reg *extension.Registry, build BuildInfo, extra []pb.Collector
 			// After the first Ctrl-C a slow finalization must not trap the user.
 			defer defaultOnCancel(cmd.Context())()
 
-			// The output is created before any client exists, so a bad -o makes no request.
-			var dest ib.Dest
-			if output == "-" {
-				dest = ib.Stdout(cmd.OutOrStdout())
-			} else {
-				if output == "" {
-					output = root + ".tar.gz"
-				}
-				if dest, err = ib.CreateFile(output); err != nil {
-					return usageErr(fmt.Errorf("create output: %w", err))
+			// Configuration errors come before the output exists, so they leave no archive (D-030).
+			if f.Install != "" {
+				if _, err := install.ParsePinned(f.Install); err != nil {
+					return usageErr(err)
 				}
 			}
-			ok := false
-			defer func() {
-				if !ok {
-					_ = dest.Abort()
-				}
-			}()
-
 			rc, _, err := f.RESTConfig()
 			if err != nil {
 				return usageErr(err)
@@ -191,6 +180,26 @@ func newBundleCmd(reg *extension.Registry, build BuildInfo, extra []pb.Collector
 			if err != nil {
 				return usageErr(err)
 			}
+
+			// The output is created before any cluster request, so a bad -o makes none.
+			var dest ib.Dest
+			if output == "-" {
+				dest = ib.Stdout(cmd.OutOrStdout())
+			} else {
+				if output == "" {
+					output = root + ".tar.gz"
+				}
+				if dest, err = ib.CreateFile(output); err != nil {
+					return usageErr(fmt.Errorf("create output: %w", err))
+				}
+			}
+			ok := false
+			defer func() {
+				if !ok {
+					_ = dest.Abort()
+				}
+			}()
+
 			// One --timeout clock from the first cluster request: detection, inventory and Run share it.
 			deadline := time.Now().Add(timeout)
 			rctx, rcancel := context.WithDeadline(cmd.Context(), deadline)
@@ -198,11 +207,20 @@ func newBundleCmd(reg *extension.Registry, build BuildInfo, extra []pb.Collector
 			dctx, dcancel := f.Context(rctx)
 			res, err := loadBundle(dctx, reg, grc)
 			dcancel()
-			// A timeout during detection seals a bundle (§3.1); a fast connection error does not.
-			if err != nil && (cmd.Context().Err() != nil || !timeoutClass(err)) {
+			// An interrupt aborts; any other detection failure is sealed without cluster data (D-030).
+			if err != nil && cmd.Context().Err() != nil {
 				return &ExitError{Code: 2, Err: loadError(cmd.Context(), err, rc.Host)}
 			}
-			detectLate := err != nil || stillLoading(res)
+			var (
+				noData     error  // why the archive holds no cluster data
+				detectItem error  // the inventory/detection item, with a fixed reason
+				notStarted string // the error of the collectors that never ran
+			)
+			if err != nil {
+				detectItem, notStarted = detectionOutcome(err)
+				noData = detectionError(err, notStarted, rc.Host)
+			}
+			detectLate := res != nil && stillLoading(res)
 			explicitNs := cmd.Flags().Changed(flagNamespace)
 			var (
 				scope    = baseScope(f, explicitNs)
@@ -215,9 +233,14 @@ func newBundleCmd(reg *extension.Registry, build BuildInfo, extra []pb.Collector
 			)
 			if res != nil {
 				scope, gws, keep, warns, err = resolveScope(f, explicitNs, detectLate, res)
-				// The pinned install may just not have loaded yet.
-				if errors.Is(err, errNoSuchInstall) && detectLate {
-					res, scope, err = nil, baseScope(f, explicitNs), nil
+				if errors.Is(err, errNoSuchInstall) {
+					// With detection cut, the pinned install may just not have loaded yet.
+					detectItem, notStarted, noData = errNoSuchInstall, errNoSuchInstall.Error(), err
+					if detectLate {
+						detectItem, notStarted = errDetectionTimeout, msgDetectionTimeout
+						noData = errors.New(msgDetectionTimeout + " before the --install install was found")
+					}
+					res, scope, warns, err = nil, baseScope(f, explicitNs), nil, nil
 				}
 				if err != nil {
 					return err
@@ -229,7 +252,7 @@ func newBundleCmd(reg *extension.Registry, build BuildInfo, extra []pb.Collector
 					warns = append(warns, e.Error())
 				}
 			}
-			if detectLate {
+			if detectLate && res != nil {
 				warns = append([]string{"install detection timed out; installs and Gateways may be missing"}, warns...)
 			}
 			for _, w := range warns {
@@ -251,9 +274,12 @@ func newBundleCmd(reg *extension.Registry, build BuildInfo, extra []pb.Collector
 			// The writer hides the real host in error text; the manifest only gets the placeholder.
 			w := ib.NewWriter(dest, sp, root, limits, redact.Options{ExtraHeaders: redactHeaders, MaxSize: limits.MaxSize}, rc.Host, now)
 			inv := w.Sink(inventoryName)
-			if detectLate {
+			if detectItem == nil && detectLate {
 				// Detection ended at a deadline: installs and Gateways may be missing.
-				inv.Error(pb.Path{inventoryName, "detection"}, pb.Source{}, fmt.Errorf("install detection: %w", context.DeadlineExceeded))
+				detectItem = errDetectionTimeout
+			}
+			if detectItem != nil {
+				inv.Error(pb.Path{inventoryName, "detection"}, pb.Source{}, detectItem)
 			}
 			for _, e := range invErrs {
 				var re *ib.ReplicaError
@@ -304,7 +330,7 @@ func newBundleCmd(reg *extension.Registry, build BuildInfo, extra []pb.Collector
 				// No model: no collector starts. Say why unless --timeout itself has passed.
 				ro.Deadline = time.Now()
 				if rctx.Err() == nil {
-					ro.NotStarted = "install detection timed out"
+					ro.NotStarted = notStarted
 				}
 			}
 			m, err = ib.Run(cmd.Context(), cs, env, w, m, ro)
@@ -313,6 +339,9 @@ func newBundleCmd(reg *extension.Registry, build BuildInfo, extra []pb.Collector
 			}
 			ok = true
 			summarize(cmd.ErrOrStderr(), m, output)
+			if noData != nil {
+				return &ExitError{Code: 2, Err: fmt.Errorf("bundle holds no cluster data: %s", noData.Error())}
+			}
 			return nil
 		},
 	}
@@ -351,12 +380,35 @@ func loadBundle(ctx context.Context, reg *extension.Registry, grc *rest.Config) 
 	return load.Load(ctx, c, reg, load.Needs{ProxyPods: true, Logger: engineLogger(io.Discard)})
 }
 
-// timeoutClass reports whether a detection error is a timeout: a context
-// deadline, or a net.Error timeout such as a TLS handshake or client timeout.
-func timeoutClass(err error) bool {
-	var te *load.TimeoutError
-	var ne net.Error
-	return errors.As(err, &te) || errors.Is(err, context.DeadlineExceeded) || errors.As(err, &ne) && ne.Timeout()
+// Fixed inventory/detection items (D-030); their status comes from ib.ItemStatus.
+var (
+	errDetectionTimeout = fmt.Errorf("install detection: %w", context.DeadlineExceeded)
+	errDetectionDenied  = apierrors.NewForbidden(schema.GroupResource{}, "", errors.New("install detection denied"))
+	errDetectionFailed  = errors.New("install detection failed")
+)
+
+// msgDetectionTimeout is the error of collectors that never ran after a detection timeout.
+const msgDetectionTimeout = "install detection timed out"
+
+// detectionOutcome maps a failed detection to its fixed item and the error of
+// the collectors that never ran.
+func detectionOutcome(err error) (error, string) {
+	switch ib.ItemStatus(err) {
+	case pb.ItemTimeout:
+		return errDetectionTimeout, msgDetectionTimeout
+	case pb.ItemDenied:
+		return errDetectionDenied, "install detection denied"
+	}
+	return errDetectionFailed, errDetectionFailed.Error()
+}
+
+// detectionError is the stderr cause of a failed detection: the fixed outcome
+// for a timeout, else loadError's text, both redacted (§7.1).
+func detectionError(err error, outcome, host string) error {
+	if outcome == msgDetectionTimeout {
+		return fmt.Errorf("%s: %s", outcome, redact.ErrorText(err, host))
+	}
+	return loadError(context.Background(), err, host)
 }
 
 // stillLoading reports whether detection ended with inputs still loading,

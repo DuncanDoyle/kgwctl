@@ -264,12 +264,11 @@ func TestBundleMinMaxSize(t *testing.T) {
 	assertNoRun(t, env, p)
 }
 
-// TestBundleUnreachable: with no reachable API server no bundle is written.
-func TestBundleUnreachable(t *testing.T) {
-	srv := httptest.NewServer(http.NotFoundHandler())
-	srv.Close() // the port now refuses connections
+// serverKubeconfig writes a kubeconfig for server with no credentials.
+func serverKubeconfig(t *testing.T, server string) string {
+	t.Helper()
 	cfg := clientcmdapi.NewConfig()
-	cfg.Clusters["c"] = &clientcmdapi.Cluster{Server: srv.URL}
+	cfg.Clusters["c"] = &clientcmdapi.Cluster{Server: server, InsecureSkipTLSVerify: strings.HasPrefix(server, "https:")}
 	cfg.AuthInfos["u"] = &clientcmdapi.AuthInfo{}
 	cfg.Contexts["ctx"] = &clientcmdapi.Context{Cluster: "c", AuthInfo: "u"}
 	cfg.CurrentContext = "ctx"
@@ -277,23 +276,65 @@ func TestBundleUnreachable(t *testing.T) {
 	if err := clientcmd.WriteToFile(*cfg, kubeconfig); err != nil {
 		t.Fatal(err)
 	}
+	return kubeconfig
+}
+
+// noDataBundle runs bundle into a file and wants exit 2 with a sealed
+// archive whose collectors never ran (D-030). It returns the manifest and stderr.
+func noDataBundle(t *testing.T, kubeconfig string, extra []pb.Collector, args ...string) (deadlineManifest, string) {
+	t.Helper()
 	out := filepath.Join(t.TempDir(), "out.tar.gz")
-	p := &probe{}
-	r := runBundle(t, kubeconfig, []pb.Collector{p}, "-o", out, "--request-timeout", "5s")
-	if r.code != 2 || !strings.Contains(r.stderr, "no reachable cluster") {
-		t.Fatalf("exit %d, stderr %q; want 2 naming no reachable cluster", r.code, r.stderr)
+	r := runBundle(t, kubeconfig, extra, append([]string{"-o", out}, args...)...)
+	if r.code != 2 {
+		t.Fatalf("exit %d, stderr %q; want 2", r.code, r.stderr)
 	}
-	if _, err := os.Stat(out); !os.IsNotExist(err) {
-		t.Errorf("output left behind: %v", err)
+	if !strings.Contains(r.stderr, "no cluster data") {
+		t.Errorf("stderr %q does not say the bundle holds no cluster data", r.stderr)
+	}
+	f, err := os.Open(out)
+	if err != nil {
+		t.Fatalf("no archive: %v", err)
+	}
+	defer f.Close()
+	b, ok := bundletest.Extract(t, f).File("manifest.json")
+	if !ok {
+		t.Fatal("no manifest.json: archive not sealed")
+	}
+	var m deadlineManifest
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range m.Item.Collectors {
+		if c.Status != "timeout" && c.Status != "skipped" {
+			t.Errorf("collector %s: status %q, want timeout (never ran)", c.Name, c.Status)
+		}
+	}
+	return m, r.stderr
+}
+
+// TestBundleUnreachable: a refused connection seals an archive with
+// detection failed, exit 2 (D-030). Ctrl-C during detection still aborts.
+func TestBundleUnreachable(t *testing.T) {
+	srv := httptest.NewServer(http.NotFoundHandler())
+	srv.Close() // the port now refuses connections
+	kubeconfig := serverKubeconfig(t, srv.URL)
+	p := &probe{}
+	m, stderr := noDataBundle(t, kubeconfig, []pb.Collector{p}, "--request-timeout", "5s")
+	if !strings.Contains(stderr, "no reachable cluster") {
+		t.Errorf("stderr %q does not name no reachable cluster", stderr)
+	}
+	if got := itemStatus(m, "inventory/detection"); got != "failed" {
+		t.Errorf("item inventory/detection: status %q, want failed", got)
 	}
 	if p.ran.Load() {
 		t.Error("a collector ran")
 	}
-	if host := strings.TrimPrefix(srv.URL, "http://"); strings.Contains(r.stderr, host) {
-		t.Errorf("stderr names the API host: %q", r.stderr)
+	if host := strings.TrimPrefix(srv.URL, "http://"); strings.Contains(stderr, host) {
+		t.Errorf("stderr names the API host: %q", stderr)
 	}
 
 	// Ctrl-C during detection is reported as such, not as an unreachable cluster.
+	out := filepath.Join(t.TempDir(), "out.tar.gz")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	cfgApp := app.Config{Build: testBuild, Out: &bytes.Buffer{}, Err: &bytes.Buffer{}, Now: testNow}
@@ -311,7 +352,7 @@ func TestBundleUnreachable(t *testing.T) {
 
 // TestBundleTransportTimeoutSeals: a peer that accepts TCP and never answers
 // TLS hits client-go's fixed 10 s handshake timeout before either bundle
-// deadline. The timeout still seals an archive, with every collector timeout.
+// deadline. It seals an archive with detection failed, exit 2 (D-030).
 func TestBundleTransportTimeoutSeals(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -339,43 +380,79 @@ func TestBundleTransportTimeoutSeals(t *testing.T) {
 			mu.Unlock()
 		}
 	}()
-	cfg := clientcmdapi.NewConfig()
-	cfg.Clusters["c"] = &clientcmdapi.Cluster{Server: "https://" + ln.Addr().String(), InsecureSkipTLSVerify: true}
-	cfg.AuthInfos["u"] = &clientcmdapi.AuthInfo{}
-	cfg.Contexts["ctx"] = &clientcmdapi.Context{Cluster: "c", AuthInfo: "u"}
-	cfg.CurrentContext = "ctx"
-	kubeconfig := filepath.Join(t.TempDir(), "kubeconfig")
-	if err := clientcmd.WriteToFile(*cfg, kubeconfig); err != nil {
-		t.Fatal(err)
-	}
+	kubeconfig := serverKubeconfig(t, "https://"+ln.Addr().String())
 
 	start := time.Now()
-	r := runBundle(t, kubeconfig, nil, "-o", "-", "--request-timeout", "1m", "--timeout", "5m")
+	m, _ := noDataBundle(t, kubeconfig, nil, "--request-timeout", "1m", "--timeout", "5m")
 	if el := time.Since(start); el > 40*time.Second {
 		t.Errorf("run took %v, want the handshake timeout, not a bundle deadline", el.Round(time.Second))
 	}
-	if r.code != 0 {
-		t.Fatalf("exit %d, stderr %q; want a sealed archive", r.code, r.stderr)
+	if got := itemStatus(m, "inventory/detection"); got != "failed" {
+		t.Errorf("item inventory/detection: status %q, want failed", got)
 	}
-	a := bundletest.Extract(t, strings.NewReader(r.stdout))
-	b, ok := a.File("manifest.json")
-	if !ok {
-		t.Fatal("no manifest.json: archive not sealed")
-	}
-	var m deadlineManifest
-	if err := json.Unmarshal(b, &m); err != nil {
-		t.Fatal(err)
+}
+
+// TestBundleDetectionGatewayTimeout: an HTTP 504 on detection's discovery
+// seals an archive with detection timeout, exit 2 (D-030).
+func TestBundleDetectionGatewayTimeout(t *testing.T) {
+	env := newEnv(t, testenv.Options{})
+	hits := env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindDiscovery, Resource: "*"}, testenv.Action{Status: http.StatusGatewayTimeout})
+	m, _ := noDataBundle(t, env.Kubeconfig, nil)
+	if hits.N() == 0 {
+		t.Fatal("the rule never applied")
 	}
 	if got := itemStatus(m, "inventory/detection"); got != "timeout" {
 		t.Errorf("item inventory/detection: status %q, want timeout", got)
 	}
-	for _, c := range m.Item.Collectors {
-		if c.Status != "timeout" && c.Status != "skipped" {
-			t.Errorf("collector %s: status %q, want timeout", c.Name, c.Status)
-		}
+}
+
+// TestBundleInstallNotDetected: an --install that names no detected install
+// seals an archive with detection failed, exit 2 (D-030). The cases are a
+// healthy cluster and a Deployment input that timed out.
+func TestBundleInstallNotDetected(t *testing.T) {
+	for name, tc := range map[string]struct {
+		pin  string
+		rule bool
+	}{
+		"healthy":             {pin: "x/y"},
+		"deployments-timeout": {pin: "kgateway-system/kgateway", rule: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			env := newEnv(t, testenv.Options{Fixtures: []string{healthyFixture}})
+			if tc.rule {
+				env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindAcquire, Resource: "deployments.apps"},
+					testenv.Action{Status: http.StatusGatewayTimeout})
+			}
+			m, stderr := noDataBundle(t, env.Kubeconfig, nil, "--install", tc.pin, "--timeout", "20s")
+			if got := itemStatus(m, "inventory/detection"); got == "" || got == "ok" {
+				t.Errorf("item inventory/detection: status %q, want a failure", got)
+			}
+			if !strings.Contains(stderr, "no such install detected") && !strings.Contains(stderr, "install detection timed out") {
+				t.Errorf("stderr %q does not say why", stderr)
+			}
+		})
 	}
-	if !strings.Contains(r.stderr, "install detection timed out") {
-		t.Errorf("stderr %q does not say detection timed out", r.stderr)
+}
+
+// TestBundleCallerDeadline: a caller context deadline during detection is an
+// interrupt: exit 2 and no output.
+func TestBundleCallerDeadline(t *testing.T) {
+	env := newEnv(t, testenv.Options{})
+	held := releaseAfter(t, 30*time.Second)
+	env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindDiscovery, Resource: "*"}, testenv.Action{Until: held})
+	out := filepath.Join(t.TempDir(), "out.tar.gz")
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	cfgApp := app.Config{Build: testBuild, Out: &bytes.Buffer{}, Err: &bytes.Buffer{}, Now: testNow}
+	root := app.NewRootWithBundleHooks(cfgApp, app.BundleTestHooks{Now: func() time.Time { return bundleNow }})
+	root.SetArgs([]string{"--kubeconfig", env.Kubeconfig, "bundle", "-o", out})
+	err := root.ExecuteContext(ctx)
+	var ee *app.ExitError
+	if !errors.As(err, &ee) || ee.Code != 2 || !strings.Contains(err.Error(), "interrupted") {
+		t.Errorf("err %v, want exit 2 naming the interruption", err)
+	}
+	if _, err := os.Stat(out); !os.IsNotExist(err) {
+		t.Errorf("output left behind: %v", err)
 	}
 }
 
