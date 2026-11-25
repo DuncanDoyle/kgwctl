@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"maps"
 	"net"
@@ -549,6 +550,79 @@ func TestBundleInterrupt(t *testing.T) {
 	}
 }
 
+// allBuiltins skips every built-in collector.
+const allBuiltins = "resources,workloads,install,version,check,logs,controller-metrics,proxy-metrics,proxy-admin"
+
+// runBundleCtx runs bundle under ctx with extra collectors and returns the error and stderr.
+func runBundleCtx(t *testing.T, ctx context.Context, kubeconfig string, extra []pb.Collector, args ...string) (error, string) {
+	t.Helper()
+	var errb bytes.Buffer
+	cfg := app.Config{Build: testBuild, Out: &bytes.Buffer{}, Err: &errb, Now: testNow, Collectors: extra}
+	root := app.NewRootWithBundleHooks(cfg, app.BundleTestHooks{Now: func() time.Time { return bundleNow }})
+	root.SetArgs(append([]string{"--kubeconfig", kubeconfig, "bundle"}, args...))
+	return root.ExecuteContext(ctx), errb.String()
+}
+
+// TestBundleInterruptKeepsStagedItem: an item staged before the interrupt
+// survives the seal, so the run exits 0 although its collector is timeout.
+func TestBundleInterruptKeepsStagedItem(t *testing.T) {
+	env := newEnv(t, testenv.Options{})
+	out := filepath.Join(t.TempDir(), "out.tar.gz")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	writer := stubCollector{name: "writer", fn: func(ctx context.Context, s pb.Sink) error {
+		if err := s.Text(ctx, pb.Path{"x", "staged.txt"}, strings.NewReader("hello\n"), pb.Source{}); err != nil {
+			return err
+		}
+		cancel()
+		<-ctx.Done()
+		return ctx.Err()
+	}}
+	err, stderr := runBundleCtx(t, ctx, env.Kubeconfig, []pb.Collector{writer}, "-o", out, "--skip", allBuiltins)
+	if err != nil {
+		t.Fatalf("err %v, stderr %q; want exit 0", err, stderr)
+	}
+	f, err := os.Open(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	a := bundletest.Extract(t, f)
+	if _, ok := a.File("x/staged.txt"); !ok {
+		t.Error("staged item lost at the seal")
+	}
+	if m := readManifest(t, a); len(m.Item.Collectors) == 0 || !slices.ContainsFunc(m.Item.Collectors, func(c struct{ Name, Status, Reason string }) bool {
+		return c.Name == "writer" && c.Status == "timeout"
+	}) {
+		t.Errorf("collectors %+v, want writer timeout", m.Item.Collectors)
+	}
+}
+
+// TestBundleOmittedFailuresNoData: failures past the manifest bound are only
+// counted; they are not cluster data, so the run exits 2 (D-030).
+func TestBundleOmittedFailuresNoData(t *testing.T) {
+	env := newEnv(t, testenv.Options{})
+	noisy := stubCollector{name: "noisy", fn: func(_ context.Context, s pb.Sink) error {
+		for i := range 4100 {
+			s.Error(pb.Path{"x", fmt.Sprintf("e-%d", i)}, pb.Source{}, errors.New("failed"))
+		}
+		return errors.New("noisy failed")
+	}}
+	r := runBundle(t, env.Kubeconfig, []pb.Collector{noisy}, "-o", "-", "--skip", allBuiltins)
+	if r.code != 2 || !strings.Contains(r.stderr, "no cluster data") {
+		t.Fatalf("exit %d, stderr %q; want 2, no cluster data", r.code, r.stderr)
+	}
+	var doc struct {
+		Item struct {
+			ItemsOmitted int `json:"itemsOmitted"`
+		} `json:"item"`
+	}
+	b, _ := bundletest.Extract(t, strings.NewReader(r.stdout)).File("manifest.json")
+	if err := json.Unmarshal(b, &doc); err != nil || doc.Item.ItemsOmitted == 0 {
+		t.Errorf("itemsOmitted %d (%v), want failures past the bound", doc.Item.ItemsOmitted, err)
+	}
+}
+
 // grantLines returns the lines of errors.txt that name a grant to add.
 func grantLines(t *testing.T, a bundletest.Archive) (all, grants []string) {
 	t.Helper()
@@ -729,9 +803,13 @@ func TestNamespacedRequestSet(t *testing.T) {
 
 	// Install detection and the inventory alone, then check alone, then the full run.
 	all := "resources,workloads,install,version,check,logs,controller-metrics,proxy-metrics,proxy-admin"
-	// With every collector skipped the archive holds no cluster data: exit 2 (D-030).
-	if r := runBundleWith(t, env.Kubeconfig, nil, hooks, "-o", "-", "-n", "team-a", "--skip", all); r.code != 2 {
+	// With every collector skipped the archive is sealed but holds no cluster data: exit 2 (D-030).
+	r := runBundleWith(t, env.Kubeconfig, nil, hooks, "-o", "-", "-n", "team-a", "--skip", all)
+	if r.code != 2 {
 		t.Fatalf("all skipped: exit %d, stderr %q; want 2", r.code, r.stderr)
+	}
+	if _, ok := bundletest.Extract(t, strings.NewReader(r.stdout)).File("manifest.json"); !ok {
+		t.Fatal("all skipped: archive not sealed")
 	}
 	boot := requestKeys(p.Requests())
 	n := len(p.Requests())

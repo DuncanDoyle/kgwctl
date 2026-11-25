@@ -192,6 +192,17 @@ func newBundleCmd(reg *extension.Registry, build BuildInfo, extra []pb.Collector
 				return usageErr(fmt.Errorf("create spool: %w", err))
 			}
 			defer func() { _ = sp.Remove() }()
+			// One --timeout clock from the first cluster request: detection, inventory and Run share it.
+			deadline := time.Now().Add(timeout)
+			rctx, rcancel := context.WithDeadline(cmd.Context(), deadline)
+			defer rcancel()
+			dctx, dcancel := f.Context(rctx)
+			defer dcancel()
+			// Detection's clients send no request; built here, their failure leaves no file.
+			dc, err := load.NewClients(dctx, grc)
+			if err != nil {
+				return usageErr(err)
+			}
 
 			// Setup that can fail is done; the output is created before any cluster request, so a bad -o makes none.
 			var dest ib.Dest
@@ -212,12 +223,7 @@ func newBundleCmd(reg *extension.Registry, build BuildInfo, extra []pb.Collector
 				}
 			}()
 
-			// One --timeout clock from the first cluster request: detection, inventory and Run share it.
-			deadline := time.Now().Add(timeout)
-			rctx, rcancel := context.WithDeadline(cmd.Context(), deadline)
-			defer rcancel()
-			dctx, dcancel := f.Context(rctx)
-			res, err := loadBundle(dctx, reg, grc)
+			res, err := loadBundle(dctx, reg, dc)
 			dcancel()
 			// An interrupt aborts; any other detection failure is sealed without cluster data (D-030).
 			if err != nil && cmd.Context().Err() != nil {
@@ -342,7 +348,7 @@ func newBundleCmd(reg *extension.Registry, build BuildInfo, extra []pb.Collector
 			ok = true
 			summarize(cmd.ErrOrStderr(), m, output)
 			// The exit code follows what the archive holds, not how detection ended (D-030).
-			if !holdsClusterData(m) {
+			if !holdsClusterData(w, m) {
 				if noData == nil {
 					noData = errors.New("no collector wrote cluster data")
 					if detectLate {
@@ -375,15 +381,11 @@ func usageErr(err error) error { return &ExitError{Code: 2, Err: err} }
 // inventoryName attributes replica inventory errors in errors.txt.
 const inventoryName = "inventory"
 
-// loadBundle detects installs and loads the model over the guarded config,
-// bounded by ctx; an unreachable API server fails it. It loads every kind the
-// resources collector lists, so the scope rules see them (design §3.2).
-func loadBundle(ctx context.Context, reg *extension.Registry, grc *rest.Config) (*load.Result, error) {
+// loadBundle detects installs and loads the model over c, the guarded
+// clients bound to ctx; an unreachable API server fails it. It loads every kind
+// the resources collector lists, so the scope rules see them (design §3.2).
+func loadBundle(ctx context.Context, reg *extension.Registry, c load.Clients) (*load.Result, error) {
 	reg = collect.Registry(reg)
-	c, err := load.NewClients(ctx, grc)
-	if err != nil {
-		return nil, err
-	}
 	// Proxy Pods give the version collector each Gateway's proxy image tags. The engine
 	// logger is discarded, as in check: a rejected install's error can quote cluster data (§7.1).
 	return load.Load(ctx, c, reg, load.Needs{ProxyPods: true, Logger: engineLogger(io.Discard)})
@@ -392,14 +394,11 @@ func loadBundle(ctx context.Context, reg *extension.Registry, grc *rest.Config) 
 // holdsClusterData reports whether the archive holds what the cluster said:
 // an ok item other than version.json, or a collector other than version that
 // finished ok or partial, so an empty cluster still counts. version is left
-// out because it writes version.json even without a cluster answer. Items cut
-// from the manifest count, since only a large run loses any.
-func holdsClusterData(m ib.Manifest) bool {
-	if m.ItemsOmitted > 0 {
-		return true
-	}
+// out because it writes version.json even without a cluster answer. Items
+// come from the writer, before manifest truncation.
+func holdsClusterData(w *ib.Writer, m ib.Manifest) bool {
 	versionFile := pb.Path{pb.ClusterDir, pb.VersionFile}.String()
-	if slices.ContainsFunc(m.Items, func(it ib.Item) bool { return it.Status == pb.ItemOK && it.Path != versionFile }) {
+	if w.HasItem(func(it ib.Item) bool { return it.Status == pb.ItemOK && it.Path != versionFile }) {
 		return true
 	}
 	return slices.ContainsFunc(m.Collectors, func(c ib.CollectorEntry) bool {

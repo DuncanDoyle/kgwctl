@@ -268,6 +268,14 @@ func (w *Writer) Committed() Manifest {
 	return w.committed
 }
 
+// HasItem reports whether any recorded item matches, before manifest
+// truncation; calls in flight at the seal are discarded and never recorded.
+func (w *Writer) HasItem(match func(Item) bool) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return slices.ContainsFunc(w.records, func(r *record) bool { return match(r.item) })
+}
+
 // degraded returns the collectors with at least one item that is neither ok
 // nor skipped, omissions aside; the caller holds w.mu.
 func (w *Writer) degraded() map[string]bool {
