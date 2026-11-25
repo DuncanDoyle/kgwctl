@@ -6,7 +6,7 @@ Base: 38acaa0
 Author: anthropic (claude-opus-5-5 controller; Claude subagent implementers)
 Advisory: none
 Docs: docs/phases/phase-4/
-Status: implementing; 4.1–4.4 closed; Phase 4 review next
+Status: stabilizing; 4.1–4.4 closed; Phase 4 review triaged; 4.5 active
 
 ### Queue
 - [x] Q1 Phase 4 design (`design.md`) r1, with research notes (prior art, reuse, threats) — not committed, in .agents-tmp/
@@ -19,18 +19,32 @@ Status: implementing; 4.1–4.4 closed; Phase 4 review next
 - [x] Q7 Sub-phase 4.2 (command, guard, scope, inventory, Envoy transport, cluster-state collectors) — phase-4.2-complete.md
 - [x] Q8 Sub-phase 4.3 (writer split, Sink contract D-027, logs, metrics, Envoy capture, RBAC and partial runs) — phase-4.3-complete.md
 - [x] Q9 Sub-phase 4.4 (extension point, README, live check, reader role D-028) — phase-4.4-complete.md
-- [ ] Q10 Phase 4 review (Codex) + triage; owner try-out on kind; program file note ← CURRENT
+- [x] Q10 Phase 4 review (Codex) + triage — reviews/phase-codex.md; owner agreed 2026-11-25
+- [ ] Q11 Sub-phase 4.5 (stabilization): accepted findings 1–5, 8–12, 14, 15 ← CURRENT
+- [ ] Q12 Owner try-out on kind; program file note
 
 ### Exit gates
 - [ ] tests/vet pass
 - [ ] all queue items done or deferred
 - [x] design+plan cross-model review + triage
-- [ ] phase cross-model review + triage
+- [x] phase cross-model review + triage
 - [ ] decisions.md / design / plan in sync with code
 - [ ] phase-4-complete.md written, roadmap updated, tracked items closed
 
 ## Sub-phase
-none active
+Sub-phase: 4.5 — Phase review fixes
+Kind: stabilization
+Base: f39a936
+Brief: docs/phases/phase-4/phase-4.5-brief.md
+
+### Queue
+- [ ] S1 (P2/P3 correctness) Guard: prefixed server paths, 3xx bodies — src: reviews/phase-codex.md#1, #4 ← CURRENT
+- [ ] S2 (P3 correctness) Diagnostics: manifest selector/owner, Snellius logger on stderr — #2, #3
+- [ ] S3 (P2/P3 correctness) Time bounds: one clock from first request; context-bound discovery — #5, #8
+- [ ] S4 (P2 both) Outcomes and scope: check-only denials, `skipped: no install`, non-registry kinds — #9, #11, #12
+- [ ] S5 (P3 architecture) `Sink.JSON` with Kubernetes objects — #10
+- [ ] S6 (P3 correctness) Tests: reader live check, guard test verbs — #14, #15
+- [ ] S7 Gates, live check, Codex review of f39a936..HEAD + triage
 
 ## Program
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
