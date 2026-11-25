@@ -2,6 +2,7 @@ package collect
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -16,10 +17,31 @@ import (
 
 // TestRegistryCoversCollectedKinds fails when a test CRD kind the resources
 // collector lists (by its own listsWhole rule) has no descriptor in the
-// bundle's registry with a served version, a category and the CRD's scope,
-// so scope rules would not see it (design §3.2). Add it to unregistered.
+// bundle's effective registry with a served version, a category and the CRD's
+// scope, so scope rules would not see it (design §3.2). Add it to unregistered.
 func TestRegistryCoversCollectedKinds(t *testing.T) {
-	reg := Registry(extension.New())
+	for _, m := range uncovered(t, Registry(extension.New())) {
+		t.Errorf("no effective registry descriptor with a category serves %s", m)
+	}
+}
+
+// TestRegistryGuardSeesShadowedDescriptor: a registry descriptor with no
+// served version shadows the bundle's fallback, so the guard reports the kind.
+func TestRegistryGuardSeesShadowedDescriptor(t *testing.T) {
+	own := kinds.Descriptor{Group: gatewayGroup, Kind: "UDPRoute", Resource: "udproutes", Versions: []string{"v9"},
+		Namespaced: true, Category: kinds.CategoryRoute}
+	missing := uncovered(t, Registry(extension.New(extension.WithKinds(own))))
+	if !slices.ContainsFunc(missing, func(m string) bool { return strings.HasPrefix(m, gatewayGroup+"/UDPRoute ") }) {
+		t.Errorf("uncovered %v, want %s/UDPRoute", missing, gatewayGroup)
+	}
+}
+
+// uncovered returns the test CRD kinds the resources collector lists that
+// reg's effective descriptors, deduplicated as runtime resolution does, miss.
+func uncovered(t *testing.T, reg *extension.Registry) []string {
+	t.Helper()
+	descs := kinds.Dedupe(reg.Kinds)
+	var missing []string
 	checked := 0
 	err := filepath.WalkDir(filepath.Join("..", "..", "testenv", "testdata", "crds"), func(p string, e os.DirEntry, err error) error {
 		if err != nil || e.IsDir() || !strings.HasSuffix(p, ".yaml") {
@@ -53,12 +75,12 @@ func TestRegistryCoversCollectedKinds(t *testing.T) {
 				continue
 			}
 			checked++
-			if !slices.ContainsFunc(reg.Kinds, func(k kinds.Descriptor) bool {
+			if !slices.ContainsFunc(descs, func(k kinds.Descriptor) bool {
 				return k.Group == s.Group && k.Kind == s.Names.Kind && k.Resource == s.Names.Plural &&
 					k.Category != "" && k.Namespaced == namespaced &&
 					slices.ContainsFunc(k.Versions, func(v string) bool { return slices.Contains(served, v) })
 			}) {
-				t.Errorf("no registry descriptor with a category serves %s/%s (%s, versions %v)", s.Group, s.Names.Kind, p, served)
+				missing = append(missing, fmt.Sprintf("%s/%s (%s, versions %v)", s.Group, s.Names.Kind, p, served))
 			}
 		}
 		return nil
@@ -69,6 +91,7 @@ func TestRegistryCoversCollectedKinds(t *testing.T) {
 	if checked == 0 {
 		t.Fatal("no CRDs checked; testdata path is wrong")
 	}
+	return missing
 }
 
 // TestRegistryKeepsOwnDescriptors: a descriptor the registry already has

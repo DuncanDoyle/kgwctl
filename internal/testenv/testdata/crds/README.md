@@ -23,7 +23,7 @@ Gateway API v1.7.0's experimental channel has no `XListenerSet`; ListenerSet is 
    ```
 2. Refresh the CRD files, then `git diff` them against the old ones. This is the CRD diff of decision P-012.
 3. For each new kind, add it to `docs/rbac.yaml` (`TestReaderRoleCoversServedKinds` enforces this) and decide whether kgwctl supports it.
-4. For each new served kind in the listed groups, add it to the extra kinds of `collect.Registry` in `internal/bundle/collect/resources.go`. `TestRegistryCoversCollectedKinds` enforces this. If a kind is left out on purpose, record the exclusion.
+4. For each new served kind in the listed groups, check that the effective registry covers it. That is the descriptor set after deduplication, where a Snellius descriptor shadows an extra kind of `collect.Registry` in `internal/bundle/collect/resources.go`. If the effective registry lacks the kind or a served version, add an extra kind, or fix the Snellius descriptor that shadows it. `TestRegistryCoversCollectedKinds` enforces this. If a kind is left out on purpose, record the exclusion.
 5. For each changed or removed kind, check served and storage versions, and stale watches or version mappings for a removed kind or version. Check new fields that hold credentials or Secret references, which redaction must cover.
 6. Check every table or mapping keyed to a product, Gateway API or Envoy version. An empty CRD diff does not make these current.
 7. Before claiming support for a new kgateway minor, review the mirrors of controller logic, such as the discovery namespace selector parsing and the Gateway label value helper. Update the minors they are pinned to and compare them with real controller output.
