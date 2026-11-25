@@ -67,6 +67,8 @@ type Action struct {
 	// HoldWatchThenStatus keeps a plain watch open until the matching LIST has
 	// completed plus 200ms, then answers with this status.
 	HoldWatchThenStatus int
+	// Skip lets the first Skip matching requests through untouched; they do not count as hits.
+	Skip int
 }
 
 // RuleHits counts the requests a rule applied to.
@@ -89,6 +91,7 @@ type rule struct {
 	selector string // canonical form of m.LabelSelector
 	a        Action
 	hits     *RuleHits
+	skipped  int // matching requests let through by a.Skip; guarded by Proxy.mu
 }
 
 // request is the classified form of one incoming request.
@@ -218,6 +221,10 @@ func (p *Proxy) serve(w http.ResponseWriter, r *http.Request) {
 	var match *rule
 	for _, ru := range p.rules {
 		if ru.matches(req) {
+			if ru.skipped < ru.a.Skip {
+				ru.skipped++
+				break
+			}
 			match = ru
 			break
 		}

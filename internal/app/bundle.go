@@ -45,6 +45,8 @@ type bundleTestHooks struct {
 	Logs collect.LogSource
 	// Scraper replaces the pods/proxy metrics scraper.
 	Scraper collect.Scraper
+	// BeforeOutput runs just before the output is created, as a slow destination would.
+	BeforeOutput func()
 }
 
 // collectorDeps are what built-in collectors read beyond Env; zero values
@@ -192,19 +194,19 @@ func newBundleCmd(reg *extension.Registry, build BuildInfo, extra []pb.Collector
 				return usageErr(fmt.Errorf("create spool: %w", err))
 			}
 			defer func() { _ = sp.Remove() }()
-			// One --timeout clock from the first cluster request: detection, inventory and Run share it.
-			deadline := time.Now().Add(timeout)
-			rctx, rcancel := context.WithDeadline(cmd.Context(), deadline)
-			defer rcancel()
-			dctx, dcancel := f.Context(rctx)
-			defer dcancel()
 			// Detection's clients send no request; built here, their failure leaves no file.
-			dc, err := load.NewClients(dctx, grc)
+			// They are bound to bctx, which takes detection's deadline once the clocks start.
+			bctx, bcancel := context.WithCancelCause(cmd.Context())
+			defer bcancel(nil)
+			dc, err := load.NewClients(causeCtx{bctx}, grc)
 			if err != nil {
 				return usageErr(err)
 			}
 
 			// Setup that can fail is done; the output is created before any cluster request, so a bad -o makes none.
+			if hooks.BeforeOutput != nil {
+				hooks.BeforeOutput()
+			}
 			var dest ib.Dest
 			if output == "-" {
 				dest = ib.Stdout(cmd.OutOrStdout())
@@ -223,6 +225,14 @@ func newBundleCmd(reg *extension.Registry, build BuildInfo, extra []pb.Collector
 				}
 			}()
 
+			// One --timeout clock from the first cluster request, after the output exists:
+			// detection, inventory and Run share it.
+			deadline := time.Now().Add(timeout)
+			rctx, rcancel := context.WithDeadline(cmd.Context(), deadline)
+			defer rcancel()
+			dctx, dcancel := f.Context(rctx)
+			defer dcancel()
+			defer context.AfterFunc(dctx, func() { bcancel(context.Cause(dctx)) })()
 			res, err := loadBundle(dctx, reg, dc)
 			dcancel()
 			// An interrupt aborts; any other detection failure is sealed without cluster data (D-030).
@@ -380,6 +390,18 @@ func usageErr(err error) error { return &ExitError{Code: 2, Err: err} }
 
 // inventoryName attributes replica inventory errors in errors.txt.
 const inventoryName = "inventory"
+
+// causeCtx reports its cause as Err, so a request cut by the deadline that
+// bctx takes over fails with context.DeadlineExceeded, not Canceled.
+type causeCtx struct{ context.Context }
+
+// Err implements context.Context.
+func (c causeCtx) Err() error {
+	if c.Context.Err() == nil {
+		return nil
+	}
+	return context.Cause(c.Context)
+}
 
 // loadBundle detects installs and loads the model over c, the guarded
 // clients bound to ctx; an unreachable API server fails it. It loads every kind

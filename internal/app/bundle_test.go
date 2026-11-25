@@ -623,6 +623,64 @@ func TestBundleOmittedFailuresNoData(t *testing.T) {
 	}
 }
 
+// extractManifest returns the deadline view of the archive on stdout.
+func extractManifest(t *testing.T, stdout string) deadlineManifest {
+	t.Helper()
+	b, ok := bundletest.Extract(t, strings.NewReader(stdout)).File("manifest.json")
+	if !ok {
+		t.Fatal("no manifest.json: archive not sealed")
+	}
+	var m deadlineManifest
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
+// TestBundleSlowOutputKeepsBudget: --timeout and detection's
+// --request-timeout start after the output is created, so a slow
+// destination does not use up the collection budget.
+func TestBundleSlowOutputKeepsBudget(t *testing.T) {
+	env := newEnv(t, testenv.Options{Fixtures: []string{healthyFixture}})
+	hooks := app.BundleTestHooks{BeforeOutput: func() { time.Sleep(3 * time.Second) }}
+	r := runBundleWith(t, env.Kubeconfig, nil, hooks, "-o", "-", "--timeout", "2s", "--request-timeout", "2s",
+		"--skip", "install,version,check,logs,controller-metrics,proxy-metrics,proxy-admin")
+	if r.code != 0 {
+		t.Fatalf("exit %d, stderr %q; want 0", r.code, r.stderr)
+	}
+	for _, c := range extractManifest(t, r.stdout).Item.Collectors {
+		if c.Status == "timeout" {
+			t.Errorf("collector %s: timeout (%s), want a full budget", c.Name, c.Error)
+		}
+	}
+}
+
+// TestBundleCheckWithoutReport: when check's own discovery stalls past
+// --request-timeout, check writes no report and finishes failed. In a
+// check-only run that leaves no cluster data: exit 2.
+func TestBundleCheckWithoutReport(t *testing.T) {
+	env := newEnv(t, testenv.Options{})
+	held := releaseAfter(t, 30*time.Second)
+	// Detection reads heldGV once and passes; check's own read is held.
+	hits := env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindDiscovery, Resource: heldGV}, testenv.Action{Until: held, Skip: 1})
+	hooks := app.BundleTestHooks{Check: fastHooks(metricsScraper{})}
+	r := runBundleWith(t, env.Kubeconfig, nil, hooks, "-o", "-", "--request-timeout", "3s", "--timeout", "1m",
+		"--skip", "resources,workloads,install,version,logs,controller-metrics,proxy-metrics,proxy-admin")
+	if hits.N() == 0 {
+		t.Fatal("check's discovery was not held")
+	}
+	if r.code != 2 || !strings.Contains(r.stderr, "no cluster data") {
+		t.Fatalf("exit %d, stderr %q; want 2, no cluster data", r.code, r.stderr)
+	}
+	m := extractManifest(t, r.stdout)
+	if got := collectorStatus(m, "check"); got != "failed" {
+		t.Errorf("collector check: %q, want failed", got)
+	}
+	if itemStatus(m, "check/check.json") == "ok" {
+		t.Error("check.json written ok")
+	}
+}
+
 // grantLines returns the lines of errors.txt that name a grant to add.
 func grantLines(t *testing.T, a bundletest.Archive) (all, grants []string) {
 	t.Helper()

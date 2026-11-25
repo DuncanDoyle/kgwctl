@@ -37,7 +37,7 @@ func newCheckCollector(f *Flags, rc *rest.Config, reg *extension.Registry, build
 func (checkCollector) Name() string { return "check" }
 
 // Collect implements pb.Collector. A report is written whatever its exit;
-// without one the error is recorded.
+// without one the error is recorded and returned, so check is never ok.
 func (c checkCollector) Collect(ctx context.Context, _ pb.Env, s pb.Sink) error {
 	p := pb.Path{pb.CheckDir, pb.CheckFile}
 	src := pb.Source{Operation: pb.OpCheck}
@@ -45,7 +45,7 @@ func (c checkCollector) Collect(ctx context.Context, _ pb.Env, s pb.Sink) error 
 	var v *checkVerdict
 	if err != nil && !errors.As(err, &v) {
 		s.Error(p, src, err)
-		return nil
+		return err
 	}
 	// Reasons are redacted and cut like any other error text (§7.1).
 	for i, in := range report.Incomplete {
@@ -59,12 +59,10 @@ func (c checkCollector) Collect(ctx context.Context, _ pb.Env, s pb.Sink) error 
 	var b bytes.Buffer
 	if err := print.Envelope(&b, print.FormatJSON, "Check", report); err != nil {
 		s.Error(p, src, err)
-		return nil
-	}
-	if err := ib.WriteJSON(ctx, s, ib.JSONCheckReport, p, &b, src); errors.Is(err, pb.ErrSealed) {
 		return err
 	}
-	return nil
+	// The Sink records a failed write; returning it keeps check from finishing ok.
+	return ib.WriteJSON(ctx, s, ib.JSONCheckReport, p, &b, src)
 }
 
 // recordDenied records a denied check input as a typed 403 at
