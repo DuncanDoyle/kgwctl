@@ -57,13 +57,37 @@ type collectorDeps struct {
 	scrape collect.Scraper
 	// noEndpoints is --no-endpoints: no EDS config dump and no clusters capture.
 	noEndpoints bool
+	// noInstall is set when complete detection found no install (design §3.2).
+	noInstall bool
 }
 
 // builtinCollectors are the collectors every build has, in registration order.
 func builtinCollectors(reg *extension.Registry, build BuildInfo, d collectorDeps, hooks bundleTestHooks) []pb.Collector {
-	return []pb.Collector{collect.Resources(reg), collect.Workloads(), collect.Install(),
-		collect.Version(build, d.res, d.dialer), newCheckCollector(d.f, d.rc, reg, build, hooks.Check), collect.Logs(d.logs),
+	var install, logs pb.Collector = collect.Install(), collect.Logs(d.logs)
+	if d.noInstall {
+		install, logs = omitNoInstall{install, pb.InstallDir}, omitNoInstall{logs, pb.ControllerDir}
+	}
+	return []pb.Collector{collect.Resources(reg), collect.Workloads(), install,
+		collect.Version(build, d.res, d.dialer), newCheckCollector(d.f, d.rc, reg, build, hooks.Check), logs,
 		collect.ControllerMetrics(d.scrape), collect.ProxyMetrics(d.scrape), collect.ProxyAdmin(d.dialer, d.noEndpoints)}
+}
+
+// noInstallCollectors are skipped whole with reason "no install".
+var noInstallCollectors = map[string]bool{"controller-metrics": true}
+
+// omitNoInstall records the controller part of a collector, under dir, as
+// omitted with reason "no install", then runs the collector.
+type omitNoInstall struct {
+	pb.Collector
+	dir string
+}
+
+// Collect implements pb.Collector.
+func (c omitNoInstall) Collect(ctx context.Context, env pb.Env, s pb.Sink) error {
+	if err := s.Omit(pb.Path{c.dir}, pb.Source{}, pb.OmitNoInstall); errors.Is(err, pb.ErrSealed) {
+		return err
+	}
+	return c.Collector.Collect(ctx, env, s)
 }
 
 // newBundleCmd builds the bundle command (phase 4 design §3). extra are the
@@ -270,8 +294,14 @@ func newBundleCmd(reg *extension.Registry, build BuildInfo, extra []pb.Collector
 					return usageErr(err)
 				}
 			}
-			cs = append(builtinCollectors(reg, build, collectorDeps{f: f, rc: grc, res: res, dialer: dialer, logs: logs, scrape: scrape, noEndpoints: noEndpoints}, hooks), extra...)
+			// A cut detection leaves an absent install unknown, not absent.
+			noInstall := res != nil && !detectLate && len(scope.Installs) == 0
+			cs = append(builtinCollectors(reg, build, collectorDeps{f: f, rc: grc, res: res, dialer: dialer, logs: logs, scrape: scrape,
+				noEndpoints: noEndpoints, noInstall: noInstall}, hooks), extra...)
 			ro := ib.RunOptions{Skip: skipSet, Deadline: deadline}
+			if noInstall {
+				ro.NoInstall = noInstallCollectors
+			}
 			if res == nil {
 				// No model: no collector starts. Say why unless --timeout itself has passed.
 				ro.Deadline = time.Now()

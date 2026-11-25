@@ -19,6 +19,9 @@ type RunOptions struct {
 	Workers int
 	// Skip names the collectors to leave out.
 	Skip map[string]bool
+	// NoInstall names the collectors left out because no install was
+	// detected; they are skipped with reason "no install". Skip comes first.
+	NoInstall map[string]bool
 	// Deadline ends collection; the zero time means only ctx ends it.
 	Deadline time.Time
 	// NotStarted, if set, replaces "collection deadline reached" as the error
@@ -63,9 +66,16 @@ func Run(ctx context.Context, cs []pb.Collector, env pb.Env, w *Writer, m Manife
 	for i, c := range cs {
 		order[i] = c.Name()
 		res[i].entry = CollectorEntry{Name: order[i]}
-		if o.Skip[order[i]] {
-			res[i].entry.Status, res[i].entry.Reason, res[i].done = pb.CollectorSkipped, "flag", true
-			w.Log("collector " + order[i] + " skipped: flag")
+		reason := ""
+		switch {
+		case o.Skip[order[i]]:
+			reason = "flag"
+		case o.NoInstall[order[i]]:
+			reason = string(pb.OmitNoInstall)
+		}
+		if reason != "" {
+			res[i].entry.Status, res[i].entry.Reason, res[i].done = pb.CollectorSkipped, reason, true
+			w.Log("collector " + order[i] + " skipped: " + reason)
 			continue
 		}
 		pending = append(pending, i)

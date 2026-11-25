@@ -26,8 +26,8 @@ func releaseAfter(t *testing.T, d time.Duration) <-chan struct{} {
 // deadlineManifest is the part of manifest.json the deadline tests read.
 type deadlineManifest struct {
 	Item struct {
-		Collectors []struct{ Name, Status, Error string } `json:"collectors"`
-		Items      []struct{ Path, Status string }        `json:"items"`
+		Collectors []struct{ Name, Status, Reason, Error string } `json:"collectors"`
+		Items      []struct{ Path, Status, Reason string }        `json:"items"`
 	} `json:"item"`
 }
 
@@ -77,22 +77,79 @@ func collectorStatus(m deadlineManifest, name string) string {
 
 // TestBundleTimeoutCoversDetection: --timeout starts before install
 // detection. With every list held, the run ends near --timeout with a sealed
-// archive; detection and inventory are recorded as timeout.
+// archive; detection and inventory are recorded as timeout. The model exists,
+// but its absence of installs is unknown: no "no install" warning or skip.
+// With only routes held, the ownership inputs load, so the filter's own
+// warning is tested too.
 func TestBundleTimeoutCoversDetection(t *testing.T) {
-	env := newEnv(t, testenv.Options{})
-	held := releaseAfter(t, 20*time.Second)
-	env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindAcquire, Resource: "*"}, testenv.Action{Until: held})
+	everything := map[string]string{"inventory/detection": "timeout", "proxies": "timeout"}
+	routes := map[string]string{"inventory/detection": "timeout"}
+	for name, tc := range map[string]struct {
+		hold, timeout string
+		args          []string
+		items         map[string]string
+	}{
+		"default":                {hold: "*", timeout: "1s", items: everything},
+		"all-controllers":        {hold: "*", timeout: "1s", args: []string{"--all-controllers"}, items: everything},
+		"routes-held":            {hold: httpRoutes, timeout: "4s", items: routes},
+		"routes-all-controllers": {hold: httpRoutes, timeout: "4s", args: []string{"--all-controllers"}, items: routes},
+	} {
+		t.Run(name, func(t *testing.T) {
+			env := newEnv(t, testenv.Options{})
+			held := releaseAfter(t, 20*time.Second)
+			env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindAcquire, Resource: tc.hold}, testenv.Action{Until: held})
 
-	m, _ := timedBundle(t, env, 8*time.Second, "--timeout", "1s")
-	for path, want := range map[string]string{"inventory/detection": "timeout", "proxies": "timeout"} {
-		if got := itemStatus(m, path); got != want {
-			t.Errorf("item %s: status %q, want %q", path, got, want)
-		}
+			m, stderr := timedBundle(t, env, 12*time.Second, append([]string{"--timeout", tc.timeout}, tc.args...)...)
+			for path, want := range tc.items {
+				if got := itemStatus(m, path); got != want {
+					t.Errorf("item %s: status %q, want %q", path, got, want)
+				}
+			}
+			// version and check are skipped by flag in runBundle.
+			for _, c := range m.Item.Collectors {
+				if c.Status != "timeout" && (c.Status != "skipped" || c.Reason != "flag") {
+					t.Errorf("collector %s: %s (%s), want timeout", c.Name, c.Status, c.Reason)
+				}
+			}
+			if strings.Contains(stderr, "no kgateway install detected") {
+				t.Errorf("stderr %q claims no install", stderr)
+			}
+		})
 	}
-	for _, c := range m.Item.Collectors {
-		if c.Status != "timeout" && c.Status != "skipped" {
-			t.Errorf("collector %s: status %q, want timeout", c.Name, c.Status)
-		}
+}
+
+// TestBundleNoInstall: with no install, also with --all-controllers, stderr
+// warns, controller-metrics is skipped with reason no install, and the
+// controller parts of logs and install are omissions with that reason.
+func TestBundleNoInstall(t *testing.T) {
+	for name, tc := range map[string]struct {
+		args []string
+		warn string
+	}{
+		"default":         {warn: "Warning: no kgateway install detected; showing objects of all controllers\n"},
+		"all-controllers": {args: []string{"--all-controllers"}, warn: "Warning: no kgateway install detected; controller metrics, logs and Deployment are skipped\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			env := newEnv(t, testenv.Options{})
+			m, stderr := timedBundle(t, env, time.Minute, tc.args...)
+			if !strings.Contains(stderr, tc.warn) {
+				t.Errorf("stderr %q, want %q", stderr, tc.warn)
+			}
+			for _, c := range m.Item.Collectors {
+				if c.Name == "controller-metrics" && (c.Status != "skipped" || c.Reason != "no install") {
+					t.Errorf("collector %s: %s (%s), want skipped (no install)", c.Name, c.Status, c.Reason)
+				}
+			}
+			for _, p := range []string{"controller", "install"} {
+				found := false
+				for _, it := range m.Item.Items {
+					found = found || it.Path == p && it.Status == "skipped" && it.Reason == "no install"
+				}
+				if !found {
+					t.Errorf("no omission %s skipped (no install) in %+v", p, m.Item.Items)
+				}
+			}
+		})
 	}
 }
 

@@ -83,7 +83,7 @@ func resolveScope(f *Flags, explicitNamespace, detectionIncomplete bool, res *lo
 		DetectionIncomplete: detectionIncomplete})
 	switch {
 	case len(all) == 0 && f.AllControllers && !detectionIncomplete:
-		warns = append(warns, "no kgateway install detected; controller collectors are skipped")
+		warns = append(warns, "no kgateway install detected; controller metrics, logs and Deployment are skipped")
 	case len(selected) > 1:
 		warns = append(warns, fmt.Sprintf("%d kgateway installs detected; the bundle covers all of them, --install selects one", len(selected)))
 	}
