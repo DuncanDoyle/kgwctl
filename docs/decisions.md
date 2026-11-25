@@ -242,7 +242,7 @@ Downstream collectors are trusted in-process code. The Sink and the guard protec
 - Once the output file or stream is created, `kgwctl bundle` always seals an archive. This includes no reachable cluster, a detection error of any kind, and `--install` naming no detected install. The manifest records `inventory/detection` with its outcome (`failed`, `timeout` or `denied`) and a fixed reason. The collectors that never ran are recorded the same way they are after a detection timeout.
 - Exit codes (design §3.1):
   - 0: the archive holds cluster data.
-  - 2: no archive was written, or the archive holds no cluster data because detection did not produce a model. Causes of no archive: a usage error, an output that exists or cannot be created, a fatal write failure, or an interrupt.
+  - 2: no archive was written, or the archive holds no cluster data. The archive holds cluster data when a collector other than `version` finished `ok` or `partial`, or any item other than `cluster/version.json` was written `ok`. `version.json` is excluded because it carries kgwctl's build data even when the cluster never answers. Causes of no archive: a usage error, an output that exists or cannot be created, a fatal write failure, or an interrupt.
   - stderr says which case applies.
 - An interrupt (Ctrl-C, or the caller cancelling the command context) keeps today's behaviour.
 - Errors before the output is created keep exit 2 with no archive. Examples: no kubeconfig, an unknown context, invalid flags.
