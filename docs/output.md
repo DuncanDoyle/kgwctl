@@ -547,7 +547,13 @@ A breaking change to xdsview's `model` (a renamed or removed field, or a changed
 
 ## BundleManifest
 
-Once its output exists, `bundle` always writes an archive, except on an interrupt or a fatal write failure (D-030). It exits `0` when the archive holds cluster data, also a partial bundle. It exits `2` in two cases. Either the archive holds no cluster data because install detection did not produce a model, for example with no reachable cluster, a detection timeout or an `--install` that names no detected install. Or no archive was written, because of a usage error, an output that exists or cannot be created, a fatal write failure or an interrupt. Configuration errors, such as a missing kubeconfig, come before the output is created. The stderr summary names the failed collectors, and stderr says when the archive holds no cluster data.
+Once its output exists, `bundle` always writes an archive, except on an interrupt during install detection or a fatal write failure (D-030). The exit code follows what the archive holds. The archive holds cluster data when a collector other than `version` finished `ok` or `partial`, or when any item other than `cluster/version.json` was written `ok`. `version` is left out because it writes `version.json` from kgwctl's own build data even when the cluster never answers. A collector that finished `ok` on an empty cluster counts, since the empty result is what the cluster said.
+
+- `0`: the archive holds cluster data, also a partial bundle.
+- `2`: the archive holds no cluster data, for example with no reachable cluster, a detection timeout, an `--install` that names no detected install, or a `--timeout` that ran out before any collector finished. The archive still exists, and stderr says `bundle holds no cluster data` with the cause.
+- `2`: no archive was written, because of a usage error, an output that exists or cannot be created, a fatal write failure or an interrupt during install detection.
+
+Setup that can fail, such as reading the kubeconfig and creating the spool, comes before the output is created, so it leaves no file. The stderr summary names the failed collectors.
 
 `manifest.json` in a support bundle is one envelope with `kind: BundleManifest`. Every list in it is bounded and has an omitted count. When the manifest still would not fit its size cap, it is replaced by a minimal one with `truncated: true`: build, flags, times, finalization, `excluded`, the omitted counts, and the scope's namespace and up to 64 installs. The minimal manifest is under 1 MiB, below the smallest manifest cap.
 
@@ -695,7 +701,7 @@ Values appear only for `-A`, `--all-controllers`, `--since`, `--tail`, `--timeou
 Some items stand for a file that was not written:
 
 - `inventory/detection` records a failed or cut install detection, with a fixed reason (D-030). The bundle is still written.
-  - `timeout`: a deadline or a timeout status, such as HTTP 504, ended detection. With a partial model, collectors run, and installs and Gateways may be missing. Without one, the archive holds no cluster data.
+  - `timeout`: a deadline or a timeout status, such as HTTP 504, ended detection. With a partial model, collectors run only while `--timeout` has time left, and installs and Gateways may be missing. When detection used up `--timeout`, no collector runs and the archive holds no cluster data. Without a model, the archive holds no cluster data.
   - `denied`: detection was refused with a 403. The archive holds no cluster data.
   - `failed`, reason `install detection failed`: any other error, such as no reachable cluster. The archive holds no cluster data.
   - `failed`, reason `no such install detected`: `--install` names no detected install. The archive holds no cluster data.

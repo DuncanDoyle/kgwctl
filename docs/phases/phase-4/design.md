@@ -58,11 +58,13 @@ kgwctl bundle [-n <ns> | -A] [--install <ns>/<name>] [--all-controllers]
 - Progress goes to stderr: one line per collector, then counts of files, errors and redactions, and the output path.
 
 ### 3.1 Exit codes
-Once the output exists, the bundle always seals an archive, except on an interrupt or a fatal write failure (D-030). A failed install detection, including no reachable cluster, is recorded as `inventory/detection` with status `failed`, `timeout` or `denied` and a fixed reason. The collectors that never ran are recorded `timeout`.
+Once the output exists, the bundle always seals an archive, except on an interrupt during install detection or a fatal write failure (D-030). A failed install detection, including no reachable cluster, is recorded as `inventory/detection` with status `failed`, `timeout` or `denied` and a fixed reason. The collectors that never ran are recorded `timeout`.
+
+The exit code follows what the archive holds. It holds cluster data when a collector other than `version` finished `ok` or `partial`, or any item other than `cluster/version.json` was written `ok`. `version` is left out because it writes `version.json` from build data even without a cluster answer. A collector finishing `ok` on an empty cluster counts.
 
 - 0: the archive holds cluster data, even a partial bundle, which is normal on restricted RBAC. The stderr summary names failed collectors.
-- 2: the archive holds no cluster data because detection did not produce a model. The archive still exists, and stderr names the cause.
-- 2: no archive was written. The causes are a usage error, an output that exists or cannot be created, a fatal write failure (§8.3), or an interrupt (Ctrl-C or the caller cancelling the command context). Configuration errors, such as no kubeconfig or an unknown context, come before the output is created.
+- 2: the archive holds no cluster data, for example because detection produced no model or `--timeout` ran out before any collector finished. The archive still exists, and stderr names the cause.
+- 2: no archive was written. The causes are a usage error, an output that exists or cannot be created, a fatal write failure (§8.3), or an interrupt during install detection (Ctrl-C or the caller cancelling the command context). Setup that can fail, such as the kubeconfig, the context, the clients and the spool, comes before the output is created.
 
 ### 3.2 Scope contract
 The root flags resolve once, before any collector runs, into one `Scope` that every collector receives and the manifest records.
