@@ -368,8 +368,6 @@ func TestCheckCollectorDenialBody(t *testing.T) {
 	if hits.N() == 0 {
 		t.Fatal("the rule never applied")
 	}
-	// The check collector writes no error line for an incomplete input: its
-	// record is check.json's incomplete entry. errors.txt's line is the resources collector's.
 	b, _ := a.File("check/check.json")
 	var doc struct {
 		Item struct {
@@ -384,11 +382,39 @@ func TestCheckCollectorDenialBody(t *testing.T) {
 	}) {
 		t.Errorf("check.json incomplete %+v, want httproutes denied with 403 Forbidden", doc.Item.Incomplete)
 	}
-	fileHas(t, a, "errors.txt", "resources/gateway.networking.k8s.io/HTTPRoute", "403 Forbidden")
+	fileHas(t, a, "errors.txt", "resources/gateway.networking.k8s.io/HTTPRoute", "check/gateway.networking.k8s.io/httproutes", "403 Forbidden")
 	if _, ok := a.File("run.log"); !ok {
 		t.Error("archive lacks run.log")
 	}
 	bundletest.AssertNoCanary(t, a, []string{canary})
+}
+
+// TestCheckCollectorOnlyDenial: an input only check reads is denied
+// (--skip resources). check.json is kept, the manifest records the denial
+// and errors.txt gets the cluster-wide reader grant line.
+func TestCheckCollectorOnlyDenial(t *testing.T) {
+	env := newEnv(t, testenv.Options{Fixtures: []string{healthyFixture}})
+	hits := env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindAcquire, Resource: httpRoutes}, testenv.Action{Status: http.StatusForbidden})
+	a := archiveWith(t, env.Kubeconfig, nil, app.BundleTestHooks{Check: fastHooks(metricsScraper{})}, "--skip", "version,resources")
+	if hits.N() == 0 {
+		t.Fatal("the rule never applied")
+	}
+	if _, ok := a.File("check/check.json"); !ok {
+		t.Error("archive lacks check/check.json")
+	}
+	const path = "check/gateway.networking.k8s.io/httproutes"
+	found := false
+	for _, it := range readItems(t, a).Item.Items {
+		found = found || it.Path == path && it.Status == "denied" && it.Source.Operation == "check"
+	}
+	if !found {
+		t.Errorf("manifest items %+v, want %s denied by check", readItems(t, a).Item.Items, path)
+	}
+	fileHas(t, a, "errors.txt", path, "403 Forbidden")
+	_, grants := grantLines(t, a)
+	if want := []string{"grant: get, list and watch cluster-wide: see the kgwctl-reader ClusterRole in docs/rbac.yaml"}; !slices.Equal(grants, want) {
+		t.Errorf("grant lines %q, want %q", grants, want)
+	}
 }
 
 // TestCheckCollectorRedirectBody: a terminal 3xx whose Status body carries a

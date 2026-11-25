@@ -2,12 +2,15 @@ package app
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 
 	"github.com/DuncanDoyle/snellius/pkg/extension"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/rest"
 
+	"github.com/DuncanDoyle/kgwctl/internal/load"
 	"github.com/DuncanDoyle/kgwctl/internal/print"
 	"github.com/DuncanDoyle/kgwctl/internal/redact"
 	pb "github.com/DuncanDoyle/kgwctl/pkg/bundle"
@@ -47,6 +50,9 @@ func (c checkCollector) Collect(ctx context.Context, _ pb.Env, s pb.Sink) error 
 		if in.Reason != "" {
 			report.Incomplete[i].Reason = redact.ErrorText(errors.New(in.Reason), c.rc.Host)
 		}
+		if in.State == load.StateDenied {
+			recordDenied(s, in)
+		}
 	}
 	var b bytes.Buffer
 	if err := print.Envelope(&b, print.FormatJSON, "Check", report); err != nil {
@@ -57,4 +63,13 @@ func (c checkCollector) Collect(ctx context.Context, _ pb.Env, s pb.Sink) error 
 		return err
 	}
 	return nil
+}
+
+// recordDenied records a denied check input as a typed 403 at
+// check/<group>/<resource>, so it gets a denied item and a grant line (§6).
+// Check reads cluster-wide, so the grant is cluster-wide.
+func recordDenied(s pb.Sink, in load.Input) {
+	group := cmp.Or(in.GVR.Group, pb.Core)
+	err := apierrors.NewForbidden(in.GVR.GroupResource(), "", errors.New("check input denied"))
+	s.Error(pb.Path{pb.CheckDir, group, in.GVR.Resource}, pb.Source{Operation: pb.OpCheck}, err)
 }
