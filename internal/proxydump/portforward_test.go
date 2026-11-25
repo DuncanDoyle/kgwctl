@@ -21,6 +21,8 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
+
+	"github.com/DuncanDoyle/kgwctl/internal/bundle"
 )
 
 // TestPortForwardStatusNoBody: a refused upgrade is a typed error with the
@@ -53,6 +55,41 @@ func TestPortForwardStatusNoBody(t *testing.T) {
 			}
 			if s := fmt.Sprintf("%v %+v", err, st); strings.Contains(s, canary) {
 				t.Fatalf("error carries the body: %s", s)
+			}
+		})
+	}
+}
+
+// TestPortForwardGuardedReason: through the bundle guard, a server's reason
+// phrase reaches no port-forward error, for a redirect or a refusal.
+func TestPortForwardGuardedReason(t *testing.T) {
+	const canary = "kgwctl-canary-reason"
+	for _, code := range []int{http.StatusFound, http.StatusForbidden} {
+		t.Run(strconv.Itoa(code), func(t *testing.T) {
+			ln, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = ln.Close() })
+			go func() {
+				c, err := ln.Accept()
+				if err != nil {
+					return
+				}
+				defer c.Close()
+				if _, err := http.ReadRequest(bufio.NewReader(c)); err != nil {
+					return
+				}
+				// A custom reason phrase; httptest cannot write one.
+				fmt.Fprintf(c, "HTTP/1.1 %d %s\r\nLocation: /elsewhere\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", code, canary)
+			}()
+			cfg := bundle.Guard(&rest.Config{Host: "http://" + ln.Addr().String()})
+			_, _, err = NewPortForwarder(cfg).Dial(t.Context(), testPod, AdminPort)
+			if err == nil {
+				t.Fatal("dial succeeded")
+			}
+			if s := fmt.Sprintf("%v %+v", err, err); strings.Contains(s, canary) {
+				t.Fatalf("error carries the reason phrase: %s", s)
 			}
 		})
 	}

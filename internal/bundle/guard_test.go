@@ -1,11 +1,13 @@
 package bundle
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -337,6 +339,44 @@ func TestGuardSanitizesRedirects(t *testing.T) {
 	err = kube.CoreV1().RESTClient().Get().AbsPath("/api/v1/namespaces/a/pods/p/proxy/moved").Do(ctx).Error()
 	if err == nil || statusCode(err) != 302 || strings.Contains(fmt.Sprintf("%v %#v", err, err), canary) || arrived.Load() {
 		t.Errorf("302: got %v (code %d), want a status-only 302 error, unfollowed", err, statusCode(err))
+	}
+}
+
+// TestGuardReplacesReason: a sanitized response's status line is the code and
+// its standard text; the server's reason phrase is dropped.
+func TestGuardReplacesReason(t *testing.T) {
+	const canary = "kgwctl-canary-reason"
+	for _, code := range []int{http.StatusFound, http.StatusForbidden} {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = ln.Close() })
+		go func() {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			defer c.Close()
+			if _, err := http.ReadRequest(bufio.NewReader(c)); err != nil {
+				return
+			}
+			fmt.Fprintf(c, "HTTP/1.1 %d %s\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", code, canary)
+		}()
+		host := "http://" + ln.Addr().String()
+		rt, err := rest.TransportFor(Guard(&rest.Config{Host: host}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req, _ := http.NewRequest(http.MethodGet, host+"/api/v1/pods", nil)
+		resp, err := rt.RoundTrip(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if want := fmt.Sprintf("%d %s", code, http.StatusText(code)); resp.Status != want {
+			t.Errorf("%d: status %q, want %q", code, resp.Status, want)
+		}
 	}
 }
 

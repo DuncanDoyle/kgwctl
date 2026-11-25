@@ -86,6 +86,8 @@ func (g *guard) RoundTrip(req *http.Request) (*http.Response, error) {
 	body := statusBody(resp.StatusCode, refused)
 	resp.Body = guardedBody{bytes.NewReader(body)}
 	resp.ContentLength = int64(len(body))
+	// The server's reason phrase is text too; keep only the standard one.
+	resp.Status = strings.TrimSpace(fmt.Sprintf("%d %s", resp.StatusCode, http.StatusText(resp.StatusCode)))
 	resp.Header = resp.Header.Clone()
 	if resp.Header == nil {
 		resp.Header = http.Header{}
