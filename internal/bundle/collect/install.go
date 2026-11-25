@@ -2,6 +2,7 @@ package collect
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -20,7 +21,7 @@ var deploymentsGVR = schema.GroupVersionResource{Group: "apps", Version: "v1", R
 func gatewayClassesGVR(ctx context.Context, env pb.Env) (schema.GroupVersionResource, error) {
 	rctx, cancel := requestContext(ctx, env.RequestTimeout)
 	defer cancel()
-	groups, err := proxydump.Await(rctx, env.Discovery.ServerGroups, nil)
+	groups, err := apiGroups(rctx, env)
 	if err != nil {
 		return schema.GroupVersionResource{}, err
 	}
@@ -30,6 +31,24 @@ func gatewayClassesGVR(ctx context.Context, env pb.Env) (schema.GroupVersionReso
 		}
 	}
 	return schema.GroupVersionResource{}, fmt.Errorf("API group %s is not served", gatewayGroup)
+}
+
+// apiGroups reads /apis under ctx, so the request is cancelled, not left running.
+func apiGroups(ctx context.Context, env pb.Env) (*metav1.APIGroupList, error) {
+	rc := env.Discovery.RESTClient()
+	if rc == nil {
+		// A client without REST access (a fake) is bounded by waiting only.
+		return proxydump.Await(ctx, env.Discovery.ServerGroups, nil)
+	}
+	b, err := rc.Get().AbsPath("/apis").Do(ctx).Raw()
+	if err != nil {
+		return nil, err
+	}
+	var gl metav1.APIGroupList
+	if err := json.Unmarshal(b, &gl); err != nil {
+		return nil, fmt.Errorf("decode API groups: %w", err)
+	}
+	return &gl, nil
 }
 
 type installCollector struct{}

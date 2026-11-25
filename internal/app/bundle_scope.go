@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -29,14 +30,23 @@ const discoverySource = "snellius M-4 (interim): " + install.DiscoveryNamespaceS
 // defaultControllerMetricsPort is used when an install names no metrics port.
 const defaultControllerMetricsPort = 9092
 
-// resolveScope resolves the root flags once into the run's Scope, the kept
-// Gateways, the keep function and stderr warnings (design §3.2). An
-// --install that names no detected install is a usage error (exit 2).
-func resolveScope(f *Flags, explicitNamespace bool, res *load.Result) (pb.Scope, ib.GatewaySet, func(*unstructured.Unstructured) pb.ExcludeReason, []string, error) {
+// errNoSuchInstall is an --install that names no detected install.
+var errNoSuchInstall = errors.New("no such install detected")
+
+// baseScope is the Scope the flags give before any install is known.
+func baseScope(f *Flags, explicitNamespace bool) pb.Scope {
 	sc := pb.Scope{AllControllers: f.AllControllers}
 	if explicitNamespace && !f.AllNamespaces {
 		sc.Namespace = f.Namespace
 	}
+	return sc
+}
+
+// resolveScope resolves the root flags once into the run's Scope, the kept
+// Gateways, the keep function and stderr warnings (design §3.2). An
+// --install that names no detected install is a usage error (exit 2).
+func resolveScope(f *Flags, explicitNamespace bool, res *load.Result) (pb.Scope, ib.GatewaySet, func(*unstructured.Unstructured) pb.ExcludeReason, []string, error) {
+	sc := baseScope(f, explicitNamespace)
 	all := res.Model.Installs
 	selected := all
 	if f.Install != "" {
@@ -46,7 +56,7 @@ func resolveScope(f *Flags, explicitNamespace bool, res *load.Result) (pb.Scope,
 		}
 		i := slices.IndexFunc(all, func(im engine.InstallModel) bool { return im.Resolved.ID() == id })
 		if i < 0 {
-			return pb.Scope{}, nil, nil, nil, usageErr(fmt.Errorf("--install %q: no such install detected", f.Install))
+			return pb.Scope{}, nil, nil, nil, usageErr(fmt.Errorf("--install %q: %w", f.Install, errNoSuchInstall))
 		}
 		selected = all[i : i+1]
 	}

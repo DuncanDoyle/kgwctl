@@ -5,14 +5,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/DuncanDoyle/snellius/pkg/extension"
 	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
@@ -169,28 +172,57 @@ func newBundleCmd(reg *extension.Registry, build BuildInfo, extra []pb.Collector
 			rctx, rcancel := context.WithDeadline(cmd.Context(), deadline)
 			defer rcancel()
 			dctx, dcancel := f.Context(rctx)
-			res, err := loadBundle(dctx, reg, grc)
-			detectLate := errors.Is(dctx.Err(), context.DeadlineExceeded)
+			var reached atomic.Bool
+			res, err := loadBundle(dctx, reg, grc, &reached)
 			dcancel()
-			if err != nil {
+			// A deadline during detection after the cluster answered still seals a bundle (§3.1).
+			var te *load.TimeoutError
+			if err != nil && (cmd.Context().Err() != nil || !errors.As(err, &te) || !reached.Load()) {
 				return &ExitError{Code: 2, Err: loadError(cmd.Context(), err, rc.Host)}
 			}
-			scope, gws, keep, warns, err := resolveScope(f, cmd.Flags().Changed(flagNamespace), res)
-			if err != nil {
-				return err
+			detectLate := err != nil || stillLoading(res)
+			explicitNs := cmd.Flags().Changed(flagNamespace)
+			var (
+				scope    = baseScope(f, explicitNs)
+				gws      ib.GatewaySet
+				keep     func(*unstructured.Unstructured) pb.ExcludeReason
+				warns    []string
+				ctrls    []ib.ControllerSelector
+				invErrs  []error
+				replicas []pb.Replica
+			)
+			if res != nil {
+				scope, gws, keep, warns, err = resolveScope(f, explicitNs, res)
+				// The pinned install may just not have loaded yet.
+				if errors.Is(err, errNoSuchInstall) && detectLate {
+					res, scope, err = nil, baseScope(f, explicitNs), nil
+				}
+				if err != nil {
+					return err
+				}
 			}
-			ctrls, invErrs := controllerSelectors(res, scope)
-			for _, e := range invErrs {
-				warns = append(warns, e.Error())
+			if res != nil {
+				ctrls, invErrs = controllerSelectors(res, scope)
+				for _, e := range invErrs {
+					warns = append(warns, e.Error())
+				}
+			}
+			if detectLate {
+				// What detection did not load is unknown, not absent.
+				warns = slices.DeleteFunc(warns, func(w string) bool { return strings.HasPrefix(w, "no kgateway install detected") })
+				warns = append([]string{"install detection timed out; installs and Gateways may be missing"}, warns...)
 			}
 			for _, w := range warns {
 				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: %s\n", w)
 			}
-			ictx, cancel := f.Context(rctx)
-			replicas, errs := ib.Inventory(ictx, kube, scope, gws, ctrls)
-			cancel()
-			invErrs = append(invErrs, errs...)
-			scope = withReplicaNamespaces(scope, replicas)
+			if res != nil {
+				ictx, cancel := f.Context(rctx)
+				var errs []error
+				replicas, errs = ib.Inventory(ictx, kube, scope, gws, ctrls)
+				cancel()
+				invErrs = append(invErrs, errs...)
+				scope = withReplicaNamespaces(scope, replicas)
+			}
 
 			sp, err := ib.NewSpool("", limits.RAM, limits.MaxSize)
 			if err != nil {
@@ -200,7 +232,7 @@ func newBundleCmd(reg *extension.Registry, build BuildInfo, extra []pb.Collector
 			w := ib.NewWriter(dest, sp, root, limits, redact.Options{ExtraHeaders: redactHeaders, MaxSize: limits.MaxSize}, rc.Host, now)
 			inv := w.Sink(inventoryName)
 			if detectLate {
-				// Inputs still loading at the deadline: installs and Gateways may be missing.
+				// Detection ended at a deadline: installs and Gateways may be missing.
 				inv.Error(pb.Path{inventoryName, "detection"}, pb.Source{}, fmt.Errorf("install detection: %w", context.DeadlineExceeded))
 			}
 			for _, e := range invErrs {
@@ -241,6 +273,9 @@ func newBundleCmd(reg *extension.Registry, build BuildInfo, extra []pb.Collector
 				}
 			}
 			cs = append(builtinCollectors(reg, build, collectorDeps{f: f, rc: grc, res: res, dialer: dialer, logs: logs, scrape: scrape, noEndpoints: noEndpoints}, hooks), extra...)
+			if res == nil {
+				deadline = time.Now() // no model: collection ends before any collector starts
+			}
 			m, err = ib.Run(cmd.Context(), cs, env, w, m, ib.RunOptions{Skip: skipSet, Deadline: deadline})
 			if err != nil {
 				return &ExitError{Code: 2, Err: fmt.Errorf("write bundle: %w", err)}
@@ -272,15 +307,47 @@ func usageErr(err error) error { return &ExitError{Code: 2, Err: err} }
 const inventoryName = "inventory"
 
 // loadBundle detects installs and loads the model over the guarded config,
-// bounded by ctx; an unreachable API server fails it.
-func loadBundle(ctx context.Context, reg *extension.Registry, grc *rest.Config) (*load.Result, error) {
-	c, err := load.NewClients(ctx, grc)
+// bounded by ctx; an unreachable API server fails it. reached is set once
+// the API server sends any response.
+func loadBundle(ctx context.Context, reg *extension.Registry, grc *rest.Config, reached *atomic.Bool) (*load.Result, error) {
+	cfg := rest.CopyConfig(grc)
+	cfg.Wrap(func(next http.RoundTripper) http.RoundTripper { return &reachedTransport{next: next, reached: reached} })
+	c, err := load.NewClients(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
 	// Proxy Pods give the version collector each Gateway's proxy image tags. The engine
 	// logger is discarded, as in check: a rejected install's error can quote cluster data (§7.1).
 	return load.Load(ctx, c, reg, load.Needs{ProxyPods: true, Logger: engineLogger(io.Discard)})
+}
+
+// reachedTransport sets reached when a response arrives.
+type reachedTransport struct {
+	next    http.RoundTripper
+	reached *atomic.Bool
+}
+
+// RoundTrip implements http.RoundTripper.
+func (t *reachedTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	resp, err := t.next.RoundTrip(r)
+	if resp != nil {
+		t.reached.Store(true)
+	}
+	return resp, err
+}
+
+// WrappedRoundTripper lets client-go reach the transport underneath.
+func (t *reachedTransport) WrappedRoundTripper() http.RoundTripper { return t.next }
+
+// stillLoading reports whether detection ended with inputs still loading,
+// which happens only when its context ended first.
+func stillLoading(res *load.Result) bool {
+	for _, in := range res.Inputs {
+		if in.State == load.StateLoading {
+			return true
+		}
+	}
+	return false
 }
 
 // loadError classifies a failed install detection: interrupted, no reachable

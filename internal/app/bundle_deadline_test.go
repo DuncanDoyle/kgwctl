@@ -31,8 +31,9 @@ type deadlineManifest struct {
 	} `json:"item"`
 }
 
-// timedBundle runs bundle to stdout, fails past limit, and returns the manifest.
-func timedBundle(t *testing.T, env *testenv.Env, limit time.Duration, args ...string) deadlineManifest {
+// timedBundle runs bundle to stdout, fails past limit, and returns the
+// manifest and stderr.
+func timedBundle(t *testing.T, env *testenv.Env, limit time.Duration, args ...string) (deadlineManifest, string) {
 	t.Helper()
 	start := time.Now()
 	r := runBundle(t, env.Kubeconfig, nil, append([]string{"-o", "-"}, args...)...)
@@ -51,7 +52,7 @@ func timedBundle(t *testing.T, env *testenv.Env, limit time.Duration, args ...st
 	if err := json.Unmarshal(b, &m); err != nil {
 		t.Fatal(err)
 	}
-	return m
+	return m, r.stderr
 }
 
 // itemStatus returns the status of the manifest item at path, "" if absent.
@@ -82,7 +83,7 @@ func TestBundleTimeoutCoversDetection(t *testing.T) {
 	held := releaseAfter(t, 20*time.Second)
 	env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindAcquire, Resource: "*"}, testenv.Action{Until: held})
 
-	m := timedBundle(t, env, 8*time.Second, "--timeout", "1s")
+	m, _ := timedBundle(t, env, 8*time.Second, "--timeout", "1s")
 	for path, want := range map[string]string{"inventory/detection": "timeout", "proxies": "timeout"} {
 		if got := itemStatus(m, path); got != want {
 			t.Errorf("item %s: status %q, want %q", path, got, want)
@@ -101,16 +102,65 @@ func TestBundleTimeoutCoversInventory(t *testing.T) {
 	env := newEnv(t, testenv.Options{})
 	held := releaseAfter(t, 20*time.Second)
 	// Only the inventory lists proxy Pods by this selector; detection's adds a component label.
-	env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindAcquire, Resource: "pods", LabelSelector: "kgateway=kube-gateway"}, testenv.Action{Until: held})
+	hits := env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindAcquire, Resource: "pods", LabelSelector: "kgateway=kube-gateway"}, testenv.Action{Until: held})
 
-	m := timedBundle(t, env, 8*time.Second, "--timeout", "2s", "--request-timeout", "0")
+	m, _ := timedBundle(t, env, 10*time.Second, "--timeout", "4s", "--request-timeout", "0")
+	// The read was sent and held, so the timeout below is the inventory's own.
+	if hits.N() != 1 {
+		t.Fatalf("inventory proxy list held %d times, want 1", hits.N())
+	}
 	if got := itemStatus(m, "proxies"); got != "timeout" {
 		t.Errorf("item proxies: status %q, want timeout", got)
 	}
-	if got := itemStatus(m, "inventory/detection"); got != "" {
-		t.Errorf("detection recorded as %q; it finished in time", got)
+}
+
+// TestBundleTimeoutDuringDetectionDiscovery: --timeout ends while detection
+// is held, in discovery or while listing. The cluster was reached, so the
+// archive is still sealed: detection is timeout, every collector timeout,
+// exit 0. With --install, the cut detection is not reported as an unknown install.
+func TestBundleTimeoutDuringDetectionDiscovery(t *testing.T) {
+	// Other group versions answer before heldGV, so the cluster is reached.
+	discovery := testenv.Match{Kind: testenv.KindDiscovery, Resource: heldGV}
+	lists := testenv.Match{Kind: testenv.KindAcquire, Resource: "*"}
+	install := []string{"--install", "kgateway-system/kgateway"}
+	for _, tc := range []struct {
+		name string
+		hold testenv.Match
+		args []string
+	}{
+		{name: "discovery", hold: discovery},
+		{name: "discovery-install-flag", hold: discovery, args: install},
+		{name: "lists-install-flag", hold: lists, args: install},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newEnv(t, testenv.Options{})
+			held := releaseAfter(t, 20*time.Second)
+			hits := env.Proxies[0].Rule(tc.hold, testenv.Action{Until: held})
+
+			m, stderr := timedBundle(t, env, 10*time.Second, append([]string{"--timeout", "2s"}, tc.args...)...)
+			if hits.N() == 0 {
+				t.Fatal("detection's discovery was not held")
+			}
+			if got := itemStatus(m, "inventory/detection"); got != "timeout" {
+				t.Errorf("item inventory/detection: status %q, want timeout", got)
+			}
+			for _, c := range m.Item.Collectors {
+				if c.Status != "timeout" && c.Status != "skipped" {
+					t.Errorf("collector %s: status %q, want timeout", c.Name, c.Status)
+				}
+			}
+			if !strings.Contains(stderr, "install detection timed out") {
+				t.Errorf("stderr %q does not say detection timed out", stderr)
+			}
+			if strings.Contains(stderr, "no kgateway install detected") {
+				t.Errorf("stderr %q claims no install", stderr)
+			}
+		})
 	}
 }
+
+// heldGV is a group version detection reads after others have answered.
+const heldGV = "gateway.kgateway.dev/v1alpha1"
 
 // TestBundleDiscoveryRequestTimeout: blocked discovery in the resources and
 // install collectors gives up after --request-timeout, not the run budget.
@@ -120,7 +170,7 @@ func TestBundleDiscoveryRequestTimeout(t *testing.T) {
 	// /api and /apis: only the collectors' group discovery; detection reads group versions.
 	hits := env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindDiscovery, Resource: ""}, testenv.Action{Until: held})
 
-	m := timedBundle(t, env, 15*time.Second, "--request-timeout", "3s", "--timeout", "2m")
+	m, _ := timedBundle(t, env, 15*time.Second, "--request-timeout", "3s", "--timeout", "2m")
 	if hits.N() == 0 {
 		t.Fatal("no discovery request was held")
 	}
