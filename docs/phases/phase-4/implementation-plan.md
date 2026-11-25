@@ -14,7 +14,7 @@
 
 - Every bundle-owned client is built from one `rest.Config` wrapped by the request guard: no request for core `secrets` or `configmaps` leaves the process (§6.1), and every non-2xx response body is replaced by a canonical `Status` with code and reason only (a pods/proxy "connection refused" is classified first, from at most 4 KiB), before client-go or Snellius turns it into an error string (§7.1).
 - No controller admin request (§6.2). Envoy admin only through `proxydump.Op` (§6.3); no API takes a path.
-- Every archive member goes through a `bundle.Sink` method: `Object`, `ConfigDump`, `JSON`, `Prometheus`, `Text`. Path components come from `bundle` constructors (§8.4).
+- Every archive member goes through a `bundle.Sink` method: `Object`, `ConfigDump`, `Prometheus`, `Text`, or, for built-in JSON artifacts, the internal JSON writer (D-029). Path components come from `bundle` constructors (§8.4).
 - Header values in the §7 structures redacted whatever their name; debug header lines by allowlist; JWKS rebuilt from a typed projection; Prometheus validated (§7).
 - Remote errors: HTTP status and Kubernetes reason/code only, never bodies. Other error text: redacted and cut at 512 bytes (§7.1).
 - Marker `[redacted]`; no hashes or lengths; `redactions.json` holds rule, location (map keys as `[key]`) and count only.

@@ -141,33 +141,42 @@ func TestWithBundleCollectors(t *testing.T) {
 		t.Fatalf("exit %d, stdout %q, stderr %q; want 0 and %s listed", code, stdout, stderr, evidenceName)
 	}
 	a := bundleArchive(t, env)
-	b, ok := a.File("example/evidence.json")
-	if !ok || !strings.Contains(string(b), "[redacted]") || !strings.Contains(string(b), `"service": "example"`) {
-		t.Errorf("example/evidence.json = %q (found %v); want the item with its token redacted", b, ok)
+	if _, ok := a.File("example/pod.yaml"); !ok {
+		t.Error("archive lacks example/pod.yaml")
 	}
-	if skipped := bundleArchive(t, env, "--skip", evidenceName); func() bool { _, ok := skipped.File("example/evidence.json"); return ok }() {
+	if skipped := bundleArchive(t, env, "--skip", evidenceName); func() bool { _, ok := skipped.File("example/pod.yaml"); return ok }() {
 		t.Error("--skip did not leave the example collector out")
 	}
 }
 
+// TestDownstreamCanaries checks the Sink contract at the downstream boundary:
+// Pods come out as YAML with env values redacted; Secrets and ConfigMaps are refused.
 func TestDownstreamCanaries(t *testing.T) {
 	env := newEnv(t)
 	a := bundleArchive(t, env)
 	bundletest.AssertNoCanary(t, a, []string{evidenceCanary})
-	// The typed writes land; the undeclared payload and the Secret are refused and recorded.
-	for _, name := range []string{"example/evidence.json", "example/evidence.txt"} {
-		if _, ok := a.File(name); !ok {
-			t.Errorf("archive lacks %s", name)
+	for _, name := range []string{"example/pod.yaml", "example/pods.yaml"} {
+		b, ok := a.File(name)
+		if !ok || !strings.Contains(string(b), "kind: Pod") || !strings.Contains(string(b), "value: '[redacted]'") {
+			t.Errorf("%s = %q (found %v); want Pod YAML with the env value redacted", name, b, ok)
 		}
 	}
-	for _, name := range []string{"example/payload.json", "example/secret.yaml"} {
+	if b, _ := a.File("example/pods.yaml"); !strings.Contains(string(b), "kind: List") {
+		t.Errorf("example/pods.yaml = %q; want the List", b)
+	}
+	if _, ok := a.File("example/evidence.txt"); !ok {
+		t.Error("archive lacks example/evidence.txt")
+	}
+	refused := []string{"example/secret.yaml", "example/configmap.yaml", "example/secrets.yaml",
+		"example/configmaps.yaml", "example/list-secret.yaml", "example/list-configmap.yaml"}
+	for _, name := range refused {
 		if _, ok := a.File(name); ok {
 			t.Errorf("archive holds the refused item %s", name)
 		}
 	}
 	var m struct {
 		Item struct {
-			Items []struct{ Path, Status string }
+			Items []struct{ Path, Status, Reason string }
 		}
 	}
 	mf, _ := a.File("manifest.json")
@@ -176,11 +185,11 @@ func TestDownstreamCanaries(t *testing.T) {
 	}
 	status := map[string]string{}
 	for _, it := range m.Item.Items {
-		status[it.Path] = it.Status
+		status[it.Path] = it.Status + ": " + it.Reason
 	}
-	for _, p := range []string{"example/payload.json", "example/secret.yaml"} {
-		if status[p] != "failed" {
-			t.Errorf("%s status = %q, want failed (items: %v)", p, status[p], status)
+	for _, p := range refused {
+		if status[p] != "failed: forbidden kind" {
+			t.Errorf("%s = %q, want failed: forbidden kind (items: %v)", p, status[p], status)
 		}
 	}
 }

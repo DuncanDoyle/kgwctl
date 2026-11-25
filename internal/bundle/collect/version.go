@@ -87,7 +87,7 @@ func (c versionCollector) Collect(ctx context.Context, env pb.Env, s pb.Sink) er
 	if err != nil {
 		return err
 	}
-	return sealed(s.JSON(ctx, pb.Path{pb.ClusterDir, pb.VersionFile}, bytes.NewReader(b), pb.Source{}))
+	return sealed(ib.WriteJSON(ctx, s, ib.JSONVersion, pb.Path{pb.ClusterDir, pb.VersionFile}, bytes.NewReader(b), pb.Source{}))
 }
 
 // serverVersion reads /version, bounded by RequestTimeout.
@@ -265,7 +265,7 @@ func (c versionCollector) capture(ctx context.Context, env pb.Env, s pb.Sink, r 
 		return o, nil
 	}
 	// The Sink re-reads the Pod after the write (D-027).
-	if err := s.JSON(ctx, p, bytes.NewReader(body), src); err != nil {
+	if err := ib.WriteJSON(ctx, s, ib.JSONServerInfo, p, bytes.NewReader(body), src); err != nil {
 		if errors.Is(err, pb.ErrSealed) {
 			return o, err
 		}

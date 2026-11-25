@@ -54,12 +54,60 @@ func (s *sink) ConfigDump(ctx context.Context, p pb.Path, r io.Reader, src pb.So
 	return s.w.structured(c, r, s.w.lim.ConfigDump, redact.ConfigDump)
 }
 
-func (s *sink) JSON(ctx context.Context, p pb.Path, r io.Reader, src pb.Source) error {
+// JSONArtifact names a built-in JSON artifact. Code outside this module cannot
+// name the type, so pkg/bundle collectors cannot reach JSONSink.JSON (D-029).
+type JSONArtifact int
+
+// Built-in JSON artifacts.
+const (
+	// JSONCheckReport is check/check.json.
+	JSONCheckReport JSONArtifact = iota + 1
+	// JSONVersion is cluster/version.json.
+	JSONVersion
+	// JSONServerInfo is an Envoy server_info.json.
+	JSONServerInfo
+	// JSONCerts is an Envoy certs.json.
+	JSONCerts
+)
+
+// jsonRedactors is the redactor each built-in JSON artifact owns (D-026).
+var jsonRedactors = map[JSONArtifact]func([]byte, redact.Options) ([]byte, []redact.Finding, error){
+	JSONCheckReport: redact.JSON, JSONVersion: redact.JSON, JSONServerInfo: redact.JSON, JSONCerts: redact.JSON,
+}
+
+// errNoJSON is recorded when a JSON artifact reaches a Sink that cannot write it.
+var errNoJSON = errors.New("not a built-in JSON artifact or sink")
+
+// JSONSink is the Sink built-in collectors write their JSON artifacts through.
+// Every Sink from Writer.Sink is one.
+type JSONSink interface {
+	pb.Sink
+	// JSON writes built-in artifact a with that artifact's redactor.
+	JSON(ctx context.Context, a JSONArtifact, p pb.Path, r io.Reader, src pb.Source) error
+}
+
+// WriteJSON writes built-in artifact a through s. If s is not a JSONSink,
+// the item is recorded as failed.
+func WriteJSON(ctx context.Context, s pb.Sink, a JSONArtifact, p pb.Path, r io.Reader, src pb.Source) error {
+	js, ok := s.(JSONSink)
+	if !ok {
+		s.Error(p, src, errNoJSON)
+		return errNoJSON
+	}
+	return js.JSON(ctx, a, p, r, src)
+}
+
+func (s *sink) JSON(ctx context.Context, a JSONArtifact, p pb.Path, r io.Reader, src pb.Source) error {
+	fn, ok := jsonRedactors[a]
+	if !ok {
+		s.Error(p, src, errNoJSON)
+		return errNoJSON
+	}
 	c, err := s.w.begin(ctx, s.name, p, ContentJSON, src, false)
 	if err != nil {
 		return err
 	}
-	return s.w.structured(c, r, s.w.lim.Other, redact.JSON)
+	return s.w.structured(c, r, s.w.lim.Other, fn)
 }
 
 func (s *sink) Prometheus(ctx context.Context, p pb.Path, r io.Reader, src pb.Source) error {

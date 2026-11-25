@@ -126,7 +126,7 @@ func TestWriterCorpusReplay(t *testing.T) {
 			case bundletest.MethodConfigDump:
 				err = s.ConfigDump(bg, p, bytes.NewReader(fx.Input), src)
 			case bundletest.MethodJSON:
-				err = s.JSON(bg, p, bytes.NewReader(fx.Input), src)
+				err = s.JSON(bg, JSONVersion, p, bytes.NewReader(fx.Input), src)
 			case bundletest.MethodPrometheus:
 				err = s.Prometheus(bg, p, bytes.NewReader(fx.Input), src)
 			case bundletest.MethodText:
@@ -191,21 +191,25 @@ func TestWriterCorpusReplay(t *testing.T) {
 func TestWriterUndeclaredType(t *testing.T) {
 	h := newHarness(t, mustLimits(t, 32<<20), redact.Options{}, "")
 	s := h.w.Sink("downstream")
-	// The sink offers exactly the typed Sink methods; no raw write exists.
+	// The sink offers the typed Sink methods plus the built-in JSON writer,
+	// whose JSONArtifact parameter code outside the module cannot name (D-029).
 	got := reflect.TypeOf(s)
-	want := reflect.TypeOf((*pb.Sink)(nil)).Elem()
+	want := reflect.TypeOf((*JSONSink)(nil)).Elem()
 	if got.NumMethod() != want.NumMethod() {
 		var names []string
 		for i := range got.NumMethod() {
 			names = append(names, got.Method(i).Name)
 		}
-		t.Fatalf("sink methods %v, want only the %d Sink methods", names, want.NumMethod())
+		t.Fatalf("sink methods %v, want only the %d JSONSink methods", names, want.NumMethod())
+	}
+	if m, _ := got.MethodByName("JSON"); m.Type.In(2) != reflect.TypeOf(JSONArtifact(0)) {
+		t.Fatalf("JSON takes %v, want a JSONArtifact", m.Type)
 	}
 	if _, ok := s.(io.Writer); ok {
 		t.Fatal("sink is an io.Writer")
 	}
 	payload := []byte("raw downstream payload kgwctl-canary-21-raw\n")
-	if err := s.JSON(bg, pb.Path{"x", "raw.json"}, bytes.NewReader(payload), pb.Source{}); !errors.Is(err, redact.ErrInvalidJSON) {
+	if err := s.JSON(bg, JSONVersion, pb.Path{"x", "raw.json"}, bytes.NewReader(payload), pb.Source{}); !errors.Is(err, redact.ErrInvalidJSON) {
 		t.Fatalf("JSON err = %v", err)
 	}
 	if err := s.Prometheus(bg, pb.Path{"x", "raw.txt"}, bytes.NewReader(payload), pb.Source{}); !errors.Is(err, redact.ErrNotPrometheus) {
@@ -335,7 +339,7 @@ func TestWriterFooterCaps(t *testing.T) {
 	}
 	doc.WriteByte('}')
 	for i := range 24 {
-		if err := h.w.Sink("c0").JSON(bg, pb.Path{"docs", fmt.Sprintf("d-%02d.json", i)}, bytes.NewReader(doc.Bytes()), pb.Source{}); err != nil {
+		if err := h.w.Sink("c0").JSON(bg, JSONVersion, pb.Path{"docs", fmt.Sprintf("d-%02d.json", i)}, bytes.NewReader(doc.Bytes()), pb.Source{}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -489,7 +493,7 @@ func TestWriterLateSampledAtSeal(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			errs[i] = s.JSON(bg, pb.Path{"late", fmt.Sprintf("f%d.json", i)}, sr, pb.Source{})
+			errs[i] = s.JSON(bg, JSONVersion, pb.Path{"late", fmt.Sprintf("f%d.json", i)}, sr, pb.Source{})
 		}()
 		<-sr.started
 	}
@@ -507,7 +511,7 @@ func TestWriterLateSampledAtSeal(t *testing.T) {
 			t.Errorf("call %d: err = %v, want ErrSealed", i, err)
 		}
 	}
-	if err := s.JSON(bg, pb.Path{"late", "after.json"}, strings.NewReader(`{}`), pb.Source{}); !errors.Is(err, pb.ErrSealed) {
+	if err := s.JSON(bg, JSONVersion, pb.Path{"late", "after.json"}, strings.NewReader(`{}`), pb.Source{}); !errors.Is(err, pb.ErrSealed) {
 		t.Errorf("after seal: err = %v", err)
 	}
 	if n := h.w.Late()["c"]; n != 2 {
@@ -538,7 +542,7 @@ func TestWriterDuplicates(t *testing.T) {
 			if err := h.w.Sink("a").Text(bg, pb.Path{pb.ErrorsFile}, strings.NewReader("x\n"), pb.Source{}); !errors.Is(err, pb.ErrInvalidPath) {
 				t.Errorf("errors.txt: err = %v", err)
 			}
-			if err := h.w.Sink("a").JSON(bg, pb.Path{"bad", "a:b.json"}, strings.NewReader("{}"), pb.Source{}); !errors.Is(err, pb.ErrInvalidPath) || strings.Contains(err.Error(), "a:b") {
+			if err := h.w.Sink("a").JSON(bg, JSONVersion, pb.Path{"bad", "a:b.json"}, strings.NewReader("{}"), pb.Source{}); !errors.Is(err, pb.ErrInvalidPath) || strings.Contains(err.Error(), "a:b") {
 				t.Errorf("bad name: err = %v, want ErrInvalidPath without the value", err)
 			}
 			h.w.Seal()
@@ -588,7 +592,7 @@ func TestWriterRegularEntries(t *testing.T) {
 		}
 	}
 	must(s.Object(bg, pb.Path{pb.ResourcesDir, "gateway.networking.k8s.io", "HTTPRoute", "ns", "r.yaml"}, u, pb.Source{}))
-	must(s.JSON(bg, pb.Path{pb.ClusterDir, pb.VersionFile}, strings.NewReader(`{"v":"1"}`), pb.Source{}))
+	must(s.JSON(bg, JSONVersion, pb.Path{pb.ClusterDir, pb.VersionFile}, strings.NewReader(`{"v":"1"}`), pb.Source{}))
 	must(s.Prometheus(bg, pb.Path{"controller", "ns", "p", pb.MetricsFile}, strings.NewReader("# TYPE up gauge\nup 1\n"), pb.Source{}))
 	must(s.ConfigDump(bg, pb.Path{"proxies", "ns", "p", pb.ConfigDumpFile}, strings.NewReader(`{"configs":[]}`), pb.Source{}))
 	must(s.Text(bg, pb.Path{"proxies", "ns", "p", pb.StatsFile}, strings.NewReader("a: 1\n"), pb.Source{}))
@@ -699,11 +703,11 @@ func TestWriterSourceValidated(t *testing.T) {
 	})
 	h.w.usePods(kube, time.Minute)
 	s := h.w.Sink("c")
-	if err := s.JSON(bg, pb.Path{"x", "bad.json"}, strings.NewReader(`{}`), bad); err != nil {
+	if err := s.JSON(bg, JSONVersion, pb.Path{"x", "bad.json"}, strings.NewReader(`{}`), bad); err != nil {
 		t.Fatal(err)
 	}
 	s.Error(pb.Path{"x", "err.json"}, bad, errors.New("boom"))
-	if err := s.JSON(bg, pb.Path{"x", "good.json"}, strings.NewReader(`{}`), good); err != nil {
+	if err := s.JSON(bg, JSONVersion, pb.Path{"x", "good.json"}, strings.NewReader(`{}`), good); err != nil {
 		t.Fatal(err)
 	}
 	h.w.Seal()

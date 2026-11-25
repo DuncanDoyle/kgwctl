@@ -66,7 +66,7 @@ func TestIdentityVerified(t *testing.T) {
 	kube, gets := podClient()
 	h := podHarness(t, kube)
 	p := pb.Path{"proxies", "gw", "p-0", "server_info.json"}
-	if err := h.w.Sink("c").JSON(bg, p, strings.NewReader(`{"v":1}`), podSrc); err != nil {
+	if err := h.w.Sink("c").JSON(bg, JSONServerInfo, p, strings.NewReader(`{"v":1}`), podSrc); err != nil {
 		t.Fatal(err)
 	}
 	it, _ := committedItem(t, h, p.String(), "c")
@@ -251,13 +251,13 @@ func TestIdentityNotReread(t *testing.T) {
 	w := NewWriter(Stdout(&buf), sp, "root", l, redact.Options{}, "", fixedNow)
 	w.usePods(kube, time.Minute)
 	s := w.Sink("c")
-	if err := s.JSON(bg, pb.Path{"x", "plain.json"}, strings.NewReader(`{}`), pb.Source{Namespace: "gw"}); err != nil {
+	if err := s.JSON(bg, JSONServerInfo, pb.Path{"x", "plain.json"}, strings.NewReader(`{}`), pb.Source{Namespace: "gw"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.JSON(bg, pb.Path{"x", "bad.json"}, strings.NewReader(`{`), podSrc); err == nil {
+	if err := s.JSON(bg, JSONServerInfo, pb.Path{"x", "bad.json"}, strings.NewReader(`{`), podSrc); err == nil {
 		t.Error("invalid JSON accepted")
 	}
-	if err := s.JSON(bg, pb.Path{"x", "big.json"}, strings.NewReader(`"`+strings.Repeat("a", 8<<10)+`"`), podSrc); !errors.Is(err, pb.ErrBudget) {
+	if err := s.JSON(bg, JSONServerInfo, pb.Path{"x", "big.json"}, strings.NewReader(`"`+strings.Repeat("a", 8<<10)+`"`), podSrc); !errors.Is(err, pb.ErrBudget) {
 		t.Errorf("structured staging drop: err = %v", err)
 	}
 	if err := s.Text(bg, pb.Path{"x", "big.log"}, bytes.NewReader(textBody("x", 16)), podSrc); !errors.Is(err, pb.ErrBudget) {
@@ -300,7 +300,7 @@ func TestIdentitySealDuringReread(t *testing.T) {
 			done := make(chan error, 1)
 			go func() {
 				if structured {
-					done <- h.w.Sink("c").JSON(bg, p, strings.NewReader(`{"v":1}`), podSrc)
+					done <- h.w.Sink("c").JSON(bg, JSONServerInfo, p, strings.NewReader(`{"v":1}`), podSrc)
 					return
 				}
 				done <- h.w.Sink("c").Text(bg, p, strings.NewReader("a line\n"), podSrc)
@@ -385,7 +385,7 @@ func TestNilContextIsBackground(t *testing.T) {
 	h := podHarness(t, kube)
 	var nilCtx context.Context
 	p := pb.Path{"proxies", "gw", "p-0", "server_info.json"}
-	if err := h.w.Sink("c").JSON(nilCtx, p, strings.NewReader(`{}`), podSrc); err != nil {
+	if err := h.w.Sink("c").JSON(nilCtx, JSONServerInfo, p, strings.NewReader(`{}`), podSrc); err != nil {
 		t.Fatal(err)
 	}
 	it, _ := committedItem(t, h, p.String(), "c")

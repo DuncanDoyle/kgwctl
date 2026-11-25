@@ -77,30 +77,58 @@ func newRoot() *cobra.Command {
 }
 
 // evidence is the example bundle collector. It writes a secret-shaped value through
-// JSON and Text, which the Sink redacts, then tries two writes the Sink refuses.
+// Object and Text, which the Sink redacts, then tries writes the Sink refuses.
 type evidence struct{}
 
 func (evidence) Name() string { return evidenceName }
 
-// Collect writes two typed items, then a raw payload and a Secret. The Sink
-// records each refusal as a failed item, so Collect ignores those errors.
+// Collect writes a Pod, a List of Pods and a log line, then Secrets and
+// ConfigMaps. The Sink records each refusal as a failed item, so Collect
+// ignores those errors.
 func (evidence) Collect(ctx context.Context, _ bundle.Env, s bundle.Sink) error {
-	if err := s.JSON(ctx, bundle.Path{"example", "evidence.json"},
-		strings.NewReader(`{"service":"example","token":"`+evidenceCanary+`"}`), bundle.Source{}); err != nil {
+	if err := s.Object(ctx, bundle.Path{"example", "pod.yaml"}, examplePod(), bundle.Source{}); err != nil {
+		return err
+	}
+	if err := s.Object(ctx, bundle.Path{"example", "pods.yaml"}, list("List", examplePod()), bundle.Source{}); err != nil {
 		return err
 	}
 	if err := s.Text(ctx, bundle.Path{"example", "evidence.txt"},
 		strings.NewReader("GET /callback?access_token="+evidenceCanary+"&state=abc\n"), bundle.Source{}); err != nil {
 		return err
 	}
-	// There is no raw write: a payload that is no JSON document is refused.
-	_ = s.JSON(ctx, bundle.Path{"example", "payload.json"}, strings.NewReader("raw payload "+evidenceCanary), bundle.Source{})
-	secret := &unstructured.Unstructured{Object: map[string]any{
-		"apiVersion": "v1", "kind": "Secret", "metadata": map[string]any{"name": "example", "namespace": "default"},
-		"data": map[string]any{"token": evidenceCanary},
-	}}
-	_ = s.Object(ctx, bundle.Path{"example", "secret.yaml"}, secret, bundle.Source{})
+	secret := object("Secret", map[string]any{"data": map[string]any{"token": evidenceCanary}})
+	cm := object("ConfigMap", map[string]any{"data": map[string]any{"setting": evidenceCanary}})
+	for file, u := range map[string]*unstructured.Unstructured{
+		"secret.yaml": secret, "configmap.yaml": cm,
+		"secrets.yaml": list("SecretList", secret), "configmaps.yaml": list("ConfigMapList", cm),
+		"list-secret.yaml": list("List", examplePod(), secret), "list-configmap.yaml": list("List", cm),
+	} {
+		_ = s.Object(ctx, bundle.Path{"example", file}, u, bundle.Source{})
+	}
 	return nil
+}
+
+// object returns a core v1 object of kind named "example", with fields merged in.
+func object(kind string, fields map[string]any) *unstructured.Unstructured {
+	obj := map[string]any{"apiVersion": "v1", "kind": kind, "metadata": map[string]any{"name": "example", "namespace": "default"}}
+	maps.Copy(obj, fields)
+	return &unstructured.Unstructured{Object: obj}
+}
+
+// examplePod returns a Pod whose env value holds the canary; no pattern marks it secret.
+func examplePod() *unstructured.Unstructured {
+	return object("Pod", map[string]any{"spec": map[string]any{"containers": []any{map[string]any{
+		"name": "app", "image": "example:1", "env": []any{map[string]any{"name": "EXAMPLE_SETTING", "value": evidenceCanary}},
+	}}}})
+}
+
+// list returns a v1 list of kind with items, each keeping its kind metadata.
+func list(kind string, items ...*unstructured.Unstructured) *unstructured.Unstructured {
+	var out []any
+	for _, it := range items {
+		out = append(out, it.DeepCopy().Object)
+	}
+	return &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": kind, "items": out}}
 }
 
 // newRegistry adds the example pack to the defaults: the ExamplePolicy kind,

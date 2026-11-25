@@ -11,6 +11,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/rest"
 
+	ib "github.com/DuncanDoyle/kgwctl/internal/bundle"
 	"github.com/DuncanDoyle/kgwctl/internal/load"
 	"github.com/DuncanDoyle/kgwctl/internal/print"
 	"github.com/DuncanDoyle/kgwctl/internal/redact"
@@ -60,7 +61,7 @@ func (c checkCollector) Collect(ctx context.Context, _ pb.Env, s pb.Sink) error 
 		s.Error(p, src, err)
 		return nil
 	}
-	if err := s.JSON(ctx, p, &b, src); errors.Is(err, pb.ErrSealed) {
+	if err := ib.WriteJSON(ctx, s, ib.JSONCheckReport, p, &b, src); errors.Is(err, pb.ErrSealed) {
 		return err
 	}
 	return nil

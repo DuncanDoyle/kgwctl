@@ -223,3 +223,14 @@ Downstream collectors are trusted in-process code. The Sink and the guard protec
 **Decision:** `docs/rbac.yaml` names every resource; no `*` in `resources` or `apiGroups`. `TestReaderRoleCoversServedKinds` fails when a test CRD in a group the bundle lists has a kind the role lacks. Each bump of the test CRDs follows the checklist in `internal/testenv/testdata/crds/README.md`: diff the CRDs, review new kinds (RBAC, support) and changed kinds (served versions, credential fields for redaction).
 **Alternatives:** `resources: ["*"]` per group: covers new kinds without a change, but admission policies and security reviews often reject a wildcard Role. Listing only registry kinds: drops new kinds from the bundle without a trace.
 **Consequences:** Each new kind needs a one-line RBAC change, which the test enforces on the next CRD bump. A cluster running a newer Gateway API than the test CRDs still shows the new kind as `denied` with a reader grant line.
+
+## D-029 — The public Sink has no generic JSON method (2026-11-25, phase 4) — decided under the owner's delegation 2026-11-25
+**Context:** Phase 4 review finding 10. `Sink.JSON` accepts any JSON document and applies only generic rules. A collector that passes a serialized Kubernetes object skips kind redaction and the Secret and ConfigMap refusal. Detection by shape cannot be complete: nested objects, stripped type metadata and objects serialized into strings all escape it. kgwctl's own report envelopes would also match it falsely. The owner asked for the best design, verified with Codex, since no downstream collector outside our control exists (reviews: `.agents-tmp/sink-json-design-codex.md`).
+**Decision:**
+- `pkg/bundle.Sink` drops `JSON`. Downstream collectors write Kubernetes resources and lists through `Object`, plain text through `Text` and metrics through `Prometheus`.
+- Built-in JSON artifacts (check report, `version.json`, Envoy `server_info` and `certs`) use internal writers that only built-in collectors can reach. Each owns its redaction, as D-026 requires.
+- A new structured format needs a reviewed schema and its own writer.
+**Alternatives:**
+- Route objects in `JSON` to the Object rules: a heuristic with false negatives, and it misreads kgwctl's own envelopes.
+- Refuse objects in `JSON`: the same false negatives, and a false positive loses a whole artifact.
+**Consequences:** A downstream call to `Sink.JSON` fails to compile. `examples/downstream` and the README extension-point text change. The downstream build is told the new contract. Check findings carry opaque `json.RawMessage` evidence. Projecting it to known fields is a separate item for the owner.

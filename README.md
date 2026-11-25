@@ -254,7 +254,11 @@ When the kind `get` or `describe` was asked for can't be read, the command fails
 
 ## Extending
 
-Downstream builds embed the CLI through [`pkg/cli`](pkg/cli). `cli.NewRootCommand` takes options for the binary name, a registry of extra kinds and install detectors, extra commands and build info. `cli.WithBundleCollectors` adds collectors to `bundle`. They are registered after the built-in ones, appear in `--list-collectors`, and honor `--skip`. Redaction and the Secret and ConfigMap refusal apply to what a collector writes through the `bundle.Sink`. Collectors are trusted code, and the Sink does not stop one that opens its own client. A name that is invalid, or repeats a built-in or another added collector, makes `bundle` exit `2`. [`examples/downstream`](examples/downstream) is a complete example, including a bundle collector.
+Downstream builds embed the CLI through [`pkg/cli`](pkg/cli). `cli.NewRootCommand` takes options for the binary name, a registry of extra kinds and install detectors, extra commands and build info. `cli.WithBundleCollectors` adds collectors to `bundle`. They are registered after the built-in ones, appear in `--list-collectors`, and honor `--skip`. Redaction and the Secret and ConfigMap refusal apply to what a collector writes through the `bundle.Sink`.
+
+Pass Kubernetes resources and lists to `Object` with their kind metadata intact. The Sink rejects Secrets and ConfigMaps, including their list kinds and either kind inside a List. Use `Text` for plain text and `Prometheus` for metrics. Emit resources separately from reports and logs. The Sink has no generic JSON method. New structured report formats require a reviewed schema and a writer-owned redactor.
+
+Collectors are trusted code, and the Sink does not stop one that opens its own client. A name that is invalid, or repeats a built-in or another added collector, makes `bundle` exit `2`. [`examples/downstream`](examples/downstream) is a complete example, including a bundle collector.
 
 ## Development
 

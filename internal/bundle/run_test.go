@@ -298,7 +298,7 @@ func TestRunErrorCanaries(t *testing.T) {
 		fake("panics", func(context.Context, pb.Sink) error { panic(fmt.Errorf("token=%s", canaries[1])) }),
 		fake("malformed", func(_ context.Context, s pb.Sink) error {
 			body := `{"password": "` + canaries[2] + `", "broken": `
-			return s.JSON(bg, pb.Path{"x", "a.json"}, strings.NewReader(body), pb.Source{})
+			return WriteJSON(bg, s, JSONVersion, pb.Path{"x", "a.json"}, strings.NewReader(body), pb.Source{})
 		}),
 		fake("long", func(context.Context, pb.Sink) error {
 			return errors.New("Authorization: Bearer " + canaries[3] + " " + strings.Repeat("e", 2048))

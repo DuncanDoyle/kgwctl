@@ -41,7 +41,7 @@ func TestSinkRejectsUnknownEnums(t *testing.T) {
 	const id, reason, remote = "Bearer kgwctl-canary-b1-identity", "kgwctl-canary-b1-reason", "KgwctlCanaryRemoteReason"
 	h := newHarness(t, mustLimits(t, 32<<20), redact.Options{}, "")
 	s := h.w.Sink("c")
-	if err := s.JSON(bg, pb.Path{"x", "a.json"}, strings.NewReader(`{}`), pb.Source{Identity: id}); !errors.Is(err, pb.ErrInvalidPath) {
+	if err := s.JSON(bg, JSONVersion, pb.Path{"x", "a.json"}, strings.NewReader(`{}`), pb.Source{Identity: id}); !errors.Is(err, pb.ErrInvalidPath) {
 		t.Errorf("JSON with unknown identity: err = %v", err)
 	}
 	if err := s.Exclude(schema.GroupKind{Kind: "Service"}, reason); !errors.Is(err, pb.ErrInvalidPath) {

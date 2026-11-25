@@ -182,7 +182,7 @@ One mandatory stage sits in the archive writer. A collector hands the Sink typed
 |---|---|
 | `object` | Refuse Secret, ConfigMap, SecretList and ConfigMapList in any API group, also inside a List; each List member gets its own kind's rules. Drop `metadata.managedFields` and the `last-applied-configuration` annotation. Header-value and JWKS rules. Per-kind field rules (`basicAuth.users` hashes, `env[].value` except allowlisted names, `DirectResponse` body). Key-name rule, header-pair rule, then the pattern pass over every remaining string. |
 | `config-dump` | Keep Envoy's `[redacted]`. Header-value and JWKS rules (also on base64 `inline_bytes` under `local_jwks`). Redact Lua `inline_code`/`source_codes`, and every other `inline_string`/`inline_bytes`. Parse the dynamic-module JSON `StringValue` and apply the rules inside. Then key-name rule and pattern pass. |
-| `json` | Key-name rule, header-pair rule, pattern pass. Invalid JSON is dropped with an error. |
+| `json` | Built-in artifacts only (D-029): `check.json`, `version.json`, `server_info.json`, `certs.json`. Key-name rule, header-pair rule, pattern pass. Invalid JSON is dropped with an error. |
 | `prometheus` | Must parse as Prometheus text exposition, or it is dropped with an error. Pattern pass on label values, `HELP` text and other comments, read with the parser's grammar (leading blanks, tabs); `TYPE` lines stay. The output is parsed again and dropped with an error if it fails. |
 | `text` | Debug header-line rule, then the line pattern pass: `Bearer`/`Basic` credentials (after an `authorization` name, any Basic value), JWTs, PEM private-key blocks, AWS keys and signatures, credential query values, known key prefixes. |
 
@@ -196,7 +196,7 @@ One mandatory stage sits in the archive writer. A collector hands the Sink typed
 - **Per-kind field rules:** `env[].value` is kept only for names starting with `KGW_` and a fixed list of runtime names (`LOG_LEVEL`, `POD_NAME`, `GOMAXPROCS` and others).
 - **Marker:** `[redacted]`. A value stays a string, so files parse with the same keys. A pattern match keeps its prefix (`Bearer [redacted]`). No hashes, no lengths.
 - **Report:** `redactions.json` lists per file each rule, location and count. A location is a field path or a line number. Only a fixed set of schema field names appears literally; every other key is `[key]` and array elements are `[]`. Every key below a map field (`selector`, `labels`, `annotations`, `data`, Envoy `node.metadata` and others) is `[key]`, even one that equals a schema field name. A location is capped at 512 bytes, cut in the middle with `[...]`. Rules match the real key path, never the displayed one. It never holds values or map keys.
-- **Types:** the Sink has one typed method per content type and no raw write, so an undeclared type cannot reach the writer.
+- **Types:** the Sink has one typed method per content type and no raw write, so an undeclared type cannot reach the writer. The public Sink has no `JSON` method (D-029). Built-in JSON artifacts go through `internal/bundle.WriteJSON`, which names the artifact and its redactor; code outside the module cannot reach it.
 
 ### 7.1 Metadata and errors
 - **Remote errors** (Kubernetes API, pods/proxy, port-forward, Envoy) are recorded as the HTTP status and the Kubernetes reason and code only, with the operation for non-Kubernetes errors. Only canonical `metav1.StatusReason` values are shown; any other reason gives `request failed (<code>)`. Response bodies never reach an error. This holds for client-go's log-stream errors, `proxydump`'s port-forward status errors in every command (`proxy dump` keys its RBAC hint on the typed Forbidden, so its messages stay the same), and the `check` collector, which sanitizes errors before the reused check path flattens them into `Input.Reason`.
@@ -227,6 +227,8 @@ One mandatory stage sits in the archive writer. A collector hands the Sink typed
 A collector is `Name() string` and `Collect(ctx, Env, Sink) error`. `Env` gives guarded clients, the `Scope`, the window, the inventory, the clock, the per-item timeout and `Keep(obj) ExcludeReason`, the §3.2 ownership and scope filter, so downstream collectors filter the same way. A collector reports each left-out object with `Sink.Exclude(groupKind, reason)`; counts are frozen at the seal like other Sink calls.
 
 Every Sink write method takes a leading `context.Context` (D-027). `Sink.Omit(Path, Source, OmitReason)` records a capture left out on purpose, with a fixed reason (§5). It validates the path, writes nothing to the archive and returns `ErrSealed` after the seal, like `Exclude`.
+
+The downstream contract (D-029): pass Kubernetes resources and lists to `Object` with their kind metadata intact. The Sink rejects Secrets and ConfigMaps, including their list kinds and either kind inside a List. Use `Text` for plain text and `Prometheus` for metrics. Emit resources separately from reports and logs. New structured report formats require a reviewed schema and a writer-owned redactor.
 
 ### 8.2 Replica inventory
 Built once, after scope resolution and before any collector. Logs, metrics, admin captures and `version` read it; none lists Pods itself.

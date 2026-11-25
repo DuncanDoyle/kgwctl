@@ -12,6 +12,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 
+	ib "github.com/DuncanDoyle/kgwctl/internal/bundle"
 	"github.com/DuncanDoyle/kgwctl/internal/proxydump"
 	pb "github.com/DuncanDoyle/kgwctl/pkg/bundle"
 )
@@ -27,7 +28,11 @@ type adminCapture struct {
 func configDumpWrite(s pb.Sink) func(context.Context, pb.Path, io.Reader, pb.Source) error {
 	return s.ConfigDump
 }
-func jsonWrite(s pb.Sink) func(context.Context, pb.Path, io.Reader, pb.Source) error { return s.JSON }
+func certsWrite(s pb.Sink) func(context.Context, pb.Path, io.Reader, pb.Source) error {
+	return func(ctx context.Context, p pb.Path, r io.Reader, src pb.Source) error {
+		return ib.WriteJSON(ctx, s, ib.JSONCerts, p, r, src)
+	}
+}
 func textWrite(s pb.Sink) func(context.Context, pb.Path, io.Reader, pb.Source) error { return s.Text }
 
 type proxyAdminCollector struct {
@@ -47,7 +52,7 @@ func ProxyAdmin(d proxydump.Dialer, noEndpoints bool) pb.Collector {
 	caps := []adminCapture{
 		{dump, pb.ConfigDumpFile, configDumpWrite},
 		{proxydump.OpStats, pb.StatsFile, textWrite},
-		{proxydump.OpCerts, pb.CertsFile, jsonWrite},
+		{proxydump.OpCerts, pb.CertsFile, certsWrite},
 	}
 	if !noEndpoints {
 		caps = append(caps, adminCapture{proxydump.OpClusters, pb.ClustersFile, textWrite})

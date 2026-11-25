@@ -125,7 +125,7 @@ func (w *Writer) usePods(kube kubernetes.Interface, timeout time.Duration) {
 }
 
 // Sink returns the Sink for one collector.
-func (w *Writer) Sink(collector string) pb.Sink { return &sink{w: w, name: collector} }
+func (w *Writer) Sink(collector string) JSONSink { return &sink{w: w, name: collector} }
 
 // Log adds a line to run.log, through the error text redactor. Lines past the
 // run.log cap are dropped and the footer ends with a truncation line.

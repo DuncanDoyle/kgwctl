@@ -12,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynfake "k8s.io/client-go/dynamic/fake"
 
+	ib "github.com/DuncanDoyle/kgwctl/internal/bundle"
 	"github.com/DuncanDoyle/kgwctl/internal/bundle/collect"
 	pb "github.com/DuncanDoyle/kgwctl/pkg/bundle"
 )
@@ -44,7 +45,7 @@ func (s *recordSink) Object(_ context.Context, p pb.Path, u *unstructured.Unstru
 	return nil
 }
 func (*recordSink) ConfigDump(context.Context, pb.Path, io.Reader, pb.Source) error { return nil }
-func (s *recordSink) JSON(_ context.Context, p pb.Path, r io.Reader, src pb.Source) error {
+func (s *recordSink) JSON(_ context.Context, _ ib.JSONArtifact, p pb.Path, r io.Reader, src pb.Source) error {
 	b, err := io.ReadAll(r)
 	if err != nil {
 		return err
