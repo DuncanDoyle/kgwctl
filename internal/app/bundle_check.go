@@ -5,6 +5,7 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/DuncanDoyle/snellius/pkg/extension"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -67,9 +68,11 @@ func (c checkCollector) Collect(ctx context.Context, _ pb.Env, s pb.Sink) error 
 
 // recordDenied records a denied check input as a typed 403 at
 // check/<group>/<resource>, so it gets a denied item and a grant line (§6).
-// Check reads cluster-wide, so the grant is cluster-wide.
+// Check reads cluster-wide, so the grant is cluster-wide. A cache
+// pseudo-resource such as pods#proxy is written pods-proxy.
 func recordDenied(s pb.Sink, in load.Input) {
 	group := cmp.Or(in.GVR.Group, pb.Core)
+	res := strings.ReplaceAll(in.GVR.Resource, "#", "-")
 	err := apierrors.NewForbidden(in.GVR.GroupResource(), "", errors.New("check input denied"))
-	s.Error(pb.Path{pb.CheckDir, group, in.GVR.Resource}, pb.Source{Operation: pb.OpCheck}, err)
+	s.Error(pb.Path{pb.CheckDir, group, res}, pb.Source{Operation: pb.OpCheck}, err)
 }

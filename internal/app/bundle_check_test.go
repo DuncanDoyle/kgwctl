@@ -417,6 +417,29 @@ func TestCheckCollectorOnlyDenial(t *testing.T) {
 	}
 }
 
+// TestCheckCollectorProxyPodsDenial: check's denied proxy-Pod watch, a
+// pseudo-resource, is recorded at a valid path.
+func TestCheckCollectorProxyPodsDenial(t *testing.T) {
+	env := newEnv(t, testenv.Options{Fixtures: []string{healthyFixture}})
+	sel := testenv.ProxyPodSelector(extension.New())
+	hits := env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindAcquire, Resource: "pods", LabelSelector: sel}, testenv.Action{Status: http.StatusForbidden})
+	a := archiveWith(t, env.Kubeconfig, nil, app.BundleTestHooks{Check: fastHooks(metricsScraper{})}, "--skip", "version,resources")
+	if hits.N() == 0 {
+		t.Fatal("the rule never applied")
+	}
+	const path = "check/core/pods-proxy"
+	found := false
+	for _, it := range readItems(t, a).Item.Items {
+		found = found || it.Path == path && it.Status == "denied" && it.Source.Operation == "check"
+	}
+	if !found {
+		t.Errorf("manifest items %+v, want %s denied by check", readItems(t, a).Item.Items, path)
+	}
+	if b, _ := a.File("errors.txt"); strings.Contains(string(b), "[invalid]") {
+		t.Errorf("errors.txt has an invalid path:\n%s", b)
+	}
+}
+
 // TestCheckCollectorRedirectBody: a terminal 3xx whose Status body carries a
 // pattern-free value is recorded by code only; the body reaches no member.
 func TestCheckCollectorRedirectBody(t *testing.T) {

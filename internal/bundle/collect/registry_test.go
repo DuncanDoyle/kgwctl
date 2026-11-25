@@ -1,4 +1,4 @@
-package collect_test
+package collect
 
 import (
 	"bytes"
@@ -12,16 +12,14 @@ import (
 	"github.com/DuncanDoyle/snellius/pkg/kinds"
 	apiextv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"sigs.k8s.io/yaml"
-
-	"github.com/DuncanDoyle/kgwctl/internal/bundle/collect"
 )
 
 // TestRegistryCoversCollectedKinds fails when a test CRD kind the resources
-// collector lists has no descriptor in the bundle's registry, so scope
-// rules would not see it (design §3.2). Add it to the collector's kinds.
+// collector lists (by its own listsWhole rule) has no descriptor in the
+// bundle's registry with a served version, a category and the CRD's scope,
+// so scope rules would not see it (design §3.2). Add it to unregistered.
 func TestRegistryCoversCollectedKinds(t *testing.T) {
-	reg := collect.Registry(extension.New())
-	listed := map[string]bool{"gateway.networking.k8s.io": true, "gateway.networking.x-k8s.io": true}
+	reg := Registry(extension.New())
 	checked := 0
 	err := filepath.WalkDir(filepath.Join("..", "..", "testenv", "testdata", "crds"), func(p string, e os.DirEntry, err error) error {
 		if err != nil || e.IsDir() || !strings.HasSuffix(p, ".yaml") {
@@ -37,11 +35,12 @@ func TestRegistryCoversCollectedKinds(t *testing.T) {
 				continue
 			}
 			s := crd.Spec
-			if !listed[s.Group] && !slices.Contains(s.Names.Categories, "kgateway") {
+			if !listsWhole(s.Group, s.Names.Categories) {
 				continue
 			}
 			// The bundle collects namespaced kinds and GatewayClass only.
-			if s.Scope != apiextv1.NamespaceScoped && s.Names.Kind != "GatewayClass" {
+			namespaced := s.Scope == apiextv1.NamespaceScoped
+			if !namespaced && s.Names.Kind != gatewayClassGK.Kind {
 				continue
 			}
 			var served []string
@@ -56,9 +55,10 @@ func TestRegistryCoversCollectedKinds(t *testing.T) {
 			checked++
 			if !slices.ContainsFunc(reg.Kinds, func(k kinds.Descriptor) bool {
 				return k.Group == s.Group && k.Kind == s.Names.Kind && k.Resource == s.Names.Plural &&
+					k.Category != "" && k.Namespaced == namespaced &&
 					slices.ContainsFunc(k.Versions, func(v string) bool { return slices.Contains(served, v) })
 			}) {
-				t.Errorf("no registry descriptor serves %s/%s (%s, versions %v)", s.Group, s.Names.Kind, p, served)
+				t.Errorf("no registry descriptor with a category serves %s/%s (%s, versions %v)", s.Group, s.Names.Kind, p, served)
 			}
 		}
 		return nil
@@ -74,11 +74,11 @@ func TestRegistryCoversCollectedKinds(t *testing.T) {
 // TestRegistryKeepsOwnDescriptors: a descriptor the registry already has
 // wins over the bundle's, and the input registry is not changed.
 func TestRegistryKeepsOwnDescriptors(t *testing.T) {
-	own := kinds.Descriptor{Group: "gateway.networking.k8s.io", Kind: "UDPRoute", Resource: "udproutes", Versions: []string{"v9"},
+	own := kinds.Descriptor{Group: gatewayGroup, Kind: "UDPRoute", Resource: "udproutes", Versions: []string{"v9"},
 		Namespaced: true, Category: kinds.CategoryRoute}
 	in := extension.New(extension.WithKinds(own))
 	n := len(in.Kinds)
-	out := collect.Registry(in)
+	out := Registry(in)
 	if len(in.Kinds) != n {
 		t.Errorf("input registry changed: %d kinds, want %d", len(in.Kinds), n)
 	}

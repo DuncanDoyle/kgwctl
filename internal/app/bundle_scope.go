@@ -82,7 +82,7 @@ func resolveScope(f *Flags, explicitNamespace, detectionIncomplete bool, res *lo
 	filter, warns := view.NewFilter(res, view.Scope{AllNamespaces: true, Install: f.Install, AllControllers: f.AllControllers,
 		DetectionIncomplete: detectionIncomplete})
 	switch {
-	case len(all) == 0 && f.AllControllers && !detectionIncomplete:
+	case f.AllControllers && installsAbsent(res, detectionIncomplete):
 		warns = append(warns, "no kgateway install detected; controller metrics, logs and Deployment are skipped")
 	case len(selected) > 1:
 		warns = append(warns, fmt.Sprintf("%d kgateway installs detected; the bundle covers all of them, --install selects one", len(selected)))
@@ -119,6 +119,12 @@ func resolveScope(f *Flags, explicitNamespace, detectionIncomplete bool, res *lo
 	gws := keptGateways(res, sc, keep)
 	sc.WorkloadNamespaces = workloadNamespaces(res, sc, keep)
 	return sc, gws, keep, warns, nil
+}
+
+// installsAbsent reports that res has no install and that is known: detection
+// completed and read its inputs (view.InstallsUnknown).
+func installsAbsent(res *load.Result, detectionIncomplete bool) bool {
+	return len(res.Model.Installs) == 0 && !detectionIncomplete && view.InstallsUnknown(res) == ""
 }
 
 // scopeReason maps a Snellius scope error to a fixed reason code, since the

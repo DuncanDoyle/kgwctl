@@ -2,6 +2,7 @@ package app_test
 
 import (
 	"encoding/json"
+	"net/http"
 	"strings"
 	"sync"
 	"testing"
@@ -113,6 +114,39 @@ func TestBundleTimeoutCoversDetection(t *testing.T) {
 			}
 			if strings.Contains(stderr, "no kgateway install detected") {
 				t.Errorf("stderr %q claims no install", stderr)
+			}
+			// Held routes must leave ownership known, or the filter's branch goes untested.
+			if tc.hold == httpRoutes && strings.Contains(stderr, "ownership unknown") {
+				t.Errorf("stderr %q: ownership inputs did not load; the variant tests nothing", stderr)
+			}
+		})
+	}
+}
+
+// TestBundleDetectionDenied: with Deployments denied, detection completes
+// without seeing installs, so their absence is unknown. Nothing records
+// no install, and stderr does not claim it, also with --all-controllers.
+func TestBundleDetectionDenied(t *testing.T) {
+	for name, args := range map[string][]string{"default": nil, "all-controllers": {"--all-controllers"}} {
+		t.Run(name, func(t *testing.T) {
+			env := newEnv(t, testenv.Options{})
+			hits := env.Proxies[0].Rule(testenv.Match{Kind: testenv.KindAcquire, Resource: "deployments.apps"}, testenv.Action{Status: http.StatusForbidden})
+			m, stderr := timedBundle(t, env, time.Minute, args...)
+			if hits.N() == 0 {
+				t.Fatal("the rule never applied")
+			}
+			if strings.Contains(stderr, "no kgateway install detected") || !strings.Contains(stderr, "ownership unknown") {
+				t.Errorf("stderr %q, want ownership unknown and no claim of no install", stderr)
+			}
+			for _, c := range m.Item.Collectors {
+				if c.Reason == "no install" {
+					t.Errorf("collector %s: %s (no install)", c.Name, c.Status)
+				}
+			}
+			for _, it := range m.Item.Items {
+				if it.Reason == "no install" {
+					t.Errorf("item %s: %s (no install)", it.Path, it.Status)
+				}
 			}
 		})
 	}

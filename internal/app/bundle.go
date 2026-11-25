@@ -295,8 +295,8 @@ func newBundleCmd(reg *extension.Registry, build BuildInfo, extra []pb.Collector
 					return usageErr(err)
 				}
 			}
-			// A cut detection leaves an absent install unknown, not absent.
-			noInstall := res != nil && !detectLate && len(scope.Installs) == 0
+			// A cut detection or an unread detection input leaves an absent install unknown.
+			noInstall := res != nil && installsAbsent(res, detectLate)
 			cs = append(builtinCollectors(reg, build, collectorDeps{f: f, rc: grc, res: res, dialer: dialer, logs: logs, scrape: scrape,
 				noEndpoints: noEndpoints, noInstall: noInstall}, hooks), extra...)
 			ro := ib.RunOptions{Skip: skipSet, Deadline: deadline}

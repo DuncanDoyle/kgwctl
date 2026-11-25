@@ -72,6 +72,13 @@ type CRDVersion struct {
 // gatewayCRD is the CRD whose bundle label wins a tie, as in the library's skew check.
 const gatewayCRD = "gateways.gateway.networking.k8s.io"
 
+// detectInputs are the inputs install detection reads.
+var detectInputs = []schema.GroupVersionResource{cache.NamespacesGVR, cache.DeploymentsGVR, cache.PodsGVR}
+
+// InstallsUnknown names the detection inputs of r that are not ok, as
+// "deployments: denied"; "" when an absent install is known to be absent.
+func InstallsUnknown(r *load.Result) string { return unavailable(r, detectInputs) }
+
 // Version builds the version view of b and, when r is not nil, of the cluster
 // r loaded, narrowed to the --install install f selects.
 func Version(b BuildInfo, r *load.Result, f *Filter) (VersionView, error) {
@@ -83,8 +90,7 @@ func Version(b BuildInfo, r *load.Result, f *Filter) (VersionView, error) {
 		return VersionView{}, err
 	}
 	// Ownership inputs enumerate each install's Gateways (§6.3).
-	detect := []schema.GroupVersionResource{cache.NamespacesGVR, cache.DeploymentsGVR, cache.PodsGVR}
-	owners := slices.Clone(detect)
+	owners := slices.Clone(detectInputs)
 	for _, c := range []kinds.Category{kinds.CategoryGatewayClass, kinds.CategoryGateway, kinds.CategoryListenerSet} {
 		for _, k := range kinds.ByCategory(r.Served, c) {
 			owners = append(owners, k.GVR())
@@ -105,7 +111,7 @@ func Version(b BuildInfo, r *load.Result, f *Filter) (VersionView, error) {
 		}
 	}
 	if len(v.Installs) == 0 {
-		v.InstallsUnknown = unavailable(r, detect)
+		v.InstallsUnknown = InstallsUnknown(r)
 	}
 	v.GatewayAPICRDs = crdVersion(r)
 	return v, nil

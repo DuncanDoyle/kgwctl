@@ -53,6 +53,12 @@ var unregistered = []kinds.Descriptor{
 		Category: kinds.CategoryPolicy, DisplayName: "TelemetryPolicies (experimental)"},
 }
 
+// listsWhole reports whether the collector lists a served resource of group
+// with categories without a registry descriptor.
+func listsWhole(group string, categories []string) bool {
+	return gatewayAPIGroups[group] || slices.Contains(categories, kgatewayCategory)
+}
+
 // Registry returns a copy of reg that also describes the kinds the resources
 // collector lists but reg lacks, so install detection loads them and the
 // scope rules apply to them (design §3.2). reg's own descriptors win.
@@ -161,7 +167,7 @@ func (c resources) kinds(ctx context.Context, env pb.Env, s pb.Sink) ([]kind, er
 			continue
 		}
 		for _, r := range l.APIResources {
-			if gatewayAPIGroups[g.Name] || slices.Contains(r.Categories, kgatewayCategory) {
+			if listsWhole(g.Name, r.Categories) {
 				add(l.GroupVersion, r)
 			}
 		}
