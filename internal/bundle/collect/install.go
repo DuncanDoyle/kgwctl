@@ -8,15 +8,19 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
+	"github.com/DuncanDoyle/kgwctl/internal/proxydump"
 	pb "github.com/DuncanDoyle/kgwctl/pkg/bundle"
 )
 
 var deploymentsGVR = schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}
 
 // gatewayClassesGVR returns GatewayClasses at the Gateway API group's
-// preferred version, as the resources collector lists them.
-func gatewayClassesGVR(env pb.Env) (schema.GroupVersionResource, error) {
-	groups, err := env.Discovery.ServerGroups()
+// preferred version, as the resources collector lists them. Discovery is
+// bounded by ctx and RequestTimeout.
+func gatewayClassesGVR(ctx context.Context, env pb.Env) (schema.GroupVersionResource, error) {
+	rctx, cancel := requestContext(ctx, env.RequestTimeout)
+	defer cancel()
+	groups, err := proxydump.Await(rctx, env.Discovery.ServerGroups, nil)
 	if err != nil {
 		return schema.GroupVersionResource{}, err
 	}
@@ -64,7 +68,7 @@ func (installCollector) Collect(ctx context.Context, env pb.Env, s pb.Sink) erro
 			return err
 		}
 	}
-	gvr, err := gatewayClassesGVR(env)
+	gvr, err := gatewayClassesGVR(ctx, env)
 	var gcs []unstructured.Unstructured
 	if err == nil {
 		gcs, err = list(ctx, env, gvr, "")

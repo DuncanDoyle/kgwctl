@@ -164,7 +164,14 @@ func newBundleCmd(reg *extension.Registry, build BuildInfo, extra []pb.Collector
 			if err != nil {
 				return usageErr(err)
 			}
-			res, err := loadBundle(cmd, f, reg, grc)
+			// One --timeout clock from the first cluster request: detection, inventory and Run share it.
+			deadline := time.Now().Add(timeout)
+			rctx, rcancel := context.WithDeadline(cmd.Context(), deadline)
+			defer rcancel()
+			dctx, dcancel := f.Context(rctx)
+			res, err := loadBundle(dctx, reg, grc)
+			detectLate := errors.Is(dctx.Err(), context.DeadlineExceeded)
+			dcancel()
 			if err != nil {
 				return &ExitError{Code: 2, Err: loadError(cmd.Context(), err, rc.Host)}
 			}
@@ -179,7 +186,7 @@ func newBundleCmd(reg *extension.Registry, build BuildInfo, extra []pb.Collector
 			for _, w := range warns {
 				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: %s\n", w)
 			}
-			ictx, cancel := f.Context(cmd.Context())
+			ictx, cancel := f.Context(rctx)
 			replicas, errs := ib.Inventory(ictx, kube, scope, gws, ctrls)
 			cancel()
 			invErrs = append(invErrs, errs...)
@@ -192,6 +199,10 @@ func newBundleCmd(reg *extension.Registry, build BuildInfo, extra []pb.Collector
 			// The writer hides the real host in error text; the manifest only gets the placeholder.
 			w := ib.NewWriter(dest, sp, root, limits, redact.Options{ExtraHeaders: redactHeaders, MaxSize: limits.MaxSize}, rc.Host, now)
 			inv := w.Sink(inventoryName)
+			if detectLate {
+				// Inputs still loading at the deadline: installs and Gateways may be missing.
+				inv.Error(pb.Path{inventoryName, "detection"}, pb.Source{}, fmt.Errorf("install detection: %w", context.DeadlineExceeded))
+			}
 			for _, e := range invErrs {
 				var re *ib.ReplicaError
 				if errors.As(e, &re) {
@@ -230,7 +241,7 @@ func newBundleCmd(reg *extension.Registry, build BuildInfo, extra []pb.Collector
 				}
 			}
 			cs = append(builtinCollectors(reg, build, collectorDeps{f: f, rc: grc, res: res, dialer: dialer, logs: logs, scrape: scrape, noEndpoints: noEndpoints}, hooks), extra...)
-			m, err = ib.Run(cmd.Context(), cs, env, w, m, ib.RunOptions{Skip: skipSet, Deadline: time.Now().Add(timeout)})
+			m, err = ib.Run(cmd.Context(), cs, env, w, m, ib.RunOptions{Skip: skipSet, Deadline: deadline})
 			if err != nil {
 				return &ExitError{Code: 2, Err: fmt.Errorf("write bundle: %w", err)}
 			}
@@ -261,10 +272,8 @@ func usageErr(err error) error { return &ExitError{Code: 2, Err: err} }
 const inventoryName = "inventory"
 
 // loadBundle detects installs and loads the model over the guarded config,
-// bounded by --request-timeout; an unreachable API server fails it.
-func loadBundle(cmd *cobra.Command, f *Flags, reg *extension.Registry, grc *rest.Config) (*load.Result, error) {
-	ctx, cancel := f.Context(cmd.Context())
-	defer cancel()
+// bounded by ctx; an unreachable API server fails it.
+func loadBundle(ctx context.Context, reg *extension.Registry, grc *rest.Config) (*load.Result, error) {
 	c, err := load.NewClients(ctx, grc)
 	if err != nil {
 		return nil, err

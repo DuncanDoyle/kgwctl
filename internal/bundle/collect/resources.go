@@ -19,6 +19,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 
+	"github.com/DuncanDoyle/kgwctl/internal/proxydump"
 	pb "github.com/DuncanDoyle/kgwctl/pkg/bundle"
 )
 
@@ -60,7 +61,7 @@ func (resources) Name() string { return "resources" }
 
 // Collect implements pb.Collector.
 func (c resources) Collect(ctx context.Context, env pb.Env, s pb.Sink) error {
-	ks, err := c.kinds(env, s)
+	ks, err := c.kinds(ctx, env, s)
 	if err != nil {
 		return err
 	}
@@ -72,11 +73,29 @@ func (c resources) Collect(ctx context.Context, env pb.Env, s pb.Sink) error {
 	return nil
 }
 
+// discovered is one ServerGroupsAndResources answer.
+type discovered struct {
+	groups []*metav1.APIGroup
+	lists  []*metav1.APIResourceList
+}
+
+// discover reads groups and resources bounded by ctx and RequestTimeout;
+// client-go's discovery calls take no context.
+func discover(ctx context.Context, env pb.Env) (discovered, error) {
+	rctx, cancel := requestContext(ctx, env.RequestTimeout)
+	defer cancel()
+	return proxydump.Await(rctx, func() (discovered, error) {
+		g, l, err := env.Discovery.ServerGroupsAndResources()
+		return discovered{g, l}, err
+	}, nil)
+}
+
 // kinds resolves the kinds to list from one discovery read, in group and kind
 // order. A registry kind resolving to a forbidden core resource is recorded as
 // an error and never requested.
-func (c resources) kinds(env pb.Env, s pb.Sink) ([]kind, error) {
-	groups, lists, err := env.Discovery.ServerGroupsAndResources()
+func (c resources) kinds(ctx context.Context, env pb.Env, s pb.Sink) ([]kind, error) {
+	d, err := discover(ctx, env)
+	groups, lists := d.groups, d.lists
 	if err != nil {
 		if len(lists) == 0 {
 			return nil, err
