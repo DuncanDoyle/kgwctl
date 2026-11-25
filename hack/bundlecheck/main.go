@@ -2,6 +2,7 @@
 //
 //	bundlecheck extract <archive> <dir>          extract a bundle; fails on a duplicate or unsafe member
 //	bundlecheck scan <archive> <label>=<value>... scan every member name and body for each canary
+//	bundlecheck scanfile <file> <label>=<value>... scan one plain file, such as captured stderr
 //	bundlecheck prom <file>...                   check each file parses as Prometheus text exposition
 //
 // scan reports a canary found raw, base64-encoded, inside a decoded base64 run, or inside a gzip
@@ -40,6 +41,8 @@ func main() {
 		err = extract(os.Args[2], os.Args[3])
 	case "scan":
 		err = scan(os.Stdout, os.Args[2], os.Args[3:])
+	case "scanfile":
+		err = scanFile(os.Stdout, os.Args[2], os.Args[3:])
 	case "prom":
 		err = prom(os.Args[2:])
 	default:
@@ -52,7 +55,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: bundlecheck extract <archive> <dir> | scan <archive> <label>=<value>... | prom <file>...")
+	fmt.Fprintln(os.Stderr, "usage: bundlecheck extract <archive> <dir> | scan <archive> <label>=<value>... | scanfile <file> <label>=<value>... | prom <file>...")
 	os.Exit(2)
 }
 
@@ -129,6 +132,19 @@ type canary struct{ label, value string }
 
 // scan writes its findings to w.
 func scan(w io.Writer, archive string, args []string) error {
+	return scanMembers(w, func() ([]member, error) { return members(archive) }, args)
+}
+
+// scanFile scans one plain file as a single member named by its base name.
+func scanFile(w io.Writer, file string, args []string) error {
+	return scanMembers(w, func() ([]member, error) {
+		b, err := os.ReadFile(file)
+		return []member{{filepath.Base(file), b}}, err
+	}, args)
+}
+
+// scanMembers parses the canaries, loads the members and writes its findings to w.
+func scanMembers(w io.Writer, load func() ([]member, error), args []string) error {
 	var cs []canary
 	for _, a := range args {
 		l, v, ok := strings.Cut(a, "=")
@@ -140,7 +156,7 @@ func scan(w io.Writer, archive string, args []string) error {
 	if len(cs) == 0 {
 		return errors.New("no canaries")
 	}
-	ms, err := members(archive)
+	ms, err := load()
 	if err != nil {
 		return err
 	}

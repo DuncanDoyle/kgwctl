@@ -101,3 +101,36 @@ func TestMembersErrorsHideCanary(t *testing.T) {
 		})
 	}
 }
+
+// TestScanFile covers captured command output: a canary in any form fails, clean or empty output passes.
+func TestScanFile(t *testing.T) {
+	for name, tc := range map[string]struct {
+		body string
+		leak bool
+	}{
+		"raw":    {"collector logs: failed: token " + testCanary + "\n", true},
+		"base64": {"value " + base64.StdEncoding.EncodeToString([]byte(testCanary)) + "\n", true},
+		"clean":  {"collector logs: partial\nwrote bundle.tar.gz\n", false},
+		"empty":  {"", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := filepath.Join(t.TempDir(), "reader.stderr")
+			if err := os.WriteFile(p, []byte(tc.body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			var out bytes.Buffer
+			err := scanFile(&out, p, []string{"secret=" + testCanary})
+			if (err != nil) != tc.leak {
+				t.Fatalf("scanFile error %v, want a hit %v", err, tc.leak)
+			}
+			if tc.leak && !strings.Contains(out.String(), "LEAK secret in reader.stderr") {
+				t.Errorf("output does not identify the hit: %q", out.String())
+			}
+			msg := out.String()
+			if err != nil {
+				msg += err.Error()
+			}
+			assertNoCanary(t, msg)
+		})
+	}
+}

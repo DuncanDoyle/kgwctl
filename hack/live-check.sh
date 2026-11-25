@@ -938,24 +938,31 @@ debug_request() {
   return "$ok"
 }
 
-# bundle_run <name> <kubeconfig>: writes $dir/<name>.tar.gz, extracts it to $dir/<name>/, scans it for
-# every canary and sets root to the archive root. Returns 1 on a non-zero exit, an extraction error or a hit.
+# bundle_run <name> <kubeconfig>: writes $dir/<name>.tar.gz, extracts it to $dir/<name>/, scans it and the
+# captured stdout and stderr for every canary and sets root to the archive root. Returns 1 on a non-zero
+# exit, an extraction error or a hit.
 bundle_run() {
-  local name="$1" kc="$2" code=0
+  local name="$1" kc="$2" code=0 f
   rm -rf "${dir:?}/$name" "$dir/$name.tar.gz"
   "$OUT/kgwctl" --kubeconfig "$kc" --context "$CONTEXT" bundle -o "$dir/$name.tar.gz" \
     >"$dir/$name.stdout" 2>"$dir/$name.stderr" || code=$?
+  # Captured output is scanned before any of it is shown.
+  : >"$dir/$name.scan"
+  for f in stdout stderr; do
+    "$OUT/bundlecheck" scanfile "$dir/$name.$f" "${CANARIES[@]}" >>"$dir/$name.scan" 2>&1 ||
+      { log "FAIL canary in the $name $f:"; indent <"$dir/$name.scan"; return 1; }
+  done
   log "bundle as $name: exit $code; $(tail -n 2 "$dir/$name.stderr" | head -n 1)"
   [ "$code" -eq 0 ] || { log "FAIL bundle as $name: exit $code, want 0"; return 1; }
   "$OUT/bundlecheck" extract "$dir/$name.tar.gz" "$dir/$name" >/dev/null || { log "FAIL extract $name"; return 1; }
   root="$(echo "$dir/$name"/kgwctl-bundle-*)"
   [ -f "$root/manifest.json" ] || { log "FAIL $name: no manifest.json"; return 1; }
-  if ! "$OUT/bundlecheck" scan "$dir/$name.tar.gz" "${CANARIES[@]}" >"$dir/$name.scan" 2>&1; then
+  if ! "$OUT/bundlecheck" scan "$dir/$name.tar.gz" "${CANARIES[@]}" >>"$dir/$name.scan" 2>&1; then
     log "FAIL canary in the $name bundle:"
     indent <"$dir/$name.scan"
     return 1
   fi
-  log "canary scan $name: $(tail -n 1 "$dir/$name.scan")"
+  log "canary scan $name (stdout, stderr, archive): $(tail -n 1 "$dir/$name.scan")"
 }
 
 # indent: copies stdin to stderr, indented.
@@ -964,11 +971,17 @@ indent() { sed 's/^/   /' >&2; }
 # proxy_replicas <root>:"<namespace>/<pod>" of every proxy replica in the manifest.
 proxy_replicas() { jq -r '.item.replicas[] | select(.role == "proxy") | "\(.namespace)/\(.pod)"' "$1/manifest.json"; }
 
-# expect_proxy_files <root> <files...>: each proxy replica has the files; stats.txt has version_text,
-# config_dump.json is JSON, metrics.txt parses as Prometheus.
+# running_pods <kubectl args...>: "<namespace>/<pod>" of each Running Pod selected, observed with the admin kubeconfig.
+running_pods() {
+  k get pods "$@" --field-selector=status.phase=Running \
+    -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"\n"}{end}' | sort
+}
+
+# expect_proxy_files <root> <replicas> <files...>: each listed replica has the files; stats.txt has
+# version_text, config_dump.json is JSON, metrics.txt parses as Prometheus.
 expect_proxy_files() {
-  local root="$1" r f ok=0; shift
-  for r in $(proxy_replicas "$root"); do
+  local root="$1" replicas="$2" r f ok=0; shift 2
+  for r in $replicas; do
     for f in "$@"; do
       [ -s "$root/proxies/$r/$f" ] || { log "FAIL $r: no $f"; ok=1; continue; }
       case "$f" in
@@ -980,6 +993,55 @@ expect_proxy_files() {
       esac
     done
   done
+  return "$ok"
+}
+
+# reader_checks <root> <proxy pods> <controller pods>: checks the reader archive against Pods observed with
+# the admin kubeconfig, not against its own manifest. Returns 1 on any failure.
+reader_checks() {
+  local root="$1" proxies="$2" controllers="$3" ok=0 n f r ns bad logns pfns want got
+  local m="$root/manifest.json"
+  [ -n "$proxies" ] && [ -n "$controllers" ] || { log "FAIL reader: no running proxy or controller Pods observed"; ok=1; }
+  [ "$(proxy_replicas "$root" | sort)" = "$proxies" ] ||
+    { log "FAIL reader: proxy replicas differ from the running proxy Pods"; ok=1; }
+  expect_proxy_files "$root" "$proxies" metrics.txt || ok=1
+  for f in check/check.json cluster/version.json; do
+    { jq -e . "$root/$f" >/dev/null 2>&1 &&
+      jq -e --arg f "$f" 'any(.item.items[]; .path == $f and .status == "ok")' "$m" >/dev/null; } ||
+      { log "FAIL reader: $f is missing, not JSON, or not ok in the manifest"; ok=1; }
+  done
+  # Every item is ok or denied; failed, timeout or any other status is a regression.
+  bad="$(jq -r '.item.items[] | select(.status != "ok" and .status != "denied") | "\(.status) \(.path)"' "$m")"
+  [ -z "$bad" ] || { log "FAIL reader: items neither ok nor denied:"; indent <<<"$bad"; ok=1; }
+  # Logs and Envoy admin captures are denied; nothing else is.
+  local ops='["log","previous-log","config-dump","config-dump-eds","stats","server-info","certs","clusters"]'
+  n="$(jq --argjson ops "$ops" '[.item.items[] | select(.source.operation | IN($ops[]))] | length' "$m")"
+  if [ "$n" -eq 0 ] || ! jq -e --argjson ops "$ops" \
+    '[.item.items[] | select(.source.operation | IN($ops[])) | select(.status != "denied")] | length == 0' \
+    "$m" >/dev/null; then
+    log "FAIL reader: no log or Envoy admin items, or one is not denied"
+    ok=1
+  fi
+  jq -e --argjson ops "$ops" '[.item.items[] | select(.status == "denied")
+    | select(.source.operation | IN($ops[]) | not)] | length == 0' "$m" >/dev/null ||
+    { log "FAIL reader: an item outside logs and Envoy admin is denied"; ok=1; }
+  # One grant line per grant and observed namespace: pods/log where a controller or proxy runs,
+  # pods/portforward where a proxy runs; no other grant line.
+  logns="$(for r in $controllers $proxies; do echo "${r%%/*}"; done | sort -u)"
+  pfns="$(for r in $proxies; do echo "${r%%/*}"; done | sort -u)"
+  want="$( (for ns in $logns; do echo "grant: get pods/log in namespace $ns: see the kgwctl-bundle-logs Role in docs/rbac.yaml"; done
+    for ns in $pfns; do echo "grant: create pods/portforward in namespace $ns: see the kgwctl-proxy-portforward Role in docs/rbac.yaml"; done) | sort)"
+  got="$(grep '^grant: ' "$root/errors.txt" | sort || true)"
+  if [ "$got" = "$want" ]; then
+    log "reader: $n denied items; grant lines:"
+    indent <<<"$got"
+  else
+    log "FAIL reader: grant lines differ; want:"
+    indent <<<"$want"
+    log "got:"
+    indent <<<"$got"
+    ok=1
+  fi
   return "$ok"
 }
 
@@ -997,12 +1059,11 @@ bundle() {
 
   if bundle_run admin "$KUBECONFIG_FILE"; then
     # Every running proxy Pod is in the inventory; the canary proxy is one of them.
-    want="$(k get pods -A -l gateway.networking.k8s.io/gateway-name --field-selector=status.phase=Running \
-      -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"\n"}{end}' | sort)"
+    want="$(running_pods -A -l gateway.networking.k8s.io/gateway-name)"
     [ "$(proxy_replicas "$root" | sort)" = "$want" ] ||
       { log "FAIL admin: proxy replicas differ from the running proxy Pods"; failed=1; }
     n="$(proxy_replicas "$root" | wc -l | tr -d ' ')"
-    expect_proxy_files "$root" config_dump.json stats.txt metrics.txt || failed=1
+    expect_proxy_files "$root" "$want" config_dump.json stats.txt metrics.txt || failed=1
     log "admin: $n proxy replicas checked for config_dump.json, stats.txt (version_text), metrics.txt (Prometheus)"
     # The carriers are in the archive, so a clean scan means redacted, not absent.
     local p c
@@ -1024,37 +1085,8 @@ bundle() {
   fi
 
   if bundle_run reader "$OUT/reader.kubeconfig"; then
-    expect_proxy_files "$root" metrics.txt || failed=1
-    # Logs and Envoy admin captures are denied; nothing else is.
-    local ops='["log","previous-log","config-dump","config-dump-eds","stats","server-info","certs","clusters"]'
-    n="$(jq --argjson ops "$ops" '[.item.items[] | select(.source.operation | IN($ops[]))] | length' "$root/manifest.json")"
-    if [ "$n" -eq 0 ] || ! jq -e --argjson ops "$ops" \
-      '[.item.items[] | select(.source.operation | IN($ops[])) | select(.status != "denied")] | length == 0' \
-      "$root/manifest.json" >/dev/null; then
-      log "FAIL reader: no log or Envoy admin items, or one is not denied"
-      failed=1
-    fi
-    jq -e --argjson ops "$ops" '[.item.items[] | select(.status == "denied")
-      | select(.source.operation | IN($ops[]) | not)] | length == 0' "$root/manifest.json" >/dev/null ||
-      { log "FAIL reader: an item outside logs and Envoy admin is denied"; failed=1; }
-    # One grant line per grant and affected namespace: pods/log where any replica runs, pods/portforward
-    # where a proxy runs; no other grant line.
-    local logns pfns got ns
-    logns="$(jq -r '[.item.replicas[].namespace] | unique[]' "$root/manifest.json")"
-    pfns="$(jq -r '[.item.replicas[] | select(.role == "proxy") | .namespace] | unique[]' "$root/manifest.json")"
-    want="$( (for ns in $logns; do echo "grant: get pods/log in namespace $ns: see the kgwctl-bundle-logs Role in docs/rbac.yaml"; done
-      for ns in $pfns; do echo "grant: create pods/portforward in namespace $ns: see the kgwctl-proxy-portforward Role in docs/rbac.yaml"; done) | sort)"
-    got="$(grep '^grant: ' "$root/errors.txt" | sort || true)"
-    if [ "$got" = "$want" ]; then
-      log "reader: $n denied items; grant lines:"
-      indent <<<"$got"
-    else
-      log "FAIL reader: grant lines differ; want:"
-      indent <<<"$want"
-      log "got:"
-      indent <<<"$got"
-      failed=1
-    fi
+    reader_checks "$root" "$(running_pods -A -l gateway.networking.k8s.io/gateway-name)" \
+      "$(running_pods -n "$KGW_NS" -l app.kubernetes.io/name=kgateway)" || failed=1
   else
     failed=1
   fi
