@@ -547,7 +547,7 @@ A breaking change to xdsview's `model` (a renamed or removed field, or a changed
 
 ## BundleManifest
 
-`bundle` exits `0` when it wrote a bundle, also a partial one, and `2` when it wrote none: a usage error, an output that exists or cannot be created, no reachable cluster, or a fatal write failure. No reachable cluster means a fast connection failure during install detection, such as a refused connection, a DNS failure or a TLS verification error. A deadline or timeout during detection, such as `--timeout`, `--request-timeout` or a TLS handshake timeout, still writes a bundle and exits `0`. The stderr summary names the failed collectors.
+Once its output exists, `bundle` always writes an archive, except on an interrupt or a fatal write failure (D-030). It exits `0` when the archive holds cluster data, also a partial bundle. It exits `2` in two cases. Either the archive holds no cluster data because install detection did not produce a model, for example with no reachable cluster, a detection timeout or an `--install` that names no detected install. Or no archive was written, because of a usage error, an output that exists or cannot be created, a fatal write failure or an interrupt. Configuration errors, such as a missing kubeconfig, come before the output is created. The stderr summary names the failed collectors, and stderr says when the archive holds no cluster data.
 
 `manifest.json` in a support bundle is one envelope with `kind: BundleManifest`. Every list in it is bounded and has an omitted count. When the manifest still would not fit its size cap, it is replaced by a minimal one with `truncated: true`: build, flags, times, finalization, `excluded`, the omitted counts, and the scope's namespace and up to 64 installs. The minimal manifest is under 1 MiB, below the smallest manifest cap.
 
@@ -668,7 +668,7 @@ Values appear only for `-A`, `--all-controllers`, `--since`, `--tail`, `--timeou
 | `status` | string | `ok`, `partial`, `failed`, `skipped` or `timeout`. |
 | `reason` | string | Why a collector was skipped: `flag`, or `no install` when no install was detected. `no install` is recorded only when the absence is known, not when detection was cut short or an input was unreadable. |
 | `durationMs` | integer | Run time in milliseconds. |
-| `error` | string | Redacted error. When a timeout cuts install detection before it builds a model, no collector starts. Each one not skipped by flag has status `timeout` and the error `install detection timed out`, or `collection deadline reached` when `--timeout` itself has passed. When detection is cut but leaves a partial model, collectors run only while `--timeout` has time left. When `--timeout` passes, a collector that has not returned has status `timeout` and the error `collection deadline reached`. A collector that returns after `--timeout` has status `timeout` and keeps its own redacted error, if it returned one. |
+| `error` | string | Redacted error. When install detection produces no model, no collector starts. Each one not skipped by flag has status `timeout` and an error that names the cause: `install detection timed out`, `install detection failed`, `install detection denied` or `no such install detected`. When `--timeout` itself has passed, the error is `collection deadline reached` instead. When detection is cut but leaves a partial model, collectors run only while `--timeout` has time left. When `--timeout` passes, a collector that has not returned has status `timeout` and the error `collection deadline reached`. A collector that returns after `--timeout` has status `timeout`. It keeps its own redacted error only if it reports before the runner records the final outcome. |
 | `late` | integer | Results that arrived after the seal. |
 
 ### Exclusion
@@ -694,7 +694,11 @@ Values appear only for `-A`, `--all-controllers`, `--since`, `--tail`, `--timeou
 
 Some items stand for a file that was not written:
 
-- `inventory/detection` has status `timeout` when install detection ran out of time. The bundle is still written, and installs and Gateways may be missing.
+- `inventory/detection` records a failed or cut install detection, with a fixed reason (D-030). The bundle is still written.
+  - `timeout`: a deadline or a timeout status, such as HTTP 504, ended detection. With a partial model, collectors run, and installs and Gateways may be missing. Without one, the archive holds no cluster data.
+  - `denied`: detection was refused with a 403. The archive holds no cluster data.
+  - `failed`, reason `install detection failed`: any other error, such as no reachable cluster. The archive holds no cluster data.
+  - `failed`, reason `no such install detected`: `--install` names no detected install. The archive holds no cluster data.
 - A `skipped` item with reason `no install` marks controller output that was left out because no install was detected. It is recorded only when the absence is known.
 - `check/<group>/<resource>` has status `denied` when `check` could not read that input. The group is `core` for the core group, and a `#` in the resource becomes `-`, as in `pods-proxy`.
 - A `failed` item with reason `missing kind` marks an object that has no kind. It is refused and its content is not written.
