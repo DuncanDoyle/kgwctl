@@ -547,7 +547,7 @@ A breaking change to xdsview's `model` (a renamed or removed field, or a changed
 
 ## BundleManifest
 
-`bundle` exits `0` when it wrote a bundle, also a partial one, and `2` when it wrote none: a usage error, an output that exists or cannot be created, no reachable cluster, or a fatal write failure. The stderr summary names the failed collectors.
+`bundle` exits `0` when it wrote a bundle, also a partial one, and `2` when it wrote none: a usage error, an output that exists or cannot be created, no reachable cluster, or a fatal write failure. No reachable cluster means a fast connection failure during install detection, such as a refused connection, a DNS failure or a TLS verification error. A deadline or timeout during detection, such as `--timeout`, `--request-timeout` or a TLS handshake timeout, still writes a bundle and exits `0`. The stderr summary names the failed collectors.
 
 `manifest.json` in a support bundle is one envelope with `kind: BundleManifest`. Every list in it is bounded and has an omitted count. When the manifest still would not fit its size cap, it is replaced by a minimal one with `truncated: true`: build, flags, times, finalization, `excluded`, the omitted counts, and the scope's namespace and up to 64 installs. The minimal manifest is under 1 MiB, below the smallest manifest cap.
 
@@ -668,7 +668,7 @@ Values appear only for `-A`, `--all-controllers`, `--since`, `--tail`, `--timeou
 | `status` | string | `ok`, `partial`, `failed`, `skipped` or `timeout`. |
 | `reason` | string | Why a collector was skipped: `flag`, or `no install` when no install was detected. `no install` is recorded only when the absence is known, not when detection was cut short or an input was unreadable. |
 | `durationMs` | integer | Run time in milliseconds. |
-| `error` | string | Redacted error. When a deadline cuts install detection before it builds a model, no collector starts. Each one not skipped by flag has status `timeout` and the error `install detection timed out`, or `collection deadline reached` when `--timeout` itself has passed. When detection is cut but leaves a partial model, collectors run. A collector still running when `--timeout` passes has status `timeout` and the error `collection deadline reached`. |
+| `error` | string | Redacted error. When a timeout cuts install detection before it builds a model, no collector starts. Each one not skipped by flag has status `timeout` and the error `install detection timed out`, or `collection deadline reached` when `--timeout` itself has passed. When detection is cut but leaves a partial model, collectors run only while `--timeout` has time left. When `--timeout` passes, a collector that has not returned has status `timeout` and the error `collection deadline reached`. A collector that returns after `--timeout` has status `timeout` and keeps its own redacted error, if it returned one. |
 | `late` | integer | Results that arrived after the seal. |
 
 ### Exclusion
