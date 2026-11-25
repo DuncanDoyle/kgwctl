@@ -62,6 +62,8 @@ type Action struct {
 	RetryAfter int // seconds, sent with Status
 	// Body, if set, is sent verbatim with Status in place of a metav1.Status.
 	Body []byte
+	// Header, if set, is added to a response that sends Body.
+	Header http.Header
 	// HoldWatchThenStatus keeps a plain watch open until the matching LIST has
 	// completed plus 200ms, then answers with this status.
 	HoldWatchThenStatus int
@@ -269,6 +271,9 @@ func (p *Proxy) apply(w http.ResponseWriter, r *http.Request, req request, a Act
 		return false
 	}
 	if a.Status != 0 && a.Body != nil {
+		for k, v := range a.Header {
+			w.Header()[k] = v
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(a.Status)
 		_, _ = w.Write(a.Body)

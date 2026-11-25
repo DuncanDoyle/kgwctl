@@ -198,6 +198,7 @@ func TestGuardPrefixedServer(t *testing.T) {
 		"/api/v1/",
 		"/api/v1/namespaces/host/services/https:vc:443/proxy",
 		"/api/v1/namespaces/host/secrets/s/proxy",
+		"/api/v1/namespaces/host//secrets/./s/proxy",
 	}
 	for _, prefix := range prefixes {
 		t.Run(prefix, func(t *testing.T) {

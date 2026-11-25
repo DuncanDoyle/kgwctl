@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 
@@ -38,7 +39,7 @@ func Guard(cfg *rest.Config) *rest.Config {
 	c := rest.CopyConfig(cfg)
 	var base string
 	if u, _, err := rest.DefaultServerUrlFor(c); err == nil {
-		base = strings.Trim(u.Path, "/")
+		base = strings.Trim(path.Clean("/"+u.Path), "/")
 	}
 	c.Wrap(func(rt http.RoundTripper) http.RoundTripper { return &guard{next: rt, base: base} })
 	return c
@@ -90,6 +91,12 @@ func (g *guard) RoundTrip(req *http.Request) (*http.Response, error) {
 		resp.Header = http.Header{}
 	}
 	resp.Header.Del("Content-Encoding")
+	// net/http quotes a Location it cannot parse in its error text.
+	if loc := resp.Header.Get("Location"); loc != "" {
+		if _, err := req.URL.Parse(loc); err != nil {
+			resp.Header.Del("Location")
+		}
+	}
 	resp.Header.Set("Content-Type", "application/json")
 	resp.Header.Set("Content-Length", strconv.Itoa(len(body)))
 	return resp, nil
