@@ -1,7 +1,7 @@
 # Phase 4b — xdsview v0.7.0 migration and first release: Design
 
 Status: r5, 2026-11-27. r5 applies Codex round 3 (`reviews/design-codex-r3.md`, all accepted): R15c keeps xdsview's execution state apart from `configSource`, a dry run prints no publish steps, and a later exit 2 suppresses the `known` stderr line. r4 applies Codex round 2 (`reviews/design-codex-r2.md`, all accepted): isolated release output with an explicit file list, `unresolved` defined as "xdsview could not establish the config", `unusedRouteConfigs` dropped, DD-11 aligned with DD-6, the extra `known` stderr line limited to `--route` with a recoverable list failure. r2 added the owner's selection strategy (`--select strict|known`, D-032). r3 applies the Codex design review (`reviews/design-codex.md`, 10 findings, all accepted): normalised `known` marker, kgwctl-owned warning messages, one warning list, the migration commit carries the envelope bump, `known` cases at the command boundary, ECDS network filters, release order, a Snellius acceptance case, a FilterLink seam test, and the Phase 6 boundary.
-Roadmap: Phase 4b. Decisions: D-021, D-022, D-023, D-031, D-032. xdsview: Phase 9 design (E15), xdsview D-022 and D-023.
+Roadmap: Phase 4b. Decisions: D-021, D-022, D-023, D-031, D-032, D-033, D-034, D-035. xdsview: Phase 9 design (E15), xdsview D-022 and D-023.
 Base: cd2fbaa (branch `duncandoyle/phase4b`).
 
 ## 1. Goal and scope

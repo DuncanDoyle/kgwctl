@@ -653,7 +653,7 @@ func TestNormaliseMergesReading(t *testing.T) {
 	}
 }
 
-// TestParseStrategy: empty is strict; only strict and known are valid.
+// TestParseStrategy: empty is strict; only exact, strict and known are valid.
 func TestParseStrategy(t *testing.T) {
 	for in, want := range map[string]proxyview.Strategy{"": proxyview.StrategyStrict, "exact": proxyview.StrategyExact, "strict": proxyview.StrategyStrict, "known": proxyview.StrategyKnown} {
 		if got, err := proxyview.ParseStrategy(in); err != nil || got != want {

@@ -44,8 +44,13 @@ func newProxyRoutesCmd(now func() time.Time, modules []provenance.Module, hooks 
 		Long: "Show one Gateway's Envoy listeners, virtual hosts and routes, with the HTTP filters each route runs\n" +
 			"in request order and the Gateway API and kgateway objects they come from.\n\n" +
 			"Live, it reads the config dump of one replica, the oldest Ready one unless --pod names another,\n" +
-			"and the cluster's HTTPRoutes. With --file it reads a saved dump and calls no Kubernetes API.\n" +
-			"A route whose name reads as two HTTPRoutes is listed as ambiguous, never matched.",
+			"and the cluster's HTTPRoutes. With --file it reads a saved dump and calls no Kubernetes API.\n\n" +
+			"--select sets how sure kgwctl must be that a route comes from the --route HTTPRoute.\n" +
+			"exact: only routes with route metadata. strict (the default): also a route whose name has one reading.\n" +
+			"known: also a route whose name has several readings when only one of those HTTPRoutes is in the cluster;\n" +
+			"the output marks it \"chosen from known HTTPRoutes\". known does not work with --file.\n" +
+			"A route that may come from that HTTPRoute but is not accepted is listed after the tree, never matched.\n" +
+			"See \"How --route picks routes\" in the README.",
 		Example: "  kgwctl proxy routes http -n kgateway-system\n" +
 			"  kgwctl proxy routes http -n kgateway-system --route team-a/orders --rule 0\n" +
 			"  kgwctl proxy routes --file dump.json --gateway kgateway-system/http",
@@ -71,7 +76,7 @@ func newProxyRoutesCmd(now func() time.Time, modules []provenance.Module, hooks 
 	fs.IntVar(&o.rule, "rule", 0, "With --route, show only this rule `index`")
 	fs.StringVar(&o.selectStrategy, "select", string(proxyview.StrategyStrict),
 		"How --route picks routes; each value adds evidence. exact: only routes whose origin is certain (route metadata); "+
-			"strict: also a route name with one reading; known: also a route the cluster's HTTPRoutes narrow to one reading")
+			"strict: also a route name with one reading; known: also a route name where only one possible HTTPRoute is in the cluster")
 	fs.BoolVar(&o.response, "response", false, "Also show each route's response order")
 	fs.StringVarP(&o.output, "output", "o", print.FormatText, "Output format: text, json or yaml")
 	fs.StringVar(&o.maxSize, "max-size", defaultMaxSize, "Largest config dump to parse, as a `quantity` such as 64Mi")

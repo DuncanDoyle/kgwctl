@@ -135,41 +135,90 @@ Live `proxy routes` and `proxy dump` require `create pods/portforward`. kgwctl s
 
 Shows one Gateway's Envoy listeners, virtual hosts and routes, and for each route the HTTP filters it runs in request order, with the Gateway API and kgateway objects they come from. Live, it reads the config dump of one replica (the oldest Ready one, or `--pod`) and lists the cluster's HTTPRoutes to attribute routes. With `--file` it reads a saved dump and calls no Kubernetes API. It needs the same `create pods/portforward` grant as `proxy dump` when live.
 
-`--route <ns>/<name>` shows only that HTTPRoute's routes, and `--rule <index>` one of its rules. `--response` also shows the response order. A route whose name reads as two HTTPRoutes is listed as ambiguous, and one whose origin is unresolved is listed as such; neither is ever matched. The dump is capped by `--max-size` (default `64Mi`). To read a larger one, raise `--max-size`, or save it with `proxy dump` and read it with `--file <path> --max-size <n>`.
+`--route <ns>/<name>` shows only that HTTPRoute's routes, and `--rule <index>` one of its rules. `--select` sets how sure kgwctl must be that a route comes from that HTTPRoute; see [How `--route` picks routes](#how---route-picks-routes). `--response` also shows the response order. The dump is capped by `--max-size` (default `64Mi`). To read a larger one, raise `--max-size`, or save it with `proxy dump` and read it with `--file <path> --max-size <n>`.
 
-Does the transformation of HTTPRoute `orders` run before ext_authz? Ask its Gateway's proxy:
-
-```bash
-kgwctl proxy routes proxy -n kgwctl-proxy --route kgwctl-proxy/orders
-```
-
-```
-Gateway kgwctl-proxy/proxy · pod kgwctl-proxy/proxy-575f694596-lk8s6 · 2026-11-21T12:07:08Z
-listener~8080 [::]:8080 · active · Gateway kgwctl-proxy/proxy port 8080
-└─ vhost listener~8080~orders_kgwctl_example [orders.kgwctl.example] · port 8080
-   └─ route / (prefix) · HTTPRoute kgwctl-proxy/orders · rule 0 · match 0
-      filters (request order):
-        1 ext_auth/kgwctl-proxy/authz       enabled by route · GatewayExtension kgwctl-proxy/authz · TrafficPolicy kgwctl-proxy/orders-extauth (extAuth)
-        2 ratelimit/local                   enabled by route · TrafficPolicy kgwctl-proxy/orders-ratelimit (rateLimit.local)
-        3 dynamic_modules/simple_mutations  enabled by route · TrafficPolicy kgwctl-proxy/orders-transformation (transformation)
-        4 envoy.filters.http.router         on
-      not run: global_disable/ext_auth (off)
-      policies: TrafficPolicy kgwctl-proxy/orders-extauth (extAuth), TrafficPolicy kgwctl-proxy/orders-ratelimit (rateLimit.local), TrafficPolicy kgwctl-proxy/orders-transformation (transformation)
-      backend: kube_kgwctl-proxy_backend_8080
-```
-
-No. The route runs external auth first, then the local rate limit, then the transformation (`dynamic_modules/simple_mutations`), and last the router. Every filter but the router is off on the Gateway and switched on by this route. Each filter entry names the TrafficPolicy that configures it, and the `policies` line lists them all.
-
-A saved dump gives the same view; only the header names the file instead of the pod. `--gateway` labels the origins:
+Does the transformation of HTTPRoute `orders` run before ext_authz? Save a dump of its Gateway's proxy and ask:
 
 ```bash
 kgwctl proxy dump proxy -n kgwctl-proxy > dump.json
 kgwctl proxy routes --file dump.json --gateway kgwctl-proxy/proxy --route kgwctl-proxy/orders
 ```
 
-This Gateway also serves HTTPRoute `proxy/orders-kgwctl`, and the Envoy route names of both HTTPRoutes read as either one. The output above was taken with kgateway's Helm value `enableRouteSourceMetadata: true`, which tells the two apart. Without it, live and file views both list the two routes as ambiguous and match neither.
+```
+File dump.json · Gateway kgwctl-proxy/proxy
+listener~8080 [::]:8080 · active · port 8080 (inferred) · Gateway kgwctl-proxy/proxy (from the command line)
+└─ vhost listener~8080~orders_kgwctl_example [orders.kgwctl.example] · port 8080 (inferred)
+   └─ route / (prefix) · HTTPRoute kgwctl-proxy/orders · rule 0 · match 0
+      filters (request order):
+        1 ext_auth/kgwctl-proxy/authz       enabled by route · GatewayExtension kgwctl-proxy/authz (inferred) · TrafficPolicy kgwctl-proxy/orders-extauth (extAuth, inferred)
+        2 ratelimit/local                   enabled by route · TrafficPolicy kgwctl-proxy/orders-ratelimit (rateLimit.local, inferred)
+        3 dynamic_modules/simple_mutations  enabled by route · TrafficPolicy kgwctl-proxy/orders-transformation (transformation, inferred)
+        4 envoy.filters.http.router         on
+      not run: global_disable/ext_auth (off)
+      policies: TrafficPolicy kgwctl-proxy/orders-extauth (extAuth), TrafficPolicy kgwctl-proxy/orders-ratelimit (rateLimit.local), TrafficPolicy kgwctl-proxy/orders-transformation (transformation)
+      backend: kube_kgwctl-proxy_backend_8080
+ignored dump sections: BootstrapConfigDump, ClustersConfigDump, ScopedRoutesConfigDump, SecretsConfigDump
+```
 
-`-o json|yaml` prints one `ProxyRoutes` document ([`docs/output.md`](docs/output.md)) with the source, the snapshot, parser warnings and the ambiguous routes. Exit codes: `0` when printed, `2` on any error.
+No. The route runs external auth first, then the local rate limit, then the transformation (`dynamic_modules/simple_mutations`), and last the router. Every filter but the router is off on the Gateway and switched on by this route. Each filter entry names the TrafficPolicy that configures it, and the `policies` line lists them all.
+
+`(inferred)` marks a value kgwctl read from a name or a table, not from metadata. `(from the command line)` marks the Gateway that `--gateway` named. The last line lists the dump sections kgwctl does not read. Live (`kgwctl proxy routes proxy -n kgwctl-proxy --route kgwctl-proxy/orders`), the first line names the Gateway, the pod and the capture time instead of the file.
+
+After the tree, `--route` lists the routes it did not match (see below). Every warning comes last, once, as a `warning:` line.
+
+`-o json|yaml` prints one `ProxyRoutes` document ([`docs/output.md`](docs/output.md)): the source, the listener tree with each route's origin and filters, the selection and the warnings. It leaves out the dump's raw config (`typedConfig`, `typedPerFilterConfig` and `metadata`); `proxy dump` gives the dump unchanged. Each `id` is valid only within one document, so don't store it or compare it across dumps. Exit codes: `0` when printed, `2` on any error.
+
+#### How `--route` picks routes
+
+kgwctl must find out which HTTPRoute each Envoy route comes from. Sometimes it can't be sure. `--select` sets how sure it must be before `--route` shows a route.
+
+**Why it can be unclear.** kgateway can add *route metadata* to each Envoy route: data that names the HTTPRoute the route comes from. It does this when the Helm value `enableRouteSourceMetadata` is `true`. Without route metadata, kgwctl reads the HTTPRoute from the Envoy route name. kgateway builds that name by joining parts with dashes: `httproute-<name>-<namespace>-<rule>-<match>`. HTTPRoute `team-a/orders` gives `httproute-orders-team-a-0-0`. HTTPRoute `a/orders-team` gives the same string. So the name alone can't tell which HTTPRoute it is. Each way to split the name is a *reading*. Every dash in the HTTPRoute's name or namespace is another place to split, so another possible reading. With no dash in either, the name has one reading. The sample above has the same problem: `kgwctl-proxy/orders` and `proxy/orders-kgwctl` both give `httproute-orders-kgwctl-proxy-0-0`. Route metadata was on there, so kgwctl knew the answer.
+
+**The three values.** Each value accepts what the one before it accepts, plus one more case.
+
+1. `exact`: only routes whose origin is certain, because they carry route metadata. With `--rule`, the rule and match index must come from route metadata too.
+   ```bash
+   kgwctl proxy routes proxy -n kgwctl-proxy --route kgwctl-proxy/orders --select exact
+   ```
+2. `strict`, the default: also a route whose name has exactly one reading.
+   ```bash
+   kgwctl proxy routes proxy -n kgwctl-proxy --route kgwctl-proxy/orders
+   ```
+3. `known`: also a route whose name has several readings when only one of those HTTPRoutes exists in the cluster now. The output marks it "chosen from known HTTPRoutes".
+   ```bash
+   kgwctl proxy routes proxy -n kgwctl-proxy --route kgwctl-proxy/orders --select known
+   ```
+
+| Envoy route | `exact` | `strict` | `known` |
+|---|---|---|---|
+| Has route metadata | match | match | match |
+| No route metadata, one reading | listed as inferred | match | match |
+| Several readings, one of them in the cluster | ambiguous | ambiguous | match, chosen from known HTTPRoutes |
+| Several readings, more than one in the cluster | ambiguous | ambiguous | ambiguous |
+
+"Match" means the route is shown in the tree. "Listed as inferred" and "ambiguous" mean it is only named in a list after the tree, never shown as a match.
+
+**Why `strict` is the default.** `known` trusts the HTTPRoutes in the cluster now. But the proxy can still serve older config:
+
+1. HTTPRoute `a/orders-team` exists. The proxy serves its route `httproute-orders-team-a-0-0`.
+2. Someone deletes `a/orders-team` and creates `team-a/orders`.
+3. The proxy has not received the new config yet. It still serves the old route.
+4. `known` sees only `team-a/orders` in the cluster, so it says the route comes from `team-a/orders`. That is wrong.
+
+`strict` never makes this guess. Use `known` only when you know the proxy has the latest config.
+
+**`--file` and route metadata.** `known` needs the cluster's HTTPRoutes, so `--select known` with `--file` is a usage error (exit `2`). `exact` and `strict` work with `--file`. Live, if kgwctl can't list the HTTPRoutes, for example because RBAC denies it, `known` chooses nothing and prints `Warning: --select known: no route can be chosen from known HTTPRoutes`. With route metadata on, all three values give the same answer.
+
+**How to see the choice.** In the text:
+
+- A matched route read from its name ends in `(inferred)`, for example `HTTPRoute shop/orders · rule 0 · match 0 (inferred)`.
+- A route `known` chose ends in `(chosen from known HTTPRoutes)`.
+- `inferred routes, not matched:` lists the routes `exact` did not accept (only under `exact`).
+- `ambiguous routes, not matched:` lists the routes with several readings. When only one of those HTTPRoutes is in the cluster, the line ends in `one candidate exists in the cluster`. `known` matches such a route when that one is the HTTPRoute you asked for.
+
+In JSON, `selection.strategy` is the value used, each entry of `selection.routes` has `chosenBy` (`select`, or `known` for a route `known` chose), and `selection.inferred` lists the routes `exact` did not accept.
+
+**`known` and krp.** krp, the command-line tool of [xdsview](https://github.com/DuncanDoyle/xdsview), uses the same rule as `known`. But krp picks between the readings with the `--route` you give it. kgwctl uses the cluster's HTTPRoutes. So the two can differ. When both colliding HTTPRoutes exist, krp picks the one you asked for, and `kgwctl --select known` picks neither.
 
 ### `bundle`
 
@@ -258,7 +307,11 @@ Downstream builds embed the CLI through [`pkg/cli`](pkg/cli). `cli.NewRootComman
 
 Pass Kubernetes resources and lists to `Object` with their kind metadata intact. The Sink rejects Secrets and ConfigMaps, including their list kinds and either kind inside a List. It also rejects an object or List item without a kind, such as one from a typed clientset list. Use `Text` for plain text and `Prometheus` for metrics. Emit resources separately from reports and logs. The Sink has no JSON or config-dump method. New structured report formats require a reviewed schema and a writer-owned redactor.
 
-Collectors are trusted code, and the Sink does not stop one that opens its own client. A name that is invalid, or repeats a built-in or another added collector, makes `bundle` exit `2`. [`examples/downstream`](examples/downstream) is a complete example, including a bundle collector.
+Collectors are trusted code, and the Sink does not stop one that opens its own client. A name that is invalid, or repeats a built-in or another added collector, makes `bundle` exit `2`.
+
+`cli.WithProvenanceModules` replaces the xdsview modules `proxy routes` uses to find where routes and filters come from; the default is xdsview's `kgateway.New()`. To add your own findings, wrap `kgateway.New()` in a module under your own name. Two modules with one name make `proxy routes` exit `2`.
+
+[`examples/downstream`](examples/downstream) is a complete example, including a bundle collector and a provenance module.
 
 ## Development
 
