@@ -171,7 +171,7 @@ func runRoutes(t *testing.T, root *cobra.Command, args ...string) (code int, std
 	var out, errb bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&errb)
-	root.SetArgs(append([]string{"proxy", "routes", "--file", "testdata/downstream-field.json", "--route", "shop/orders"}, args...))
+	root.SetArgs(append([]string{"proxy", "routes", "--file", "../../internal/proxyview/testdata/downstream-field.json", "--route", "shop/orders"}, args...))
 	code = cli.Execute(root)
 	return code, out.String(), errb.String()
 }
