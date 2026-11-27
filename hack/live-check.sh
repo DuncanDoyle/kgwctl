@@ -318,6 +318,8 @@ portforward_rbac() {
   out="$(awk -v ns="$PROXY_NS" '
     /^# apiVersion:/ { on = 1 }
     !on { next }
+    # The port-forward block ends at the first uncommented separator; the pods/log block follows it.
+    /^---$/ { exit }
     { sub(/^# ?/, "") }
     /^namespace:|^  namespace:/ { sub(/namespace: .*/, "namespace: " ns) }
     /^  - apiGroup: rbac.authorization.k8s.io$/ && insubjects { print "  - kind: ServiceAccount"; next }
