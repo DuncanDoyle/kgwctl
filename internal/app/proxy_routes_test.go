@@ -1085,6 +1085,40 @@ func TestProxyRoutesExactUnknownMatch(t *testing.T) {
 	}
 }
 
+// otherRuleOnSecondUse is a wrapper's extra: on the second use of the shared
+// route config, a proxy/orders-kgwctl reading with rule index 1.
+func otherRuleOnSecondUse(snap *model.Snapshot, inner []provenance.Claim) []provenance.Claim {
+	route := snap.Listeners[1].FilterChains[0].HCM.RouteConfig.VirtualHosts[0].Routes[0].ID
+	var out []provenance.Claim
+	for _, c := range inner {
+		r, ok := c.Assertion.(provenance.RouteSource)
+		if !ok || c.Subject != route || r.Route != proxyview.HTTPRouteRef(types.NamespacedName{Namespace: "proxy", Name: "orders-kgwctl"}) {
+			continue
+		}
+		r.RuleIndex = 1
+		c.Assertion, c.Ref = r, ""
+		out = append(out, c)
+	}
+	return out
+}
+
+// TestProxyRoutesSharedSourceSameOutcome: two ambiguous uses of one route
+// config whose readings differ only by index print two lines that show the indices (DD-5).
+func TestProxyRoutesSharedSourceSameOutcome(t *testing.T) {
+	kc := unreachableKubeconfig(t, "default")
+	args := []string{"proxy", "routes", "--file", "../proxyview/testdata/shared-source.json", "--route", "kgwctl-proxy/orders", "--rule", "0"}
+	mods := []provenance.Module{proxyviewtest.Wrap("example", kgateway.New(), otherRuleOnSecondUse)}
+	r := runRoutesModules(t, kc, app.ProxyTestHooks{}, mods, args...)
+	if r.code != 0 || r.stderr != "" {
+		t.Fatalf("exit %d, stderr %q; want 0 and empty", r.code, r.stderr)
+	}
+	const name = "orders_example-route-0-httproute-orders-kgwctl-proxy-0-0-matcher-0"
+	if n := strings.Count(r.stdout, name); n != 2 || !strings.Contains(r.stdout, "HTTPRoute proxy/orders-kgwctl · rule 1") {
+		t.Errorf("text lists the route %d times:\n%s\nwant two lines that show the rule indices", n, r.stdout)
+	}
+	golden(t, "proxy-routes", "shared-source-same-outcome", r.stdout)
+}
+
 // exactOnSecondUse is a wrapper's extra: on the second use of the shared route
 // config, an exact kgwctl-proxy/orders reading with inferred indices.
 func exactOnSecondUse(snap *model.Snapshot, inner []provenance.Claim) []provenance.Claim {

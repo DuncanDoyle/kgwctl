@@ -78,6 +78,19 @@ func (v View) routeLabel(id model.ID) []string {
 		return provenance.Labels(v.Index, nil)(render.Row{Subject: id, Route: id})
 	}
 	r := effective(res)[0]
+	s := readingText(r)
+	if r.IndexCertainty == model.Inferred {
+		s += " (partly from name)"
+	}
+	if res.Certainty != model.Exact {
+		s += " (" + res.Certainty.String() + ")"
+	}
+	return []string{s}
+}
+
+// readingText formats a reading's HTTPRoute and indices, e.g.
+// "HTTPRoute ns/web · rule 1 (api) · match 0".
+func readingText(r provenance.RouteSource) string {
 	s := r.Route.String()
 	if r.RuleIndex >= 0 {
 		s += fmt.Sprintf(" · rule %d", r.RuleIndex)
@@ -88,13 +101,7 @@ func (v View) routeLabel(id model.ID) []string {
 	if r.MatchIndex >= 0 {
 		s += fmt.Sprintf(" · match %d", r.MatchIndex)
 	}
-	if r.IndexCertainty == model.Inferred {
-		s += " (partly from name)"
-	}
-	if res.Certainty != model.Exact {
-		s += " (" + res.Certainty.String() + ")"
-	}
-	return []string{s}
+	return s
 }
 
 // recordedAboveLabel labels a route's policy records at its virtual host,
@@ -135,7 +142,8 @@ func (v View) notes() func(render.Row) []string {
 
 // selectionText writes the no-match line and the routes listed, not matched.
 // Uses of a shared route config with the same outcome and readings are
-// listed once, by source path; different outcomes are each listed (DD-5).
+// listed once, by source path; different outcomes or readings are each
+// listed, ambiguous ones with indices when that tells them apart (DD-5).
 func (v View) selectionText(b *bytes.Buffer) {
 	s := v.Selected
 	if s == nil {
@@ -149,15 +157,18 @@ func (v View) selectionText(b *bytes.Buffer) {
 		delete(ambiguous, n.Route)
 	}
 	type entry struct {
+		id         model.ID
 		rc, name   string
 		unres, inf bool
 		detail     string // the outcome's text after the name
 	}
 	// outcome is what one use of a source shows; equal outcomes print once.
+	// It compares the structured readings, never their text.
 	type outcome struct {
-		key        model.ID
-		detail     string
-		unres, inf bool
+		key              model.ID
+		unres, inf, note bool
+		certainty        model.Certainty
+		readings         string // the effective readings, %#v
 	}
 	var list []entry
 	seen := map[outcome]bool{}
@@ -166,7 +177,12 @@ func (v View) selectionText(b *bytes.Buffer) {
 		if !ambiguous[r.ID] && !unresolved[r.ID] && !inferred[r.ID] {
 			return
 		}
-		e := entry{name: r.Name, unres: unresolved[r.ID], inf: inferred[r.ID]}
+		e := entry{id: r.ID, name: r.Name, unres: unresolved[r.ID], inf: inferred[r.ID]}
+		key := r.SourcePath
+		if key == "" {
+			key = r.ID
+		}
+		o := outcome{key: key, unres: e.unres, inf: e.inf}
 		switch {
 		case e.inf:
 			// The reading as the tree prints it.
@@ -174,13 +190,13 @@ func (v View) selectionText(b *bytes.Buffer) {
 		case e.unres:
 			e.detail = "origin unresolved"
 		default:
-			e.detail = v.ambiguousText(r.ID)
+			e.detail = v.ambiguousText(r.ID, false)
 		}
-		key := r.SourcePath
-		if key == "" {
-			key = r.ID
+		if !e.unres {
+			res := provenance.Resolve[provenance.RouteSource](v.Index, r.ID)
+			o.certainty, o.readings = res.Certainty, fmt.Sprintf("%#v", effective(res))
+			o.note = !e.inf && v.oneCandidate(r.ID)
 		}
-		o := outcome{key: key, detail: e.detail, unres: e.unres, inf: e.inf}
 		if seen[o] {
 			return
 		}
@@ -192,6 +208,16 @@ func (v View) selectionText(b *bytes.Buffer) {
 		e.rc = hcm.RouteConfig.Name
 		list = append(list, e)
 	})
+	// Ambiguous lines that would read the same show each reading's indices.
+	same := map[[2]string]int{}
+	for _, e := range list {
+		same[[2]string{e.name, e.detail}]++
+	}
+	for i, e := range list {
+		if !e.inf && !e.unres && same[[2]string{e.name, e.detail}] > 1 {
+			list[i].detail = v.ambiguousText(e.id, true)
+		}
+	}
 	line := func(e entry) string {
 		out := "  " + e.name
 		if len(names[e.name]) > 1 {
@@ -228,19 +254,30 @@ func (v View) selectionText(b *bytes.Buffer) {
 }
 
 // ambiguousText is an ambiguous route's outcome: its readings' HTTPRoutes,
-// and OneCandidateNote when Known narrowed it to one.
-func (v View) ambiguousText(route model.ID) string {
+// with their indices if indices is set, and OneCandidateNote when Known
+// narrowed it to one.
+func (v View) ambiguousText(route model.ID, indices bool) string {
 	var refs []string
 	for _, r := range provenance.Resolve[provenance.RouteSource](v.Index, route).Candidates {
-		if s := r.Route.String(); len(refs) == 0 || refs[len(refs)-1] != s {
+		s := r.Route.String()
+		if indices {
+			s = readingText(r)
+		}
+		if len(refs) == 0 || refs[len(refs)-1] != s {
 			refs = append(refs, s)
 		}
 	}
 	out := "ambiguous: " + strings.Join(refs, ", ")
-	if n, ok := v.narrowing(route); ok && len(readings(n.Kept)) == 1 {
+	if v.oneCandidate(route) {
 		out += " · " + OneCandidateNote
 	}
 	return out
+}
+
+// oneCandidate reports whether Known narrowed route to one reading.
+func (v View) oneCandidate(route model.ID) bool {
+	n, ok := v.narrowing(route)
+	return ok && len(readings(n.Kept)) == 1
 }
 
 // target names the selected HTTPRoute and rule, e.g. "HTTPRoute ns/x rule 1".

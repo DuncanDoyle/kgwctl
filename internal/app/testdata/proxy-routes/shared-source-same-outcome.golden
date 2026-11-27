@@ -1,0 +1,5 @@
+File ../proxyview/testdata/shared-source.json
+no route matches HTTPRoute kgwctl-proxy/orders rule 0
+ambiguous routes, not matched:
+  listener~8080~orders_example-route-0-httproute-orders-kgwctl-proxy-0-0-matcher-0 · ambiguous: HTTPRoute kgwctl-proxy/orders · rule 0 · match 0, HTTPRoute proxy/orders-kgwctl · rule 0 · match 0
+  listener~8080~orders_example-route-0-httproute-orders-kgwctl-proxy-0-0-matcher-0 · ambiguous: HTTPRoute kgwctl-proxy/orders · rule 0 · match 0, HTTPRoute proxy/orders-kgwctl · rule 0 · match 0, HTTPRoute proxy/orders-kgwctl · rule 1 · match 0
