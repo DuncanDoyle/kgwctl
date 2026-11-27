@@ -2,15 +2,15 @@
 
 ## Phase
 Phase: 4b — xdsview v0.7.0 migration and first release (D-031)
-Base: not set (set at phase start)
-Author: anthropic (claude-opus-5-5)
+Base: cd2fbaa
+Author: anthropic (claude-opus-5-5 controller; Claude subagents)
 Advisory: none
 Docs: docs/phases/phase-4b/
-Status: not started
+Status: design review
 
 ### Queue
-- [ ] Q1 Design (`design.md`) and implementation plan ← CURRENT
-- [ ] Q2 Cross-model review of design + plan (Codex) + triage
+- [x] Q1 Design r2 and implementation plan (2 planned sub-phases); D-032 owner-decided, D-033 to D-035 proposed
+- [ ] Q2 Cross-model review of design + plan (Codex) + triage ← CURRENT
 - [ ] Q3 Implementation
 - [ ] Q4 Live check on kind, goldens reviewed
 - [ ] Q5 Phase review (Codex) + triage, fixes

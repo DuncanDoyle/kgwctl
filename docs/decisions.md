@@ -259,3 +259,31 @@ Downstream collectors are trusted in-process code. The Sink and the guard protec
 - `v0.1.0` is tagged when Phase 4b closes. It depends on final Snellius and xdsview releases only.
 **Alternatives:** Tag `v0.1.0` now on `v1alpha1`. Rejected: the first format people script against would change in the next release, and no one waits on a release.
 **Consequences:** Phase 4b is a planned phase with its own design, Codex review and live check. Downstream builds (D-023 in xdsview) replace the kgateway module, so the module set kgwctl composes is a `pkg/cli` seam, and downstream goldens differ from kgwctl's.
+
+## D-032 — `proxy routes` takes a route selection strategy (2026-11-27, phase 4b) — decided by the owner 2026-11-27
+**Context:** Under xdsview v0.7.0, `kgateway.Select` leaves a route ambiguous when only the cluster's HTTPRoutes (Known) narrowed its readings to one. kgwctl's selection has been strict so far (D-022). krp also selects such a route (xdsview D-022). The owner wants both behaviours available in kgwctl.
+**Decision:**
+- `proxy routes --select strict|known`, default `strict`.
+- `strict`: a route Known narrowed to one reading stays ambiguous and is listed, never selected.
+- `known`: such a route is also selected when the one reading Known kept matches the query. Text and JSON mark it as chosen from known HTTPRoutes, and JSON records the strategy used.
+- `--select known` needs the cluster's HTTPRoutes, so with `--file` it is a usage error.
+**Alternatives:** Strict only (the previous rule); `known` as the default (rejected: Envoy can still serve a deleted HTTPRoute's route, so the default never guesses).
+**Consequences:** `--select known` uses krp's rule. krp narrows with `--route` alone and kgwctl with the cluster's HTTPRoutes, so the two can differ. Scripts can tell how each route was chosen.
+
+## D-033 — Downstream builds set the provenance modules through `pkg/cli` (2026-11-27, phase 4b) — proposed
+**Context:** xdsview v0.7.0 composes claims from modules (xdsview D-023). A downstream build replaces the kgateway module with its own module that wraps it, under its own name. Claim IDs embed the module name and mean something only within one `Compose` result.
+**Decision:** `cli.WithProvenanceModules(m ...provenance.Module)` replaces the module set `proxy routes` composes. The default is `kgateway.New()`, and an empty call keeps it. kgwctl reads claims only through `Resolve`, `ResolveMirror`, `Records`, `Select`, `Narrow` and the assertion types. It never reads `Claim.Module` or `kgateway.ModuleName`, and a test enforces this. The `proxy routes` output carries no claim ID and no module name. Duplicate module names make `proxy routes` exit 2.
+**Alternatives:** Append downstream modules to the default (rejected: a wrapper would duplicate the kgateway claims). Expose claim IDs (rejected: not stable, and they change with the module name).
+**Consequences:** A wrapper that adds no claim gives byte-equal output. A wrapper that adds claims gives its own goldens. `pkg/cli` exposes an xdsview type, so a downstream build uses kgwctl's xdsview minor.
+
+## D-034 — `proxy routes` JSON is kgwctl's own payload (2026-11-27, phase 4b) — proposed
+**Context:** v1alpha1 embedded xdsview's model, so every xdsview model change was a kgwctl schema change. xdsview v0.7.0 splits execution (snapshot, chains) from provenance (claims).
+**Decision:** `ProxyRoutes` is a tree of kgwctl types: listener, filter chain, virtual host, route. Each route carries its readings, runtime filter chain with attribution, policies, backend and actions. Policy records stay on their own level, labelled with it, and are never merged. Raw `typedConfig`, `typedPerFilterConfig` and `metadata` are left out; `proxy dump` has the raw dump. Occurrence IDs are exposed as `id` and are valid only within one document. Every warning of the whole dump is in `warnings`, typed. A test fails when an xdsview model field is neither mapped nor listed as left out.
+**Alternatives:** Embed xdsview's v0.7.0 model and claims, as krp does (rejected: it ties kgwctl's schema to xdsview and exposes module claim IDs). Keep the raw config (rejected: it is the main place for credentials Envoy does not redact).
+**Consequences:** kgwctl maps new xdsview fields by hand, and the coverage test flags them on each bump.
+
+## D-035 — Release `v0.1.0` with a script; the version comes from build info (2026-11-27, phase 4b) — proposed
+**Context:** `go install …@v0.1.0` passes no ldflags, so the client printed `dev`. kgwctl has no release tooling.
+**Decision:** `cmd/kgwctl` takes the version from ldflags, else `debug.ReadBuildInfo` (the module version and `vcs.revision`), else `dev` and `unknown`. `hack/release.sh <tag>` builds linux and darwin for amd64 and arm64 with ldflags. It packs each binary with LICENSE and README, writes SHA-256 checksums, checks `version --client`, and prints the `gh release create` command. The controller runs that command; the script never publishes.
+**Alternatives:** goreleaser or a CI release job (rejected for now: more machinery than one release needs).
+**Consequences:** Releases are manual. A CI job can call the same script later.
