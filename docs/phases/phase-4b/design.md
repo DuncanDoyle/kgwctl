@@ -1,6 +1,6 @@
 # Phase 4b — xdsview v0.7.0 migration and first release: Design
 
-Status: r3, 2026-11-27. r2 added the owner's selection strategy (`--select strict|known`, D-032). r3 applies the Codex design review (`reviews/design-codex.md`, 10 findings, all accepted): normalised `known` marker, kgwctl-owned warning messages, one warning list, the migration commit carries the envelope bump, `known` cases at the command boundary, ECDS network filters, release order, a Snellius acceptance case, a FilterLink seam test, and the Phase 6 boundary.
+Status: r4, 2026-11-27. r4 applies Codex round 2 (`reviews/design-codex-r2.md`, all accepted): isolated release output with an explicit file list, `unresolved` defined as "xdsview could not establish the config", `unusedRouteConfigs` dropped, DD-11 aligned with DD-6, the extra `known` stderr line limited to `--route` with a recoverable list failure. r2 added the owner's selection strategy (`--select strict|known`, D-032). r3 applies the Codex design review (`reviews/design-codex.md`, 10 findings, all accepted): normalised `known` marker, kgwctl-owned warning messages, one warning list, the migration commit carries the envelope bump, `known` cases at the command boundary, ECDS network filters, release order, a Snellius acceptance case, a FilterLink seam test, and the Phase 6 boundary.
 Roadmap: Phase 4b. Decisions: D-021, D-022, D-023, D-031, D-032. xdsview: Phase 9 design (E15), xdsview D-022 and D-023.
 Base: cd2fbaa (branch `duncandoyle/phase4b`).
 
@@ -69,7 +69,8 @@ Fixtures are the recorded dumps in `testdata/dumps/` and the live fixtures of `h
 | R14 | `-o json` or `-o yaml` of `describe`, `version`, `check`, `proxy routes`; a bundle's `manifest.json`, `check.json`, `version.json` | `schemaVersion: kgwctl.kgateway.dev/v1alpha2`. Only `ProxyRoutes` changes shape. |
 | R15 | `bundle` with a discovery selector that excludes `team-b` | The manifest records `team-b` under `unwatched`, as today. Scope `unknown` records no names. |
 | R15a | A TrafficPolicy whose ancestor status at the current generation is `Accepted=False/Invalid` and `Attached=False/Pending` | `check` reports KGWUI-002 for it, not KGWUI-003. The bundle's `check.json` has the same finding. |
-| R15b | A network filter whose config comes from ECDS that the dump does not hold, in a chain without an HCM | JSON: the network filter has `configSource: "unresolved"`; the chain has no `hcm`. Text: `(ECDS, unresolved)` and `HTTP filters unknown: …`, as xdsview renders it. No raw config. |
+| R15b | A network filter whose config comes from ECDS that xdsview could not establish, in a chain without an HCM | JSON: the network filter has `configSource: "unresolved"`; the chain has no `hcm`. Text: `(ECDS, unresolved)` and `HTTP filters unknown: …`, as xdsview renders it. No raw config. |
+| R15c | An HTTP filter with `config_discovery` whose matching ECDS entry is present in the dump but ambiguous (two entries match, or several sources subscribe to its name) | JSON: the HTTP filter has `configSource: "unresolved"`; its chain entries have `runs: "unknown"` and `state: "unresolved"`; an `ecds-ambiguous` warning is in `warnings`. The entry's presence in the dump does not make it resolved. |
 | R16 | `go install github.com/DuncanDoyle/kgwctl/cmd/kgwctl@v0.1.0`, then `kgwctl version --client` | `Client:  kgwctl v0.1.0 (unknown, go1.x)`. |
 | R17 | A binary from `hack/release.sh v0.1.0` | `Client:  kgwctl v0.1.0 (<commit sha>, go1.x)`. |
 | R18 | `go build ./cmd/kgwctl` in a checkout | The version Go stamps from VCS, such as `v0.1.1-0.20261201…+dirty`, and the VCS revision; `dev` and `unknown` only when Go stamps nothing. |
@@ -119,7 +120,7 @@ body ─► parser.Parse(Capture) ─► chain.Effective ───────�
 - The rule lives in kgwctl (`internal/proxyview`), over `kgateway.Select`'s result. `Select` is not changed and kgwctl does not import krp.
 - `--select known` with `--file` is a usage error: Known is empty with `--file` (DD-3), so `known` would give exactly `strict` and only suggest a choice that was never made. Using `--route` as Known, as krp does, is the only way to give it effect there, and DD-3 rules that out. I found no sound reason to allow it.
 - Without `--route`, the strategy has no effect. Checked against the flow: the strategy only filters `Select`'s result, and without `--route` there is no `Select` call. The tree, the narrowed note (DD-6) and the JSON are the same for both values. `--select known` without `--route` is accepted live, and still a usage error with `--file`. (inferred: the owner's expectation, confirmed against the design)
-- Live, when the HTTPRoute list fails, Known is empty and `known` chooses nothing. kgwctl adds one stderr warning that says so, next to the existing list warning. (inferred)
+- Live, with `--route`, when the HTTPRoute list fails in a way the command recovers from (denied, or any error other than the deadline, which still exits 2), Known is empty and `known` chooses nothing. Only then kgwctl adds one stderr line, `Warning: --select known: no route can be chosen from known HTTPRoutes`, after the existing list warning. Without `--route`, or under `strict`, there is no extra line (R23, R24). (inferred)
 - Known differs from krp's. krp uses `--route` as Known (`cmd/krp/main.go`, live and file); kgwctl uses the cluster's HTTPRoutes. So for the colliding routes with both HTTPRoutes present (R20), krp picks `kgwctl-proxy/orders` and kgwctl with `known` picks nothing. The rule is the same; the input is not.
 
 **DD-5. Ambiguous and unresolved routes are listed as today.**
@@ -148,7 +149,7 @@ body ─► parser.Parse(Capture) ─► chain.Effective ───────�
 
 ### 4.4 Text
 **DD-11. Hooks.** `render.Text` gets:
-- `Labels`: `provenance.Labels(ix, nil)`, plus kgwctl's context label on non-static listener rows: `Gateway <ns>/<name> (from the command line)`. The label is added only when no `gatewaySource` claim resolves at inferred or better, so a downstream module that claims the Gateway is not repeated. The same words serve live and `--file`, so the live check can compare the two views (§8). (inferred)
+- `Labels`: `provenance.Labels(ix, chosen)`, where `chosen` holds the normalised narrowings of the routes `--select known` chose and nothing else (DD-6), plus kgwctl's context label on non-static listener rows: `Gateway <ns>/<name> (from the command line)`. The label is added only when no `gatewaySource` claim resolves at inferred or better, so a downstream module that claims the Gateway is not repeated. The same words serve live and `--file`, so the live check can compare the two views (§8). (inferred)
 - `Notes`: the narrowed note of DD-6.
 - `Trailer`: `provenance.Notes(ix)` (`policies:` and `inherited policies:`).
 - `ResponseOrder` from `--response`.
@@ -177,7 +178,6 @@ The renderer prints no warning. `render.Text` takes subject warnings only from `
 | `sections` | Section[] | Each config dump section with `type` and `status` (`parsed`, `partial`, `ignored`), in dump order. |
 | `selection` | Selection | With `--route` only. Describes the whole dump. |
 | `warnings` | Warning[] | The one warning list of DD-12: every parser and index warning of the whole dump, once, with kgwctl's message for `claim-dropped` and `link-dropped`. Absent when none. |
-| `unusedRouteConfigs` | UnusedRouteConfig[] | Route config sources of the whole dump that no HCM joined: `id`, `name`, `kind`, `policies`. Absent when none. |
 
 ### 5.2 Listener, filter chain, HCM
 | Type | Fields |
@@ -187,7 +187,7 @@ The renderer prints no warning. `render.Text` takes subject warnings only from `
 | HCM | `id`, `routeConfig` {`name`, `source` (the route config source ID, such as `RD3`, when joined), `state` (`found`, `missing`, `ambiguous`, `unknown`), `kind` (`dynamic`, `static`, `inline`), `scopedRoutes`, `policies`}, `httpFilters` [HTTPFilter], `upstreamFilters` [HTTPFilter], `defaultChain` (Filter[], only when no route config joined), `virtualHosts` |
 | HTTPFilter | `slot`, `name`, `type`, `disabled`, `configSource`, `extension` (resolution of {`ref`, `filterKind`, `helper`}) |
 
-`configSource` on a network filter or HTTP filter: absent for inline config; `ecds` or `ecdsDefault` when ECDS supplied it; `unresolved` when the config comes from ECDS and the dump does not hold it. An unresolved network filter may itself be an HCM, so its chain's HTTP filters are unknown (R15b). This is a typed indicator only; the discovery details and the config stay out.
+`configSource` on a network filter or HTTP filter: absent for inline config; `ecds` or `ecdsDefault` when xdsview resolved the ECDS config; `unresolved` when the filter uses discovery and xdsview could not establish the config for this occurrence. That covers a config missing from the dump, but also one present but ambiguous (category, subscription or two matching entries), and every network filter with discovery, which xdsview v0.7.0 never resolves (R15b, R15c). An unresolved network filter may itself be an HCM, so its chain's HTTP filters are unknown. This is a typed indicator only; the discovery details and the config stay out.
 
 ### 5.3 Virtual host and route
 | Type | Fields |
@@ -238,7 +238,7 @@ There is no separate `narrowed` list. `unresolved` routes have no readings, so a
 Warning: `subject` (an occurrence ID; absent for a dump-wide warning), `code` (xdsview's code, such as `section-skipped`, `rds-missing`, `claim-dropped`), `message`. Section: `type`, `status`.
 
 ### 5.8 Phase 6 boundary
-**DD-23. The payload is a presentation projection, not the join model.** Phase 6 joins runtime policy evidence with declared policies (roadmap Phase 6). Two HCMs can use one route config source, and two sources can share a name, so the payload's per-use `routeConfig.policies` cannot tell one record seen through two uses from two records. Phase 6 joins on `RouteConfigUse.Source` with the full snapshot and the claim index, inside kgwctl, never on this JSON. The payload exposes `routeConfig.source` and `unusedRouteConfigs` so a reader can see the identity, but it promises no join semantics. (inferred: the owner accepted the finding; the field names are ours)
+**DD-23. The payload is a presentation projection, not the join model.** Phase 6 joins runtime policy evidence with declared policies (roadmap Phase 6). Two HCMs can use one route config source, and two sources can share a name, so the payload's per-use `routeConfig.policies` cannot tell one record seen through two uses from two records. Phase 6 joins on `RouteConfigUse.Source` with the full snapshot and the claim index, inside kgwctl, never on this JSON. The payload exposes `routeConfig.source` so a reader can see which uses share a source, but it promises no join semantics. Sources that no HCM joined are not in the payload: a static entry that an inline config reports (`RouteConfigSource.Reported`) would look unused there although it is a used configuration, and nothing in this phase needs the list. (inferred: the owner accepted the finding; the field names are ours)
 
 ### 5.9 Conventions kept
 Refs are objects; an empty `group` is omitted in `proxy routes` refs. Optional fields are omitted when empty. Lists documented as always present print `[]`. Certainty is a name (`unknown`, `ambiguous`, `inferred`, `exact`).
@@ -257,16 +257,18 @@ Refs are objects; an empty `group` is omitted in `proxy routes` refs. Optional f
 **DD-22. One release script, run by the controller.** `hack/release.sh <tag>`:
 1. Refuses unless HEAD is exactly `<tag>` and the tree is clean.
 2. Builds `CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=<tag> -X main.commit=<sha>"` for linux and darwin, amd64 and arm64.
-3. Packs each binary with `LICENSE` and `README.md` as `kgwctl_<tag>_<os>_<arch>.tar.gz` and writes `checksums.txt` (SHA-256) and `commit.txt` (the full build commit) into `hack/release/out/` (git-ignored).
-4. Runs the host binary's `version --client` and checks it prints `<tag>`.
-5. Prints the publish steps below. The script never pushes and never publishes.
+3. Writes into its own directory, `hack/release/out/<tag>/` (git-ignored). It refuses when that directory exists and is not empty, so no earlier build can mix in. A dry run (`RELEASE_DRY_RUN=1`) writes to `hack/release/out/dry-run/<tag>/` instead, which it clears first, and never touches a tag directory.
+4. Packs each binary with `LICENSE` and `README.md` as `kgwctl_<tag>_<os>_<arch>.tar.gz`. It writes `checksums.txt` over exactly those four archives, named one by one, never by glob; `commit.txt` (the full build commit); and `publish-files.txt`, the four archive paths plus `checksums.txt`, one per line.
+5. Runs the host binary's `version --client` and checks it prints `<tag>`.
+6. Prints the publish steps below, with the file list read from `publish-files.txt`. The script never pushes and never publishes.
 
 **Close sequence (controller, after the owner's go-ahead), in this order:**
-1. Tag `<tag>` on the merged main commit and run `hack/release.sh <tag>`.
+1. Tag `<tag>` on the merged main commit and run `hack/release.sh <tag>` (not a dry run). It writes `hack/release/out/<tag>/` and refuses if that directory is not empty.
 2. Push exactly that tag: `git push origin refs/tags/<tag>`.
-3. Check that the remote tag resolves to the build commit: `git ls-remote origin "refs/tags/<tag>^{}" "refs/tags/<tag>"` (the dereferenced line for an annotated tag) equals `commit.txt`. Stop on a mismatch.
-4. In a clean `GOPATH` and `GOMODCACHE` under `.agents-tmp/`, run `go install github.com/DuncanDoyle/kgwctl/cmd/kgwctl@<tag>` and check `version --client` prints `<tag>` (R16). If the module proxy has not seen the tag yet, retry with `GOPROXY=direct`.
-5. `gh release create <tag> --verify-tag --title <tag> --notes-file <file> hack/release/out/*.tar.gz hack/release/out/checksums.txt`. `--verify-tag` makes `gh` fail instead of creating a missing tag from the default branch.
+3. Check that the remote tag resolves to the build commit: `git ls-remote origin "refs/tags/<tag>^{}" "refs/tags/<tag>"` (the dereferenced line for an annotated tag) equals `hack/release/out/<tag>/commit.txt`. Stop on a mismatch.
+4. Check that `hack/release/out/<tag>/checksums.txt` lists exactly the four archive names of `publish-files.txt`, and that `shasum -a 256 -c` passes on them.
+5. In a clean `GOPATH` and `GOMODCACHE` under `.agents-tmp/`, run `go install github.com/DuncanDoyle/kgwctl/cmd/kgwctl@<tag>` and check `version --client` prints `<tag>` (R16). If the module proxy has not seen the tag yet, retry with `GOPROXY=direct`.
+6. `gh release create <tag> --verify-tag --title <tag> --notes-file <file>` followed by the five paths in `publish-files.txt`, as listed, never a glob. `--verify-tag` makes `gh` fail instead of creating a missing tag from the default branch.
 
 No new Go dependency, no CI release job, no signing. (inferred: owner asked for the smallest thing.)
 
@@ -274,7 +276,8 @@ No new Go dependency, no CI release job, no signing. (inferred: owner asked for 
 - **Unit, `internal/proxyview`.** Every Phase 3 case carried over to the new API: exact selection, ambiguous without metadata, a single survivor that Known left is not a match, warming listener under narrowing, parser warning, policy chain, response order with an unknown side, rule selection, parse error, narrowed note in the full tree, ambiguous per route config, no listeners after narrowing, unresolved never matches, unresolved ignores the vhost prefix, ambiguous judged on all readings.
 - **Strategy, command boundary.** One capture (`policies.json`, Known with and without `proxy/orders-kgwctl`) under `strict` and `known`: R2/R20 and R3/R19, as text and JSON. Live fake-dialer `collide-meta.json` under both (R21). Live with and without `--route`, listing allowed and denied, both strategies: stdout and stderr exactly as R23 and R24. `--file --select known` and `--select bogus`: exit 2 before any read (R22). The normalised marker with kept claims that differ only in `IndexCertainty`, `Incomplete` or `Exhaustive`, through text and JSON, with the default and a wrapping module (R26).
 - **Warnings.** A retained HCM with no routes after pruning and an ECDS slot warning; one slot warning under two routes; a pruned-subject warning: each once in JSON and once in the text block, none inline (R10). A dropped claim under two wrapper names: byte-equal output, kgwctl's message, no claim ID or module name (R12b).
-- **Payload.** An unresolved ECDS network filter (R15b). `routeConfig.source` and `unusedRouteConfigs` on a hand-built dump with one source used by two HCMs, two sources with one name, and one unused source.
+- **Payload.** An unresolved ECDS network filter (R15b) and a present-but-ambiguous HTTP ECDS entry (R15c). `routeConfig.source` on a hand-built dump with one source used by two HCMs and two sources with one name; no field lists unjoined sources.
+- **Release.** A dry run writes only under `hack/release/out/dry-run/<tag>/`; a real run refuses a non-empty `hack/release/out/<tag>/`; `checksums.txt` and `publish-files.txt` name exactly the four archives.
 - **Seam.** Under both strategies (R25), a wrapping module named `example` that delegates to `kgateway.New()`: same `Select` result, byte-equal text and JSON on every golden case (R11). A wrapper that adds one `PolicyRecord`: in the payload and the text (R12). A wrapper whose `FilterLink` places an inner record on a slot, through `pkg/cli` (R12a). Duplicate names: exit 2 (R13). `examples/downstream` passes a wrapper through `cli.WithProvenanceModules`.
 - **Hygiene.** No `Claim.Module` read and no `kgateway.ModuleName` in kgwctl's non-test code (DD-9). The binary dependency test allows `pkg/envoy/{parser,chain,model,render,provenance}` and `pkg/adapter/kgateway` only. The model coverage test of DD-13.
 - **Command boundary, `internal/app`.** Text, JSON and YAML goldens per recorded dump; live tests with the fake dialer and envtest (Known, narrowing, deadline, list denied); exit 2 paths unchanged. Every golden diff is read and the expected differences of §3.3 are confirmed in the sub-phase record; a golden is never accepted only because `-update` wrote it.
