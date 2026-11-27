@@ -1,14 +1,18 @@
 package proxyview_test
 
 import (
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/DuncanDoyle/xdsview/pkg/envoy/model"
 )
 
 // modelTypes are the xdsview model types the payload is built from (DD-13).
+// TestCoverageReachesAll checks that no model type a listed one holds is missing.
 var modelTypes = []any{
+	model.Ref{},
 	model.Snapshot{}, model.Coverage{}, model.SectionCoverage{}, model.Warning{},
 	model.Listener{}, model.ListenerState{}, model.ListenerError{},
 	model.NetworkFilterChain{}, model.NetworkFilter{}, model.TLSContext{}, model.Discovery{},
@@ -21,6 +25,7 @@ var modelTypes = []any{
 
 // mapped names where each model field lands in the payload.
 var mapped = map[string]string{
+	"Ref.Group": "group", "Ref.Kind": "kind", "Ref.Namespace": "namespace", "Ref.Name": "name",
 	"Snapshot.Capture": "capture", "Snapshot.Listeners": "listeners", "Snapshot.Coverage": "sections",
 	"Snapshot.Warnings": "warnings", "Snapshot.RouteConfigs": "hcm.routeConfig (joined sources)",
 	"Coverage.Sections": "sections", "SectionCoverage.Type": "sections[].type", "SectionCoverage.Status": "sections[].status",
@@ -97,8 +102,24 @@ var leftOut = map[string]string{
 // TestPayloadCoversModel fails when an xdsview model field is neither mapped
 // nor left out, so a bump cannot drop data in silence.
 func TestPayloadCoversModel(t *testing.T) {
-	seen := map[string]bool{}
-	for _, v := range modelTypes {
+	problems, seen := coverage(modelTypes)
+	for _, p := range problems {
+		t.Error(p)
+	}
+	for _, table := range []map[string]string{mapped, leftOut} {
+		for key := range table {
+			if !seen[key] {
+				t.Errorf("table names %s, which the model lacks", key)
+			}
+		}
+	}
+}
+
+// coverage returns each exported field of types that is neither or both
+// mapped and left out, and every field key it saw.
+func coverage(types []any) (problems []string, seen map[string]bool) {
+	seen = map[string]bool{}
+	for _, v := range types {
 		typ := reflect.TypeOf(v)
 		for i := range typ.NumField() {
 			f := typ.Field(i)
@@ -111,17 +132,66 @@ func TestPayloadCoversModel(t *testing.T) {
 			_, l := leftOut[key]
 			switch {
 			case !m && !l:
-				t.Errorf("model field %s (%s) is neither mapped nor left out", key, f.Type)
+				problems = append(problems, fmt.Sprintf("model field %s (%s) is neither mapped nor left out", key, f.Type))
 			case m && l:
-				t.Errorf("model field %s is both mapped and left out", key)
+				problems = append(problems, fmt.Sprintf("model field %s is both mapped and left out", key))
 			}
 		}
 	}
-	for _, table := range []map[string]string{mapped, leftOut} {
-		for key := range table {
-			if !seen[key] {
-				t.Errorf("table names %s, which the model lacks", key)
+	return problems, seen
+}
+
+// TestCoverageListsRef: model.Ref, which the payload projects directly, is covered.
+func TestCoverageListsRef(t *testing.T) {
+	for _, v := range modelTypes {
+		if reflect.TypeOf(v) == reflect.TypeOf(model.Ref{}) {
+			return
+		}
+	}
+	t.Error("modelTypes lacks model.Ref")
+}
+
+// TestCoverageFailsOnNewField: a copy of model.Ref with one more exported
+// field fails the check until that field is mapped or left out.
+func TestCoverageFailsOnNewField(t *testing.T) {
+	type Ref struct {
+		Group, Kind, Namespace, Name string
+		SectionName                  string // the added field
+	}
+	problems, _ := coverage([]any{Ref{}})
+	if len(problems) != 1 || !strings.Contains(problems[0], "Ref.SectionName") {
+		t.Errorf("problems %q, want one for Ref.SectionName", problems)
+	}
+}
+
+// TestCoverageReachesAll: every xdsview model struct a listed type holds is
+// listed too, so a new nested type cannot bypass the check.
+func TestCoverageReachesAll(t *testing.T) {
+	listed := map[reflect.Type]bool{}
+	for _, v := range modelTypes {
+		listed[reflect.TypeOf(v)] = true
+	}
+	modelPkg := reflect.TypeOf(model.Ref{}).PkgPath()
+	var visit func(reflect.Type)
+	seen := map[reflect.Type]bool{}
+	visit = func(typ reflect.Type) {
+		for typ.Kind() == reflect.Pointer || typ.Kind() == reflect.Slice || typ.Kind() == reflect.Map {
+			typ = typ.Elem()
+		}
+		if typ.Kind() != reflect.Struct || typ.PkgPath() != modelPkg || seen[typ] {
+			return
+		}
+		seen[typ] = true
+		if !listed[typ] {
+			t.Errorf("model type %s is reachable but not in modelTypes", typ.Name())
+		}
+		for i := range typ.NumField() {
+			if typ.Field(i).IsExported() {
+				visit(typ.Field(i).Type)
 			}
 		}
+	}
+	for typ := range listed {
+		visit(typ)
 	}
 }
