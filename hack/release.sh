@@ -34,20 +34,20 @@ else
   tag_commit="$(git rev-parse --verify --quiet "refs/tags/$tag^{commit}")" || die "no tag $tag"
   [ "$tag_commit" = "$commit" ] || die "HEAD $commit is not the commit of tag $tag ($tag_commit)"
   rel="hack/release/out/$tag"
-  if [ -d "$rel" ] && [ -n "$(ls -A "$rel")" ]; then
-    die "$rel exists and is not empty; remove it to rebuild"
-  fi
 fi
 
 out="$ROOT/$rel"
 if $dry_run; then
   rm -rf "$out"
+  mkdir -p "$out"
 else
+  # A plain mkdir claims the directory atomically: of two concurrent builds, one gets it.
+  mkdir -p "$(dirname "$out")"
+  mkdir "$out" 2>/dev/null || die "$rel exists; remove it to rebuild"
   # shellcheck disable=SC2317,SC2329 # invoked by the EXIT trap
   partial() { [ "$?" -eq 0 ] || echo "release: partial output left in $rel; remove it to rebuild" >&2; }
   trap partial EXIT
 fi
-mkdir -p "$out"
 stage="$out/.stage"
 mkdir -p "$stage"
 
@@ -111,10 +111,11 @@ Nothing is pushed or published. Close steps, in this order:
    git ls-remote origin "refs/tags/$tag^{}" "refs/tags/$tag"
 3. Check checksums.txt lists exactly the four archives of publish-files.txt, then:
    (cd $rel && shasum -a 256 -c checksums.txt)
-4. Clean install, then check 'version --client' prints $tag (retry with GOPROXY=direct if the proxy lacks the tag):
-   GOPATH="\$PWD/.agents-tmp/release-install/gopath" GOMODCACHE="\$PWD/.agents-tmp/release-install/modcache" \\
+4. Clean install into fresh directories, then check 'version --client' prints $tag (retry with GOPROXY=direct if the proxy lacks the tag):
+   mkdir -p .agents-tmp && d="\$(mktemp -d "\$PWD/.agents-tmp/release-install.XXXXXX")"
+   GOPATH="\$d/gopath" GOMODCACHE="\$d/modcache" GOBIN="\$d/bin" \\
      go install github.com/DuncanDoyle/kgwctl/cmd/kgwctl@$tag
-   .agents-tmp/release-install/gopath/bin/kgwctl version --client
+   "\$d/bin/kgwctl" version --client
 5. Publish:
    gh release create $tag --verify-tag --title $tag --notes-file <notes-file>$(for f in $files; do printf ' \\\n     %s' "$f"; done)
 EOF
