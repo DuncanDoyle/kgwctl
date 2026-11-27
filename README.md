@@ -162,7 +162,7 @@ ignored dump sections: BootstrapConfigDump, ClustersConfigDump, ScopedRoutesConf
 
 No. The route runs external auth first, then the local rate limit, then the transformation (`dynamic_modules/simple_mutations`), and last the router. Every filter but the router is off on the Gateway and switched on by this route. Each filter entry names the TrafficPolicy that configures it, and the `policies` line lists them all.
 
-`(inferred)` marks a value kgwctl read from a name or a table, not from metadata. `(from the command line)` marks the Gateway that `--gateway` named. The last line lists the dump sections kgwctl does not read. Live (`kgwctl proxy routes proxy -n kgwctl-proxy --route kgwctl-proxy/orders`), the first line names the Gateway, the pod and the capture time instead of the file.
+`(inferred)` marks a value kgwctl read from a name or a table, not from metadata. `(from the command line)` marks the Gateway that `--gateway` named. The last line of the tree lists the dump sections kgwctl does not read. Live (`kgwctl proxy routes proxy -n kgwctl-proxy --route kgwctl-proxy/orders`), the first line names the Gateway, the pod and the capture time instead of the file.
 
 After the tree, `--route` lists the routes it did not match (see below). Every warning comes last, once, as a `warning:` line.
 
@@ -196,7 +196,7 @@ kgwctl must find out which HTTPRoute each Envoy route comes from. Sometimes it c
 | Several readings, one of them in the cluster | ambiguous | ambiguous | match, chosen from known HTTPRoutes |
 | Several readings, more than one in the cluster | ambiguous | ambiguous | ambiguous |
 
-"Match" means the route is shown in the tree. "Listed as inferred" and "ambiguous" mean it is only named in a list after the tree, never shown as a match.
+"Match" means the route is shown in the tree. "Listed as inferred" and "ambiguous" mean it is only named in a list after the tree, never shown as a match. In the third row, `known` matches only when that one HTTPRoute is the one you gave to `--route`.
 
 **Why `strict` is the default.** `known` trusts the HTTPRoutes in the cluster now. But the proxy can still serve older config:
 
@@ -207,7 +207,11 @@ kgwctl must find out which HTTPRoute each Envoy route comes from. Sometimes it c
 
 `strict` never makes this guess. Use `known` only when you know the proxy has the latest config.
 
-**`--file` and route metadata.** `known` needs the cluster's HTTPRoutes, so `--select known` with `--file` is a usage error (exit `2`). `exact` and `strict` work with `--file`. Live, if kgwctl can't list the HTTPRoutes, for example because RBAC denies it, `known` chooses nothing and prints `Warning: --select known: no route can be chosen from known HTTPRoutes`. With route metadata on, all three values give the same answer.
+**`--file`.** `known` needs the cluster's HTTPRoutes, so `--select known` with `--file` is a usage error (exit `2`). `exact` and `strict` work with `--file`.
+
+**A failed list.** Live, if kgwctl can't list the HTTPRoutes, for example because RBAC denies it, `known` chooses nothing and prints `Warning: --select known: no route can be chosen from known HTTPRoutes` on stderr.
+
+**Route metadata.** For routes that carry route metadata, all three values give the same answer.
 
 **How to see the choice.** In the text:
 
