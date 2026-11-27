@@ -3,7 +3,7 @@ package main
 
 import (
 	"os"
-	"runtime"
+	"runtime/debug"
 
 	"github.com/DuncanDoyle/kgwctl/pkg/cli"
 )
@@ -15,6 +15,6 @@ var (
 )
 
 func main() {
-	build := cli.BuildInfo{Version: version, Commit: commit, GoVersion: runtime.Version()}
+	build := clientBuild(version, commit, debug.ReadBuildInfo)
 	os.Exit(cli.Execute(cli.NewRootCommand(cli.WithBuildInfo(build))))
 }
