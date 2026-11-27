@@ -1,0 +1,13 @@
+File ../../testdata/dumps/collide-meta.json · Gateway kgwctl-proxy/proxy
+listener~8080 [::]:8080 · active · port 8080 (inferred) · Gateway kgwctl-proxy/proxy (from the command line)
+└─ vhost listener~8080~orders_kgwctl_example [orders.kgwctl.example] · port 8080 (inferred)
+   └─ route / (prefix) · HTTPRoute kgwctl-proxy/orders · rule 0 · match 0
+      filters (request order):
+        1 ext_auth/kgwctl-proxy/authz       enabled by route · GatewayExtension kgwctl-proxy/authz (inferred) · TrafficPolicy kgwctl-proxy/orders-extauth (extAuth, inferred)
+        2 ratelimit/local                   enabled by route · TrafficPolicy kgwctl-proxy/orders-ratelimit (rateLimit.local, inferred)
+        3 dynamic_modules/simple_mutations  enabled by route · TrafficPolicy kgwctl-proxy/orders-transformation (transformation, inferred)
+        4 envoy.filters.http.router         on
+      not run: global_disable/ext_auth (off)
+      policies: TrafficPolicy kgwctl-proxy/orders-extauth (extAuth), TrafficPolicy kgwctl-proxy/orders-ratelimit (rateLimit.local), TrafficPolicy kgwctl-proxy/orders-transformation (transformation)
+      backend: kube_kgwctl-proxy_backend_8080
+ignored dump sections: BootstrapConfigDump, ClustersConfigDump, ScopedRoutesConfigDump, SecretsConfigDump

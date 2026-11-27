@@ -655,7 +655,7 @@ func TestNormaliseMergesReading(t *testing.T) {
 
 // TestParseStrategy: empty is strict; only strict and known are valid.
 func TestParseStrategy(t *testing.T) {
-	for in, want := range map[string]proxyview.Strategy{"": proxyview.StrategyStrict, "strict": proxyview.StrategyStrict, "known": proxyview.StrategyKnown} {
+	for in, want := range map[string]proxyview.Strategy{"": proxyview.StrategyStrict, "exact": proxyview.StrategyExact, "strict": proxyview.StrategyStrict, "known": proxyview.StrategyKnown} {
 		if got, err := proxyview.ParseStrategy(in); err != nil || got != want {
 			t.Errorf("ParseStrategy(%q) = %q, %v; want %q", in, got, err, want)
 		}
@@ -825,11 +825,146 @@ func TestStrategyNoEffectWithoutRoute(t *testing.T) {
 	body := golden(t, "policies.json")
 	known := refs(orders, types.NamespacedName{Namespace: "kgwctl-proxy", Name: "public"})
 	var outs []string
-	for _, s := range []proxyview.Strategy{proxyview.StrategyStrict, proxyview.StrategyKnown} {
+	for _, s := range strategies {
 		v := build(t, body, proxyview.Options{Gateway: proxyGW, Known: known, Strategy: s})
 		outs = append(outs, text(t, v, proxyview.TextOptions{})+marshal(t, v.Payload(proxyview.Source{})))
 	}
-	if outs[0] != outs[1] {
-		t.Errorf("strict and known differ without --route:\n%s\n---\n%s", outs[0], outs[1])
+	for i, s := range strategies[1:] {
+		if outs[i+1] != outs[0] {
+			t.Errorf("%s differs from exact without --route:\n%s\n---\n%s", s, outs[0], outs[i+1])
+		}
+	}
+}
+
+var strategies = []proxyview.Strategy{proxyview.StrategyExact, proxyview.StrategyStrict, proxyview.StrategyKnown}
+
+// withoutStrategy blanks the selection strategy of a payload, to compare the rest.
+func withoutStrategy(p proxyview.ProxyRoutes) proxyview.ProxyRoutes {
+	if p.Selection != nil {
+		s := *p.Selection
+		s.Strategy = ""
+		p.Selection = &s
+	}
+	return p
+}
+
+// TestBuildExactSameCapture: R27 and R28, one capture with and one without
+// route metadata under all three strategies.
+func TestBuildExactSameCapture(t *testing.T) {
+	public := types.NamespacedName{Namespace: "kgwctl-proxy", Name: "public"}
+	for _, tc := range []struct {
+		dump  string
+		known []model.Ref
+		want  map[proxyview.Strategy][]string // matched route names
+	}{
+		// Metadata: the exact reading matches under every strategy.
+		{dump: "collide-meta.json", known: refs(orders, ordersKgwctl, public), want: map[proxyview.Strategy][]string{
+			proxyview.StrategyExact: collidingRoutes[1:], proxyview.StrategyStrict: collidingRoutes[1:], proxyview.StrategyKnown: collidingRoutes[1:]}},
+		// No metadata: nothing is exact, so exact matches what strict does: nothing.
+		{dump: "policies.json", known: refs(orders, public), want: map[proxyview.Strategy][]string{
+			proxyview.StrategyExact: nil, proxyview.StrategyStrict: nil, proxyview.StrategyKnown: collidingRoutes}},
+	} {
+		body := golden(t, tc.dump)
+		views := map[proxyview.Strategy]proxyview.View{}
+		for _, s := range strategies {
+			v := build(t, body, proxyview.Options{Gateway: proxyGW, Known: tc.known, Selection: proxyview.Selection{Route: orders}, Strategy: s})
+			if got := names(v, v.Routes()); !slices.Equal(got, tc.want[s]) || len(v.Inferred) != 0 {
+				t.Errorf("%s %s: matched %v, inferred %v; want %v and none", tc.dump, s, got, v.Inferred, tc.want[s])
+			}
+			views[s] = v
+		}
+		e, s := views[proxyview.StrategyExact], views[proxyview.StrategyStrict]
+		if text(t, e, proxyview.TextOptions{}) != text(t, s, proxyview.TextOptions{}) {
+			t.Errorf("%s: exact and strict text differ", tc.dump)
+		}
+		ep, sp := e.Payload(proxyview.Source{}), s.Payload(proxyview.Source{})
+		if ep.Selection.Strategy != "exact" || marshal(t, withoutStrategy(ep)) != marshal(t, withoutStrategy(sp)) {
+			t.Errorf("%s: exact payload differs from strict other than in strategy %q", tc.dump, ep.Selection.Strategy)
+		}
+	}
+}
+
+// TestBuildExactListsInferred: R29, a route strict matches on a name reading
+// is listed as inferred under exact, in the text and the payload.
+func TestBuildExactListsInferred(t *testing.T) {
+	body := handBuilt(t, "levels.json")
+	strict := build(t, body, proxyview.Options{Selection: proxyview.Selection{Route: shopOrders}})
+	if len(strict.Routes()) != 1 {
+		t.Fatalf("strict: routes %v, want the inferred shop/orders route", strict.Routes())
+	}
+	id := strict.Routes()[0]
+	r, _ := strict.Full.Route(id)
+	for _, s := range []proxyview.Strategy{proxyview.StrategyStrict, proxyview.StrategyKnown} {
+		if v := build(t, body, proxyview.Options{Selection: proxyview.Selection{Route: shopOrders}, Strategy: s}); text(t, v, proxyview.TextOptions{}) != text(t, strict, proxyview.TextOptions{}) {
+			t.Errorf("%s: text differs from strict", s)
+		}
+	}
+
+	v := build(t, body, proxyview.Options{Selection: proxyview.Selection{Route: shopOrders}, Strategy: proxyview.StrategyExact})
+	if len(v.Routes()) != 0 || !slices.Equal(v.Inferred, []model.ID{id}) || v.Matched() != 0 {
+		t.Fatalf("exact: routes %v, inferred %v, matched %d; want none, %s and 0", v.Routes(), v.Inferred, v.Matched(), id)
+	}
+	want := "no route matches HTTPRoute shop/orders\ninferred routes, not matched:\n  " + r.Name + " · HTTPRoute shop/orders · rule 0 · match 0 (inferred)\n"
+	if out := text(t, v, proxyview.TextOptions{}); out != want {
+		t.Errorf("exact text:\n%s\nwant:\n%s", out, want)
+	}
+	sel := v.Payload(proxyview.Source{}).Selection
+	if len(sel.Routes) != 0 || len(sel.Ambiguous) != 0 || len(sel.Inferred) != 1 {
+		t.Fatalf("exact selection %+v, want one inferred route only", sel)
+	}
+	if in := sel.Inferred[0]; in.ID != string(id) || len(in.Readings) != 1 || in.Readings[0].Certainty != "inferred" {
+		t.Errorf("inferred entry %+v, want %s with its one inferred reading", in, id)
+	}
+	if s := marshal(t, strict.Payload(proxyview.Source{})); !strings.Contains(s, `"inferred":[]`) {
+		t.Errorf("strict payload lacks an empty inferred list: %s", s)
+	}
+}
+
+// stripIndices removes the rule and match of kgwctl-proxy/orders' route
+// metadata, so the module reads them from the route name.
+func stripIndices(t *testing.T, body []byte) []byte {
+	t.Helper()
+	return edit(t, body, func(configs []any) []any {
+		for _, rc := range section(t, configs, ".RoutesConfigDump")["dynamic_route_configs"].([]any) {
+			for _, vh := range rc.(map[string]any)["route_config"].(map[string]any)["virtual_hosts"].([]any) {
+				for _, r := range vh.(map[string]any)["routes"].([]any) {
+					md, _ := r.(map[string]any)["metadata"].(map[string]any)
+					fm, _ := md["filter_metadata"].(map[string]any)
+					if src, ok := fm["dev.kgateway.route_source"].(map[string]any); ok && src["name"] == "orders" && src["namespace"] == "kgwctl-proxy" {
+						delete(src, "rule")
+						delete(src, "match")
+						return configs
+					}
+				}
+			}
+		}
+		t.Fatal("no kgwctl-proxy/orders route metadata")
+		return nil
+	})
+}
+
+// TestBuildExactInferredIndex: with --rule, exact also needs the rule index
+// to be exact; without --rule, the exact HTTPRoute is enough.
+func TestBuildExactInferredIndex(t *testing.T) {
+	body := stripIndices(t, golden(t, "collide-meta.json"))
+	rule := 0
+	for _, tc := range []struct {
+		s       proxyview.Strategy
+		rule    *int
+		matched int
+	}{
+		{proxyview.StrategyExact, nil, 1},
+		{proxyview.StrategyExact, &rule, 0},
+		{proxyview.StrategyStrict, &rule, 1},
+	} {
+		v := build(t, body, proxyview.Options{Selection: proxyview.Selection{Route: orders, Rule: tc.rule}, Strategy: tc.s})
+		if v.Matched() != tc.matched || len(v.Inferred) != 1-tc.matched {
+			t.Errorf("%s rule %v: matched %d, inferred %v; want %d", tc.s, tc.rule != nil, v.Matched(), v.Inferred, tc.matched)
+		}
+		if tc.matched == 0 {
+			if out := text(t, v, proxyview.TextOptions{}); !strings.Contains(out, "inferred routes, not matched:\n  "+collidingRoutes[1]+" · HTTPRoute kgwctl-proxy/orders · rule 0 · match 0 (partly from name)\n") {
+				t.Errorf("%s rule: text lacks the inferred route:\n%s", tc.s, out)
+			}
+		}
 	}
 }

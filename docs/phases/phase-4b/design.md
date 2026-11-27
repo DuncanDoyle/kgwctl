@@ -16,7 +16,7 @@ Terms used below, from the xdsview v0.7.0 contract:
 
 In scope:
 1. `proxy routes` on xdsview v0.7.0: parse, `chain.Effective`, `provenance.Compose`, `kgateway.Select` or `kgateway.Narrow`, `model.Prune`, `render.Text`.
-2. A route selection strategy, `--select strict|known` (D-032). `strict`, the default, is today's rule (D-022).
+2. A route selection strategy, `--select exact|strict|known` (D-032). `strict`, the default, is today's rule (D-022).
 3. The module set as a `pkg/cli` seam for downstream builds (xdsview D-023).
 4. kgwctl's own `ProxyRoutes` payload, built from the snapshot, the chains and the claim index.
 5. Envelope `v1alpha2` for every kind.
@@ -44,7 +44,7 @@ In scope:
 ## 3. Behaviour
 
 ### 3.1 Commands and flags
-One new flag, `proxy routes --select strict|known` (default `strict`, §4.2). No other flag, argument or exit code changes. `proxy routes` exits `0` when it prints and `2` on any error. New exit-2 causes: `--select known` with `--file`, an unknown `--select` value (both usage errors, before any I/O), and a downstream build that passes two modules with the same name (§4.3).
+One new flag, `proxy routes --select exact|strict|known` (default `strict`, §4.2). No other flag, argument or exit code changes. `proxy routes` exits `0` when it prints and `2` on any error. New exit-2 causes: `--select known` with `--file`, an unknown `--select` value (both usage errors, before any I/O), and a downstream build that passes two modules with the same name (§4.3).
 
 ### 3.2 Requirements (input → output)
 Fixtures are the recorded dumps in `testdata/dumps/` and the live fixtures of `hack/live/proxy-fixtures.yaml`. "Colliding routes" are the two Envoy routes whose names read as both `kgwctl-proxy/orders` and `proxy/orders-kgwctl`.
@@ -83,6 +83,9 @@ Fixtures are the recorded dumps in `testdata/dumps/` and the live fixtures of `h
 | R24 | Live, `--route kgwctl-proxy/orders`, HTTPRoute list denied | Exit 0 under both. Text stdout byte-equal. JSON equal except `selection.strategy`. stderr under `strict`: `Warning: could not list HTTPRoutes: …`. stderr under `known`: that line, then `Warning: --select known: no route can be chosen from known HTTPRoutes`. |
 | R25 | R1, R3 and R19 with a wrapping module (R11) | Byte-equal to the default module under each strategy. |
 | R26 | As R19, where the one kept reading comes from two claims that differ only in `IndexCertainty`, `Incomplete` or `Exhaustive` | The route is chosen. Its text row shows the one reading with `(chosen from known HTTPRoutes)`, never `ambiguous:`. JSON `chosenBy: "known"`. Same with a wrapping module. |
+| R27 | `--file collide-meta.json --route kgwctl-proxy/orders --select exact`; live the same under `exact`, `strict` and `known` | Exit 0. Same text as `strict`: the exact route is matched. JSON equal to `strict` except `selection.strategy: "exact"`; `chosenBy: "select"`, `inferred: []`. |
+| R28 | `--file policies.json --route kgwctl-proxy/orders --select exact`; live the same under all three | Exit 0. Nothing is exact, so nothing matches: same text and JSON as `strict` (R1, R3) except `selection.strategy`. `known` still chooses as in R19. |
+| R29 | A route whose one reading is `inferred` (name only, such as `shop/orders` in `levels.json`), `--route` to it, `--select exact`; and a route with exact metadata but rule and match from the name, with `--rule 0` | Not matched: `no route matches …`, then `inferred routes, not matched:` and the route with its reading (`(inferred)`, or `(partly from name)`). JSON: in `selection.inferred` with its readings; `routes: []`. `strict` matches both; `exact` without `--rule` matches the second. |
 
 ### 3.3 What changes for users
 | Area | Change |
@@ -115,7 +118,8 @@ body ─► parser.Parse(Capture) ─► chain.Effective ───────�
 **DD-3. Known.** Live, Known is the cluster's HTTPRoutes, listed as today (all namespaces, paged, only HTTPRoutes, by `--request-timeout`). With `--file`, Known is empty. `--route` is never added to Known, unlike krp.
 
 ### 4.2 Selection strategy (D-032)
-**DD-4. `--select strict|known` picks the rule; `strict` is the default (D-032).**
+**DD-4. `--select exact|strict|known` picks the rule; `strict` is the default (D-032).** Each value adds one kind of evidence to the one before it.
+- `exact` (owner, 2026-11-27): a match is a route in `Select(...).Routes` whose resolved reading (`provenance.Resolve`) has certainty `exact`. With `--rule`, the reading's `IndexCertainty` must also be exact; unset means the reading's own certainty applies. kgwctl reads certainty only, never `Claim.Module` or evidence kinds. With kgateway, exact readings come from route metadata. A route of `Select(...).Routes` that fails this is not matched: it is listed under `inferred routes, not matched:` with its reading as the tree prints it, and in `selection.inferred` with its key fields and `readings`. Ambiguous and unresolved routes are listed as under `strict`. Selected routes are `chosenBy: "select"`. `exact` needs no Known, so it works with `--file`. (inferred: the list's text and shape)
 - `strict`: a match is a route in `Select(...).Routes`, and nothing else. A route that `Select` leaves ambiguous is never selected, also when Known narrowed it to one matching reading. Reason for the default: Envoy can still serve the route of a deleted HTTPRoute whose name collides with a live one.
 - `known`: the matches are `Select(...).Routes`, plus each route in `Select(...).Narrowed` whose `Kept` claims name exactly one reading that matches the query. Readings are compared as `provenance.Resolve` merges them: HTTPRoute, rule index, rule name and match index. This is the rule of xdsview D-022 choice 1, as krp's `newSelection` and `oneReading` implement it (`cmd/krp/output.go`). Such a route leaves the ambiguous list and is marked `chosenBy: "known"`. All other routes are as in `strict`.
 - The rule lives in kgwctl (`internal/proxyview`), over `kgateway.Select`'s result. `Select` is not changed and kgwctl does not import krp.
@@ -228,8 +232,9 @@ The renderer prints no warning. `render.Text` takes subject warnings only from `
 | Field | Meaning |
 |---|---|
 | `query` | `route` (Ref) and `ruleIndex` when `--rule` is set. |
-| `strategy` | `strict` or `known`: the `--select` value used. Always present. |
+| `strategy` | `exact`, `strict` or `known`: the `--select` value used. Always present. |
 | `routes` | The matched routes: `id`, `routeConfig`, `virtualHost`, `name`, `chosenBy` (`select` for a route in `Select(...).Routes`, `known` for one `--select known` added). Every one is in `listeners`. |
+| `inferred` | Under `exact`, routes of `Select(...).Routes` whose reading, or with `--rule` whose indices, are below exact: the key fields plus `readings`. Not in `listeners`. `[]` otherwise. |
 | `ambiguous` | Routes with several readings, at least one matching, or one left only by Known and not chosen: the same key fields plus `readings` and `narrowed`. Not in `listeners`. |
 | `unresolved` | Routes with no reading whose name carries the HTTPRoute's marker: the key fields. Not in `listeners`. |
 

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/DuncanDoyle/xdsview/pkg/adapter/kgateway"
 	"github.com/DuncanDoyle/xdsview/pkg/envoy/chain"
@@ -37,20 +38,43 @@ type Strategy string
 
 // Selection strategies.
 const (
+	StrategyExact  Strategy = "exact"  // a route kgateway.Select selects whose reading is exact
 	StrategyStrict Strategy = "strict" // a match is a route kgateway.Select selects, nothing else
 	StrategyKnown  Strategy = "known"  // also a route Known narrowed to one matching reading
 )
 
 // ParseStrategy parses a --select value: empty is StrategyStrict, and any
-// value other than "strict" or "known" is an error.
+// value other than "exact", "strict" or "known" is an error.
 func ParseStrategy(s string) (Strategy, error) {
 	switch st := Strategy(s); st {
 	case "":
 		return StrategyStrict, nil
-	case StrategyStrict, StrategyKnown:
+	case StrategyExact, StrategyStrict, StrategyKnown:
 		return st, nil
 	}
-	return "", fmt.Errorf("unknown selection strategy %q: want strict or known", s)
+	return "", fmt.Errorf("unknown selection strategy %q: want exact, strict or known", s)
+}
+
+// notExact returns the routes whose one reading is not exact; with rule, also
+// those whose rule and match indices are not exact (DD-4). It reads certainty only.
+func notExact(ix *provenance.Index, routes []model.ID, rule bool) []model.ID {
+	var out []model.ID
+	for _, id := range routes {
+		res := provenance.Resolve[provenance.RouteSource](ix, id)
+		ok := res.Certainty == model.Exact && len(res.Candidates) == 1
+		if ok && rule {
+			// An unset IndexCertainty means the reading's own certainty applies.
+			ic := res.Candidates[0].IndexCertainty
+			if ic == model.Unknown {
+				ic = res.Certainty
+			}
+			ok = ic == model.Exact
+		}
+		if !ok {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // chooseKnown returns the narrowings of sel whose kept claims name one
@@ -100,6 +124,7 @@ type View struct {
 	Narrowed       []provenance.Narrowing // what Known narrowed: Select's under --route, else Narrow's
 	Selected       *kgateway.Selection    // nil without --route
 	Chosen         []provenance.Narrowing // normalised narrowings of the routes --select known chose (DD-6)
+	Inferred       []model.ID             // Select's routes --select exact left unmatched: a reading below exact
 	Strategy       Strategy
 	Selection      Selection
 	Gateway        *types.NamespacedName
@@ -113,9 +138,9 @@ func HTTPRouteRef(n types.NamespacedName) model.Ref {
 
 // Build parses body and runs xdsview's pipeline (design §4.1): chain.Effective,
 // provenance.Compose, kgateway.Select under --route or kgateway.Narrow with
-// Known, then model.Prune under --route to Select's routes and, under
-// StrategyKnown, the chosen ones. Valid JSON without a configs array is
-// ErrNotConfigDump; a Compose error wraps ErrCompose.
+// Known, then model.Prune under --route to the matched routes (see Routes).
+// Valid JSON without a configs array is ErrNotConfigDump; a Compose error
+// wraps ErrCompose.
 func Build(body []byte, o Options) (View, error) {
 	sel := o.Selection
 	if sel.Rule != nil && *sel.Rule < 0 {
@@ -151,8 +176,11 @@ func Build(body []byte, o Options) (View, error) {
 	q := kgateway.Query{Route: HTTPRouteRef(sel.Route), RuleIndex: sel.Rule, Known: o.Known}
 	s := kgateway.Select(ix, full, q)
 	v.Selected, v.Narrowed = &s, s.Narrowed
-	if strategy == StrategyKnown {
+	switch strategy {
+	case StrategyKnown:
 		v.Chosen = chooseKnown(q, s)
+	case StrategyExact:
+		v.Inferred = notExact(ix, s.Routes, sel.Rule != nil)
 	}
 	keep := map[model.ID]bool{}
 	for _, id := range v.Routes() {
@@ -162,13 +190,18 @@ func Build(body []byte, o Options) (View, error) {
 	return v, nil
 }
 
-// Routes returns the matched routes: Select's routes, then the chosen ones.
-// It is empty without --route.
+// Routes returns the matched routes: Select's routes but the inferred ones,
+// then the chosen ones. It is empty without --route.
 func (v View) Routes() []model.ID {
 	if v.Selected == nil {
 		return nil
 	}
-	out := append([]model.ID(nil), v.Selected.Routes...)
+	var out []model.ID
+	for _, id := range v.Selected.Routes {
+		if !slices.Contains(v.Inferred, id) {
+			out = append(out, id)
+		}
+	}
 	for _, n := range v.Chosen {
 		out = append(out, n.Route)
 	}

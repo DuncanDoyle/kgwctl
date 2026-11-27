@@ -1,6 +1,7 @@
 package proxyview
 
 import (
+	"slices"
 	"time"
 
 	"github.com/DuncanDoyle/xdsview/pkg/envoy/model"
@@ -336,8 +337,16 @@ type SelectionOut struct {
 	Query      Query            `json:"query"`
 	Strategy   string           `json:"strategy"`
 	Routes     []MatchedRoute   `json:"routes"`
+	Inferred   []InferredRoute  `json:"inferred"`
 	Ambiguous  []AmbiguousRoute `json:"ambiguous"`
 	Unresolved []RouteKey       `json:"unresolved"`
+}
+
+// InferredRoute is a route --select exact listed, not matched: its one
+// reading, or with --rule its indices, are below exact.
+type InferredRoute struct {
+	RouteKey
+	Readings []Reading `json:"readings"`
 }
 
 // Query is --route and --rule.
@@ -579,9 +588,13 @@ func (v View) filters(route model.ID, c model.EffectiveChain) []Filter {
 func (v View) selectionOut() *SelectionOut {
 	s := v.Selected
 	out := &SelectionOut{Query: Query{Route: ref(HTTPRouteRef(v.Selection.Route)), RuleIndex: v.Selection.Rule},
-		Strategy: string(v.Strategy), Routes: []MatchedRoute{}, Ambiguous: []AmbiguousRoute{}, Unresolved: []RouteKey{}}
+		Strategy: string(v.Strategy), Routes: []MatchedRoute{}, Inferred: []InferredRoute{}, Ambiguous: []AmbiguousRoute{}, Unresolved: []RouteKey{}}
 	keys := routeKeys(v.Full)
 	for _, id := range s.Routes {
+		if slices.Contains(v.Inferred, id) {
+			out.Inferred = append(out.Inferred, InferredRoute{RouteKey: keys[id], Readings: v.origin(id).Readings})
+			continue
+		}
 		out.Routes = append(out.Routes, MatchedRoute{RouteKey: keys[id], ChosenBy: "select"})
 	}
 	for _, n := range v.Chosen {

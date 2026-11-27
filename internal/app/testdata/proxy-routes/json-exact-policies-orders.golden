@@ -1,0 +1,113 @@
+{
+  "schemaVersion": "kgwctl.kgateway.dev/v1alpha2",
+  "kind": "ProxyRoutes",
+  "item": {
+    "source": {
+      "file": "../../testdata/dumps/policies.json"
+    },
+    "capture": "unverified",
+    "listeners": [],
+    "sections": [
+      {
+        "type": "type.googleapis.com/envoy.admin.v3.BootstrapConfigDump",
+        "status": "ignored"
+      },
+      {
+        "type": "type.googleapis.com/envoy.admin.v3.ClustersConfigDump",
+        "status": "ignored"
+      },
+      {
+        "type": "type.googleapis.com/envoy.admin.v3.ListenersConfigDump",
+        "status": "parsed"
+      },
+      {
+        "type": "type.googleapis.com/envoy.admin.v3.ScopedRoutesConfigDump",
+        "status": "ignored"
+      },
+      {
+        "type": "type.googleapis.com/envoy.admin.v3.RoutesConfigDump",
+        "status": "parsed"
+      },
+      {
+        "type": "type.googleapis.com/envoy.admin.v3.SecretsConfigDump",
+        "status": "ignored"
+      }
+    ],
+    "selection": {
+      "query": {
+        "route": {
+          "group": "gateway.networking.k8s.io",
+          "kind": "HTTPRoute",
+          "namespace": "kgwctl-proxy",
+          "name": "orders"
+        }
+      },
+      "strategy": "exact",
+      "routes": [],
+      "inferred": [],
+      "ambiguous": [
+        {
+          "id": "L0/C0/N0/RC/V0/R0",
+          "routeConfig": "listener~8080",
+          "virtualHost": "listener~8080~orders-kgwctl_proxy_example",
+          "name": "listener~8080~orders-kgwctl_proxy_example-route-0-httproute-orders-kgwctl-proxy-0-0-matcher-0",
+          "readings": [
+            {
+              "route": {
+                "group": "gateway.networking.k8s.io",
+                "kind": "HTTPRoute",
+                "namespace": "kgwctl-proxy",
+                "name": "orders"
+              },
+              "ruleIndex": 0,
+              "matchIndex": 0,
+              "certainty": "inferred"
+            },
+            {
+              "route": {
+                "group": "gateway.networking.k8s.io",
+                "kind": "HTTPRoute",
+                "namespace": "proxy",
+                "name": "orders-kgwctl"
+              },
+              "ruleIndex": 0,
+              "matchIndex": 0,
+              "certainty": "inferred"
+            }
+          ]
+        },
+        {
+          "id": "L0/C0/N0/RC/V1/R0",
+          "routeConfig": "listener~8080",
+          "virtualHost": "listener~8080~orders_kgwctl_example",
+          "name": "listener~8080~orders_kgwctl_example-route-0-httproute-orders-kgwctl-proxy-0-0-matcher-0",
+          "readings": [
+            {
+              "route": {
+                "group": "gateway.networking.k8s.io",
+                "kind": "HTTPRoute",
+                "namespace": "kgwctl-proxy",
+                "name": "orders"
+              },
+              "ruleIndex": 0,
+              "matchIndex": 0,
+              "certainty": "inferred"
+            },
+            {
+              "route": {
+                "group": "gateway.networking.k8s.io",
+                "kind": "HTTPRoute",
+                "namespace": "proxy",
+                "name": "orders-kgwctl"
+              },
+              "ruleIndex": 0,
+              "matchIndex": 0,
+              "certainty": "inferred"
+            }
+          ]
+        }
+      ],
+      "unresolved": []
+    }
+  }
+}

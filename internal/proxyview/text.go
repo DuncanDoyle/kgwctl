@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/DuncanDoyle/xdsview/pkg/envoy/model"
@@ -89,20 +90,20 @@ func (v View) selectionText(b *bytes.Buffer) {
 	if v.Matched() == 0 {
 		fmt.Fprintln(b, clean("no route matches "+target(v.Selection)))
 	}
-	ambiguous, unresolved := idSet(s.Ambiguous), idSet(s.Unresolved)
+	ambiguous, unresolved, inferred := idSet(s.Ambiguous), idSet(s.Unresolved), idSet(v.Inferred)
 	for _, n := range v.Chosen {
 		delete(ambiguous, n.Route)
 	}
 	type entry struct {
-		rc, name string
-		route    model.ID
-		unres    bool
+		rc, name   string
+		route      model.ID
+		unres, inf bool
 	}
 	var list []entry
 	seen := map[model.ID]bool{}
 	names := map[string]int{}
 	walk(v.Full, func(hcm model.HCMConfig, _ model.VirtualHost, r model.Route) {
-		if !ambiguous[r.ID] && !unresolved[r.ID] {
+		if !ambiguous[r.ID] && !unresolved[r.ID] && !inferred[r.ID] {
 			return
 		}
 		key := r.SourcePath
@@ -114,8 +115,23 @@ func (v View) selectionText(b *bytes.Buffer) {
 		}
 		seen[key] = true
 		names[r.Name]++
-		list = append(list, entry{rc: hcm.RouteConfig.Name, name: r.Name, route: r.ID, unres: unresolved[r.ID]})
+		list = append(list, entry{rc: hcm.RouteConfig.Name, name: r.Name, route: r.ID, unres: unresolved[r.ID], inf: inferred[r.ID]})
 	})
+	label := func(e entry) string {
+		if names[e.name] > 1 {
+			return e.name + " · route config " + e.rc
+		}
+		return e.name
+	}
+	// Inferred routes first, each with its reading as the tree prints it.
+	routeLabel := provenance.Labels(v.Index, nil)
+	for i, e := range slices.DeleteFunc(slices.Clone(list), func(e entry) bool { return !e.inf }) {
+		if i == 0 {
+			fmt.Fprintln(b, "inferred routes, not matched:")
+		}
+		fmt.Fprintln(b, clean("  "+strings.Join(append([]string{label(e)}, routeLabel(render.Row{Subject: e.route, Route: e.route})...), " · ")))
+	}
+	list = slices.DeleteFunc(list, func(e entry) bool { return e.inf })
 	var amb, unres bool
 	for _, e := range list {
 		amb, unres = amb || !e.unres, unres || e.unres
@@ -129,10 +145,7 @@ func (v View) selectionText(b *bytes.Buffer) {
 		fmt.Fprintln(b, "ambiguous routes, not matched:")
 	}
 	for _, e := range list {
-		label := e.name
-		if names[e.name] > 1 {
-			label += " · route config " + e.rc
-		}
+		label := label(e)
 		if e.unres {
 			fmt.Fprintln(b, clean("  "+label+" · origin unresolved"))
 			continue

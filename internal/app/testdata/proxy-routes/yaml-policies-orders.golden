@@ -58,6 +58,7 @@ item:
         ruleIndex: 0
       routeConfig: listener~8080
       virtualHost: listener~8080~orders_kgwctl_example
+    inferred: []
     query:
       route:
         group: gateway.networking.k8s.io

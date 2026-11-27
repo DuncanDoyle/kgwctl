@@ -752,6 +752,35 @@ func TestProxyRoutesSelectFlag(t *testing.T) {
 		}
 	})
 
+	t.Run("R27-R28-three-strategies", func(t *testing.T) {
+		for _, tc := range []struct {
+			name      string
+			body      []byte
+			knownSame bool // known prints what strict prints
+		}{{"collide-meta", collide, true}, {"policies", policies, false}} {
+			out := map[string]string{}
+			for _, s := range []string{"exact", "strict", "known"} {
+				for _, o := range []string{"text", "json"} {
+					r := runLive(t, allowed, tc.body, s, o, route...)
+					if r.code != 0 || r.stderr != "" {
+						t.Fatalf("%s %s %s: exit %d, stderr %q; want 0 and empty", tc.name, s, o, r.code, r.stderr)
+					}
+					out[s+o] = r.stdout
+				}
+			}
+			exactJSON := strings.Replace(out["exactjson"], `"strategy": "exact"`, `"strategy": "strict"`, 1)
+			if out["exacttext"] != out["stricttext"] || exactJSON != out["strictjson"] {
+				t.Errorf("%s: exact differs from strict other than in selection.strategy:\n%s", tc.name, out["exacttext"])
+			}
+			if got := out["knowntext"] == out["stricttext"]; got != tc.knownSame {
+				t.Errorf("%s: known text equal to strict %v, want %v", tc.name, got, tc.knownSame)
+			}
+			if !strings.Contains(out["exactjson"], `"inferred": []`) {
+				t.Errorf("%s: exact JSON lacks an empty inferred list", tc.name)
+			}
+		}
+	})
+
 	t.Run("R19-known-chooses", func(t *testing.T) {
 		for _, o := range []string{"text", "json"} {
 			r := runLive(t, allowed, policies, "known", o, route...)
@@ -776,9 +805,11 @@ func TestProxyRoutesSelectFlag(t *testing.T) {
 			name, ctx string
 		}{{"allowed", allowed}, {"denied", denied}} {
 			for _, o := range []string{"text", "json"} {
-				s, k := runLive(t, tc.ctx, policies, "strict", o), runLive(t, tc.ctx, policies, "known", o)
-				if s.code != 0 || k.code != 0 || s.stdout != k.stdout || s.stderr != k.stderr {
-					t.Errorf("%s %s: exit %d and %d; stdout or stderr differ between strategies; stderr %q and %q", tc.name, o, s.code, k.code, s.stderr, k.stderr)
+				s, k, e := runLive(t, tc.ctx, policies, "strict", o), runLive(t, tc.ctx, policies, "known", o), runLive(t, tc.ctx, policies, "exact", o)
+				for _, x := range []result{k, e} {
+					if s.code != 0 || x.code != 0 || s.stdout != x.stdout || s.stderr != x.stderr {
+						t.Errorf("%s %s: exit %d and %d; stdout or stderr differ between strategies; stderr %q and %q", tc.name, o, s.code, x.code, s.stderr, x.stderr)
+					}
 				}
 				lines := stderrLines(k.stderr)
 				switch {
@@ -839,4 +870,60 @@ func TestProxyRoutesSelectFlag(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestProxyRoutesExactFile: --select exact works with --file (R27 to R29).
+func TestProxyRoutesExactFile(t *testing.T) {
+	kc := unreachableKubeconfig(t, "default")
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		// Route metadata: the exact route matches.
+		{name: "exact-collide-meta-orders", args: []string{"--file", dumpsDir + "collide-meta.json", "--gateway", "kgwctl-proxy/proxy", "--route", "kgwctl-proxy/orders"}},
+		// No metadata: nothing matches.
+		{name: "exact-policies-orders", args: []string{"--file", dumpsDir + "policies.json", "--route", "kgwctl-proxy/orders"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, o := range []string{"text", "json"} {
+				args := append(append([]string{"proxy", "routes", "-o", o}, tc.args...), "--select", "exact")
+				r := runRoutes(t, kc, app.ProxyTestHooks{}, args...)
+				if r.code != 0 || r.stderr != "" {
+					t.Fatalf("%s: exit %d, stderr %q; want 0 and empty", o, r.code, r.stderr)
+				}
+				name := tc.name
+				if o == "json" {
+					name = "json-" + name
+				}
+				golden(t, "proxy-routes", name, r.stdout)
+			}
+		})
+	}
+
+	// R29: a route strict matches on a name reading is inferred under exact.
+	args := []string{"proxy", "routes", "--file", "../proxyview/testdata/levels.json", "--route", "shop/orders"}
+	strict := runRoutes(t, kc, app.ProxyTestHooks{}, args...)
+	exact := runRoutes(t, kc, app.ProxyTestHooks{}, append(args, "--select", "exact")...)
+	if strict.code != 0 || strings.Contains(strict.stdout, "not matched") || !strings.Contains(strict.stdout, "HTTPRoute shop/orders · rule 0") {
+		t.Errorf("strict: exit %d, stdout:\n%s\nwant the route matched", strict.code, strict.stdout)
+	}
+	if exact.code != 0 || !strings.Contains(exact.stdout, "no route matches HTTPRoute shop/orders\ninferred routes, not matched:\n") {
+		t.Errorf("exact: exit %d, stdout:\n%s\nwant the route listed as inferred", exact.code, exact.stdout)
+	}
+	j := runRoutes(t, kc, app.ProxyTestHooks{}, append(args, "--select", "exact", "-o", "json")...)
+	var doc struct {
+		Item struct {
+			Selection struct {
+				Strategy string
+				Routes   []any
+				Inferred []struct{ Name string }
+			}
+		}
+	}
+	if err := json.Unmarshal([]byte(j.stdout), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if s := doc.Item.Selection; s.Strategy != "exact" || len(s.Routes) != 0 || len(s.Inferred) != 1 {
+		t.Errorf("exact JSON selection %+v, want strategy exact, no route and one inferred", s)
+	}
 }

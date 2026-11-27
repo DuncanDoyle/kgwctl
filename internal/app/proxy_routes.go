@@ -68,7 +68,8 @@ func newProxyRoutesCmd(now func() time.Time, hooks proxyTestHooks) *cobra.Comman
 	fs.StringVar(&o.route, "route", "", "Show only the routes of HTTPRoute `<ns>/<name>`; <name> alone uses -n or the context's namespace")
 	fs.IntVar(&o.rule, "rule", 0, "With --route, show only this rule `index`")
 	fs.StringVar(&o.selectStrategy, "select", string(proxyview.StrategyStrict),
-		"How --route picks routes: strict lists a route that only the cluster's HTTPRoutes narrowed as ambiguous; known also selects it")
+		"How --route picks routes; each value adds evidence. exact: only routes whose origin is certain (route metadata); "+
+			"strict: also a route name with one reading; known: also a route the cluster's HTTPRoutes narrow to one reading")
 	fs.BoolVar(&o.response, "response", false, "Also show each route's response order")
 	fs.StringVarP(&o.output, "output", "o", print.FormatText, "Output format: text, json or yaml")
 	fs.StringVar(&o.maxSize, "max-size", defaultMaxSize, "Largest config dump to parse, as a `quantity` such as 64Mi")
@@ -112,7 +113,7 @@ func parseRoutes(cmd *cobra.Command, args []string, o routesOptions) (routesRequ
 	s, err := proxyview.ParseStrategy(o.selectStrategy)
 	switch {
 	case err != nil:
-		return req, usageError(cmd, "invalid --select %q: want strict or known", o.selectStrategy)
+		return req, usageError(cmd, "invalid --select %q: want exact, strict or known", o.selectStrategy)
 	case s == proxyview.StrategyKnown && !req.live:
 		return req, usageError(cmd, "--select known needs the cluster's HTTPRoutes; it does not work with --file")
 	}

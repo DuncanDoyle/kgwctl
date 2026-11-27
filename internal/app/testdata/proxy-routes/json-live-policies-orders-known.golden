@@ -618,6 +618,7 @@
           "chosenBy": "known"
         }
       ],
+      "inferred": [],
       "ambiguous": [],
       "unresolved": []
     }
