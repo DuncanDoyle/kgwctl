@@ -1,6 +1,6 @@
 # kgwctl — Roadmap
 
-**Last updated:** 2026-11-22
+**Last updated:** 2026-11-27
 **Program:** [kgateway-tooling `program.md`](https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md) (local checkout: `../kgateway-tooling-claude`)
 
 ## Goal
@@ -48,7 +48,7 @@ A support engineer's first command on a cluster they troubleshoot: what is wrong
 - `proxy dump`: one replica's raw config dump, for tickets and `--file`.
 
 ### Phase 4 — Support bundle
-**Status:** In progress — sub-phases 4.1–4.5 closed; owner try-out next
+**Status:** Complete 2026-11-27 — `docs/phases/phase-4/phase-4-complete.md`
 **Docs:** `docs/phases/phase-4/`
 **Waits on:** none — Phase 3 delivered proxy access (`internal/proxydump` `Fetch`/`FetchGateway`: pod identity, per-capture errors, deadline; D-021)
 
@@ -61,22 +61,26 @@ One command that collects what support asks for, so nobody hand-collects it (D-0
 - Prior art: `agctl bug-report` ([agentgateway#3991](https://github.com/agentgateway/agentgateway/pull/3991)). Borrow kind discovery by CRD category (`kgateway`), partial results with an `errors.txt` under a global `--timeout`, and previous-container logs only after a restart (D-019).
 - Needs `pods/log` in a new optional Role.
 
+### Phase 4b — xdsview v0.7.0 migration and first release
+**Status:** Not started (D-031)
+**Docs:** `docs/phases/phase-4b/`
+**Waits on:** none — E15 delivered (xdsview `v0.7.0`, kgwctl#15); Snellius `v0.9.0` released (kgwctl#16)
+
+- `proxy routes` moves to the xdsview `v0.7.0` contract: parse, then `chain.Effective`, then `provenance.Compose` with the kgateway module, then explicit selection, then render.
+- The unresolved-route listing stays, as explicit selection over candidate readings. kgwctl never guesses a route's origin.
+- The module set passed to `provenance.Compose` is a seam that downstream builds change through `pkg/cli` (xdsview D-023). Claims are never selected by module name.
+- kgwctl builds its own `ProxyRoutes` payload instead of embedding xdsview's `model`.
+- The shared envelope moves to `kgwctl.kgateway.dev/v1alpha2`. That changes every command's JSON and YAML, including the bundle's `manifest.json`. Text, JSON and YAML goldens are reviewed together.
+- Snellius `v0.9.0`: `install.Scope.Excluded` replaces the local loop from Task 4.2.2.
+- The xdsview import allowlist follows the new package layout.
+- Close: tag `v0.1.0`, the first release.
+
 ### Phase 5 — Full analysis
 **Status:** Not started
 **Docs:** `docs/phases/phase-5/`
 **Waits on:** none — E3 delivered; the analyzer runs in `check` from Phase 2
 
 - `analyze -f <file>`: validate manifests before applying, reporting new, fixed and unchanged problems against the live cluster.
-
-### xdsview Phase 9 migration (E15)
-**Status:** Planned, not scheduled. It lands with the xdsview Phase 9 tag, separate from Phase 6.
-**Waits on:** E15, the xdsview Phase 9 contract (P-010): one breaking release after xdsview `v0.6.0` and the P-009 investigation. Before that, kgwctl reviews xdsview's Phase 9 design for `proxy routes` and Phase 6 (program open question 7).
-
-- `proxy routes` calls parse, then `Analyze` with the kgateway module, then explicit selection, then render. xdsview's Phase 9 design sets the exact names.
-- The unresolved-route listing stays, as explicit selection over candidate readings.
-- kgwctl builds its own `ProxyRoutes` payload instead of embedding xdsview's `model`.
-- The shared envelope moves to `kgwctl.kgateway.dev/v1alpha2`. That changes every command's JSON and YAML, including the bundle's `manifest.json`. Text, JSON and YAML goldens are reviewed together.
-- The xdsview import allowlist follows the new package layout.
 
 ### Phase 6 — Topology and policies
 **Status:** Not started

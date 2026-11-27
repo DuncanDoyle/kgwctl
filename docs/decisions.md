@@ -251,3 +251,11 @@ Downstream collectors are trusted in-process code. The Sink and the guard protec
 - The error classifier (`timeoutClass`, the `reached` logic) goes away.
 - A run against a dead cluster leaves a small archive and exits 2, so scripts that test for the file must also check the exit code.
 - Design §3.1 and §3.2 and docs/output.md change.
+
+## D-031 — Migrate to xdsview v0.7.0 before the first release (2026-11-27, phase 4 close) — decided by the owner 2026-11-27
+**Context:** Phase 4 closed with xdsview v0.7.0 (E15, kgwctl#15) and Snellius v0.9.0 (E7, `install.Scope.Excluded`, kgwctl#16) both released. kgwctl has no release yet. The E15 migration moves every command's JSON and YAML to `kgwctl.kgateway.dev/v1alpha2`, including the bundle's `manifest.json`.
+**Decision:**
+- The next phase is Phase 4b: migrate `proxy routes` to xdsview v0.7.0, bump Snellius to v0.9.0, move the envelope to `v1alpha2`, then tag `v0.1.0`. Phase 5 (full analysis) keeps its number.
+- `v0.1.0` is tagged when Phase 4b closes. It depends on final Snellius and xdsview releases only.
+**Alternatives:** Tag `v0.1.0` now on `v1alpha1`. Rejected: the first format people script against would change in the next release, and no one waits on a release.
+**Consequences:** Phase 4b is a planned phase with its own design, Codex review and live check. Downstream builds (D-023 in xdsview) replace the kgateway module, so the module set kgwctl composes is a `pkg/cli` seam, and downstream goldens differ from kgwctl's.
