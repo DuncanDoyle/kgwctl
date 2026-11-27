@@ -968,3 +968,36 @@ func TestBuildExactInferredIndex(t *testing.T) {
 		}
 	}
 }
+
+// explicitInferredIndices is a wrapper's extra: each RouteSource claim again,
+// its indices marked inferred explicitly.
+func explicitInferredIndices(_ *model.Snapshot, inner []provenance.Claim) []provenance.Claim {
+	var out []provenance.Claim
+	for _, c := range inner {
+		if r, ok := c.Assertion.(provenance.RouteSource); ok {
+			r.IndexCertainty = model.Inferred
+			c.Assertion, c.Ref = r, ""
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// TestExplicitInferredIndices: an explicit inferred index marker at the claim's
+// own certainty keeps "(partly from name)" under strict and known; JSON omits it (DD-4).
+func TestExplicitInferredIndices(t *testing.T) {
+	mods := []provenance.Module{proxyviewtest.Wrap("example", kgateway.New(), explicitInferredIndices)}
+	strict := build(t, handBuilt(t, "levels.json"), proxyview.Options{Selection: proxyview.Selection{Route: shopOrders}, Modules: mods})
+	if out := text(t, strict, proxyview.TextOptions{}); !strings.Contains(out, " · HTTPRoute shop/orders · rule 0 · match 0 (partly from name) (inferred)\n") {
+		t.Errorf("strict: text lacks the marker:\n%s", out)
+	}
+	if p := marshal(t, strict.Payload(proxyview.Source{})); strings.Contains(p, "indexCertainty") {
+		t.Errorf("strict: JSON has indexCertainty equal to certainty:\n%s", p)
+	}
+	known := build(t, golden(t, "policies.json"), proxyview.Options{Gateway: proxyGW, Known: refs(orders, types.NamespacedName{Namespace: "kgwctl-proxy", Name: "public"}),
+		Selection: proxyview.Selection{Route: orders}, Strategy: proxyview.StrategyKnown, Modules: mods})
+	row := "HTTPRoute kgwctl-proxy/orders · rule 0 · match 0 (partly from name) (chosen from known HTTPRoutes)\n"
+	if out := text(t, known, proxyview.TextOptions{}); strings.Count(out, row) != 2 {
+		t.Errorf("known: want two rows ending %q:\n%s", row, out)
+	}
+}

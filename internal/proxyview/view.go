@@ -63,9 +63,9 @@ func notExact(ix *provenance.Index, routes []model.ID, rule bool) []model.ID {
 		res := provenance.Resolve[provenance.RouteSource](ix, id)
 		ok := res.Certainty == model.Exact && len(res.Candidates) == 1
 		if ok && rule {
-			// Unset effective index certainty: equal to the reading's, exact.
+			// Unset means equal to the reading's certainty: exact.
 			r := effective(res)[0]
-			ok = r.IndexCertainty == model.Unknown && r.RuleIndex >= 0 && r.MatchIndex >= 0
+			ok = (r.IndexCertainty == model.Unknown || r.IndexCertainty == model.Exact) && r.RuleIndex >= 0 && r.MatchIndex >= 0
 		}
 		if !ok {
 			out = append(out, id)
@@ -86,23 +86,29 @@ func effective(res provenance.Resolution[provenance.RouteSource]) []provenance.R
 }
 
 // indexCertainty is the index certainty of reading r over the claims at
-// certainty c: the highest, where unset means the claim's own certainty, and
-// unset again when it equals c. Resolve's merge keeps the highest set value
+// certainty c: the highest, where unset means the claim's own certainty. It
+// stays unset only when that highest value comes from unset claims alone, so
+// an explicit marker survives. Resolve's merge keeps the highest set value
 // and so can turn an unset (exact) one into inferred (DD-4).
 func indexCertainty(claims []provenance.Claim, r provenance.RouteSource, c model.Certainty) model.Certainty {
-	ic := model.Unknown
+	ic, explicit := model.Unknown, false
 	for _, cl := range claims {
 		a, ok := cl.Assertion.(provenance.RouteSource)
 		if !ok || cl.Certainty != c || !sameReading(a, r) {
 			continue
 		}
-		e := a.IndexCertainty
-		if e == model.Unknown {
+		e, set := a.IndexCertainty, a.IndexCertainty != model.Unknown
+		if !set {
 			e = cl.Certainty
 		}
-		ic = max(ic, e)
+		switch {
+		case e > ic:
+			ic, explicit = e, set
+		case e == ic:
+			explicit = explicit || set
+		}
 	}
-	if ic == c {
+	if ic == c && !explicit {
 		return model.Unknown
 	}
 	return ic
