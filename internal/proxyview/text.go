@@ -46,11 +46,15 @@ func Text(w io.Writer, v View, o TextOptions) error {
 	return err
 }
 
-// labels is the Labels hook: provenance.Labels with the chosen routes, plus
-// the Gateway kgwctl was given on non-static listener rows, unless a claim names one.
+// labels is the Labels hook: provenance.Labels with the chosen routes, and
+// routeLabel on other route rows, plus the Gateway kgwctl was given on
+// non-static listener rows, unless a claim names one.
 func (v View) labels() func(render.Row) []string {
 	base := provenance.Labels(v.Index, v.Chosen)
 	return func(row render.Row) []string {
+		if row.Route != "" && row.Slot == "" && !v.chosen(row.Route) {
+			return v.routeLabel(row.Route)
+		}
 		out := base(row)
 		if v.Gateway == nil || row.Route != "" || row.Slot != "" {
 			return out
@@ -64,6 +68,33 @@ func (v View) labels() func(render.Row) []string {
 		}
 		return append(out, "Gateway "+v.Gateway.String()+" "+GatewayContextNote)
 	}
+}
+
+// routeLabel is a route row's label as provenance.Labels prints it, but a
+// single reading shows the index certainty of effective, as selection and JSON do (DD-4).
+func (v View) routeLabel(id model.ID) []string {
+	res := provenance.Resolve[provenance.RouteSource](v.Index, id)
+	if len(res.Candidates) != 1 {
+		return provenance.Labels(v.Index, nil)(render.Row{Subject: id, Route: id})
+	}
+	r := effective(res)[0]
+	s := r.Route.String()
+	if r.RuleIndex >= 0 {
+		s += fmt.Sprintf(" · rule %d", r.RuleIndex)
+	}
+	if r.RuleName != "" {
+		s += " (" + r.RuleName + ")"
+	}
+	if r.MatchIndex >= 0 {
+		s += fmt.Sprintf(" · match %d", r.MatchIndex)
+	}
+	if r.IndexCertainty == model.Inferred {
+		s += " (partly from name)"
+	}
+	if res.Certainty != model.Exact {
+		s += " (" + res.Certainty.String() + ")"
+	}
+	return []string{s}
 }
 
 // recordedAboveLabel labels a route's policy records at its virtual host,
@@ -128,7 +159,6 @@ func (v View) selectionText(b *bytes.Buffer) {
 		detail     string
 		unres, inf bool
 	}
-	routeLabel := provenance.Labels(v.Index, nil)
 	var list []entry
 	seen := map[outcome]bool{}
 	names := map[string]map[model.ID]bool{} // route name to its source keys
@@ -140,7 +170,7 @@ func (v View) selectionText(b *bytes.Buffer) {
 		switch {
 		case e.inf:
 			// The reading as the tree prints it.
-			e.detail = strings.Join(routeLabel(render.Row{Subject: r.ID, Route: r.ID}), " · ")
+			e.detail = strings.Join(v.routeLabel(r.ID), " · ")
 		case e.unres:
 			e.detail = "origin unresolved"
 		default:

@@ -1003,15 +1003,27 @@ func TestProxyRoutesExactAgreeingClaim(t *testing.T) {
 	if plain.code != 0 || plain.stderr != "" || strings.Contains(plain.stdout, "not matched") || !strings.Contains(plain.stdout, "HTTPRoute kgwctl-proxy/orders · rule 0") {
 		t.Fatalf("default module: exit %d, stderr %q, stdout:\n%s\nwant the route matched", plain.code, plain.stderr, plain.stdout)
 	}
-	// The merged reading's label may say "partly from name"; only the match is checked.
+	// The row shows the exact indices the selection used, with no suffix.
 	mods := []provenance.Module{proxyviewtest.Wrap("example", kgateway.New(), inferredIndexCopies)}
 	text := runRoutesModules(t, kc, app.ProxyTestHooks{}, mods, args...)
-	if text.code != 0 || text.stderr != "" || strings.Contains(text.stdout, "not matched") || !strings.Contains(text.stdout, "HTTPRoute kgwctl-proxy/orders · rule 0") {
-		t.Errorf("text with the agreeing claim: exit %d, stderr %q, stdout:\n%s\nwant the route matched", text.code, text.stderr, text.stdout)
+	if text.code != 0 || text.stderr != "" || strings.Contains(text.stdout, "not matched") || strings.Contains(text.stdout, "partly from name") ||
+		!strings.Contains(text.stdout, " · HTTPRoute kgwctl-proxy/orders · rule 0 · match 0\n") {
+		t.Errorf("text with the agreeing claim: exit %d, stderr %q, stdout:\n%s\nwant the route matched with exact indices", text.code, text.stderr, text.stdout)
 	}
 	j := runRoutesModules(t, kc, app.ProxyTestHooks{}, mods, append(args, "-o", "json")...)
 	var doc struct {
 		Item struct {
+			Listeners []struct {
+				FilterChains []struct {
+					HCM struct {
+						VirtualHosts []struct {
+							Routes []struct {
+								Origin struct{ Readings []map[string]any }
+							}
+						}
+					}
+				}
+			}
 			Selection struct {
 				Routes, Inferred []any
 			}
@@ -1022,6 +1034,20 @@ func TestProxyRoutesExactAgreeingClaim(t *testing.T) {
 	}
 	if s := doc.Item.Selection; len(s.Routes) != 1 || len(s.Inferred) != 0 {
 		t.Errorf("JSON with the agreeing claim: selection %+v, want one route and none inferred", s)
+	}
+	// indexCertainty is absent when it equals the reading's certainty: exact here.
+	var rds []map[string]any
+	for _, l := range doc.Item.Listeners {
+		for _, fc := range l.FilterChains {
+			for _, vh := range fc.HCM.VirtualHosts {
+				for _, r := range vh.Routes {
+					rds = append(rds, r.Origin.Readings...)
+				}
+			}
+		}
+	}
+	if len(rds) != 1 || rds[0]["certainty"] != "exact" || rds[0]["indexCertainty"] != nil {
+		t.Errorf("JSON readings %v, want one exact reading without indexCertainty", rds)
 	}
 }
 

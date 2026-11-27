@@ -63,7 +63,8 @@ func notExact(ix *provenance.Index, routes []model.ID, rule bool) []model.ID {
 		res := provenance.Resolve[provenance.RouteSource](ix, id)
 		ok := res.Certainty == model.Exact && len(res.Candidates) == 1
 		if ok && rule {
-			ok = exactIndices(res)
+			// Unset effective index certainty: equal to the reading's, exact.
+			ok = effective(res)[0].IndexCertainty == model.Unknown
 		}
 		if !ok {
 			out = append(out, id)
@@ -72,25 +73,38 @@ func notExact(ix *provenance.Index, routes []model.ID, rule bool) []model.ID {
 	return out
 }
 
-// exactIndices reports whether one claim behind res's one reading has exact
-// indices. It checks each claim before the merge, which keeps the highest
-// set value and so can lose an unset one (DD-4).
-func exactIndices(res provenance.Resolution[provenance.RouteSource]) bool {
-	for _, c := range res.Claims {
-		r, ok := c.Assertion.(provenance.RouteSource)
-		if !ok || c.Certainty != res.Certainty || !sameReading(r, res.Candidates[0]) {
+// effective returns res's readings, each with its IndexCertainty replaced by
+// indexCertainty. Selection, text and JSON all read these (DD-4).
+func effective(res provenance.Resolution[provenance.RouteSource]) []provenance.RouteSource {
+	top := topCertainty(res)
+	out := slices.Clone(res.Candidates)
+	for i, r := range out {
+		out[i].IndexCertainty = indexCertainty(res.Claims, r, top)
+	}
+	return out
+}
+
+// indexCertainty is the index certainty of reading r over the claims at
+// certainty c: the highest, where unset means the claim's own certainty, and
+// unset again when it equals c. Resolve's merge keeps the highest set value
+// and so can turn an unset (exact) one into inferred (DD-4).
+func indexCertainty(claims []provenance.Claim, r provenance.RouteSource, c model.Certainty) model.Certainty {
+	ic := model.Unknown
+	for _, cl := range claims {
+		a, ok := cl.Assertion.(provenance.RouteSource)
+		if !ok || cl.Certainty != c || !sameReading(a, r) {
 			continue
 		}
-		// An unset IndexCertainty means the claim's own certainty applies.
-		ic := r.IndexCertainty
-		if ic == model.Unknown {
-			ic = c.Certainty
+		e := a.IndexCertainty
+		if e == model.Unknown {
+			e = cl.Certainty
 		}
-		if ic == model.Exact {
-			return true
-		}
+		ic = max(ic, e)
 	}
-	return false
+	if ic == c {
+		return model.Unknown
+	}
+	return ic
 }
 
 // chooseKnown returns the narrowings of sel whose kept claims name one
@@ -268,8 +282,8 @@ func checkShape(body []byte) error {
 }
 
 // normalise returns n with its kept claims merged into one, as
-// provenance.Resolve merges agreeing readings: the highest IndexCertainty,
-// Incomplete if any is, Exhaustive only if all are (DD-6).
+// provenance.Resolve merges agreeing readings: Incomplete if any is,
+// Exhaustive only if all are, and the index certainty of effective (DD-4, DD-6).
 func normalise(n provenance.Narrowing) provenance.Narrowing {
 	if len(n.Kept) == 0 {
 		return n
@@ -279,13 +293,17 @@ func normalise(n provenance.Narrowing) provenance.Narrowing {
 	if !ok {
 		return provenance.Narrowing{Route: n.Route, Kept: []provenance.Claim{c}}
 	}
+	top := model.Unknown
+	for _, k := range n.Kept {
+		top = max(top, k.Certainty)
+	}
 	for _, k := range n.Kept[1:] {
 		if r, ok := k.Assertion.(provenance.RouteSource); ok {
-			merged.IndexCertainty = max(merged.IndexCertainty, r.IndexCertainty)
 			merged.Incomplete = merged.Incomplete || r.Incomplete
 			merged.Exhaustive = merged.Exhaustive && r.Exhaustive
 		}
 	}
+	merged.IndexCertainty = indexCertainty(n.Kept, merged, top)
 	c.Assertion = merged
 	return provenance.Narrowing{Route: n.Route, Kept: []provenance.Claim{c}}
 }

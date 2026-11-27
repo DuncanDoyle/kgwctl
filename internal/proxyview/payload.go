@@ -507,7 +507,7 @@ func (v View) origin(route model.ID) Origin {
 	n, narrowed := v.narrowing(route)
 	out.Narrowed = narrowed
 	kept := readings(n.Kept)
-	for _, r := range res.Candidates {
+	for _, r := range effective(res) {
 		rd := reading(r, topCertainty(res))
 		rd.NotInCluster = narrowed && !containsReading(kept, r)
 		out.Readings = append(out.Readings, rd)
