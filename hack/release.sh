@@ -13,7 +13,11 @@ die() { echo "release: $*" >&2; exit 1; }
 
 [ "$#" -eq 1 ] || die "usage: hack/release.sh <tag>"
 tag="$1"
-[[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.+-]+)?$ ]] || die "not a version tag: $tag"
+# Go module versions take a pre-release suffix but no +build metadata.
+[[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || die "not a version tag: $tag"
+
+# A git-ignored go.work or a host GOFLAGS must not change what gets built.
+export GOWORK=off GOFLAGS=
 
 dry_run=false
 [ "${RELEASE_DRY_RUN:-}" = "1" ] && dry_run=true
@@ -24,18 +28,24 @@ commit="$(git rev-parse HEAD)"
 if $dry_run; then
   rel="hack/release/out/dry-run/$tag"
 else
-  [ -z "$(git status --porcelain)" ] || die "working tree is not clean"
+  [ -z "$(git status --porcelain --untracked-files=normal)" ] || die "working tree is not clean"
   # Resolves tags only, so a branch with the same name does not pass.
   tag_commit="$(git rev-parse --verify --quiet "refs/tags/$tag^{commit}")" || die "no tag $tag"
   [ "$tag_commit" = "$commit" ] || die "HEAD $commit is not the commit of tag $tag ($tag_commit)"
   rel="hack/release/out/$tag"
   if [ -d "$rel" ] && [ -n "$(ls -A "$rel")" ]; then
-    die "$rel exists and is not empty"
+    die "$rel exists and is not empty; remove it to rebuild"
   fi
 fi
 
 out="$ROOT/$rel"
-$dry_run && rm -rf "$out"
+if $dry_run; then
+  rm -rf "$out"
+else
+  # shellcheck disable=SC2317,SC2329 # invoked by the EXIT trap
+  partial() { [ "$?" -eq 0 ] || echo "release: partial output left in $rel; remove it to rebuild" >&2; }
+  trap partial EXIT
+fi
 mkdir -p "$out"
 stage="$out/.stage"
 mkdir -p "$stage"
