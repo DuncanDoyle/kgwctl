@@ -46,17 +46,26 @@ func warningList(full *model.Snapshot, ix *provenance.Index) []Warning {
 	return out
 }
 
-// warningText is w's line in the text block, naming its subject once. Every
-// message names it, but ecds-ambiguous names only the filter, so its listener is added.
+// locatedCodes are the warning codes whose messages already name their
+// subject's location: xdsview v0.7.0's labelled parser warnings and kgwctl's own.
+var locatedCodes = map[string]bool{
+	model.WarnHCMSkipped: true, model.WarnRouteConfigSkipped: true, model.WarnRDSMissing: true,
+	model.WarnRDSAmbiguous: true, model.WarnClaimDropped: true, model.WarnLinkDropped: true,
+}
+
+// warningText is w's line in the text block. A subject warning of any other
+// code gets its location: ecds-ambiguous names the filter, so only its listener.
 func warningText(full *model.Snapshot, w Warning) string {
 	line := "warning: " + w.Message
-	if w.Code != model.WarnECDSAmbiguous || w.Subject == "" {
+	if w.Subject == "" || locatedCodes[w.Code] {
 		return line
 	}
 	id := model.ID(w.Subject)
-	for _, l := range full.Listeners {
-		if id.Within(l.ID) {
-			return line + " (in listener " + l.Name + ")"
+	if w.Code == model.WarnECDSAmbiguous {
+		for _, l := range full.Listeners {
+			if id.Within(l.ID) {
+				return line + " (in listener " + l.Name + ")"
+			}
 		}
 	}
 	return line + " (" + describeSubject(full, id) + ")"

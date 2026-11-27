@@ -149,3 +149,19 @@ func TestWarningsDedup(t *testing.T) {
 		t.Errorf("warnings %+v, want one", ws)
 	}
 }
+
+// TestWarningsUnknownCodeLocated: a subject warning of a code kgwctl does not
+// know keeps its location in the text; a located code adds none.
+func TestWarningsUnknownCodeLocated(t *testing.T) {
+	v := build(t, handBuilt(t, "levels.json"), proxyview.Options{})
+	vh := v.Full.Listeners[0].FilterChains[0].HCM.RouteConfig.VirtualHosts[0]
+	r := vh.Routes[0]
+	v.Warnings = []proxyview.Warning{
+		{Subject: string(r.ID), Code: "new-code", Message: "something new"},
+		{Subject: string(r.ID), Code: model.WarnRDSMissing, Message: "located"},
+	}
+	want := []string{"warning: something new (route " + r.Name + " in virtual host " + vh.Name + ")", "warning: located"}
+	if got := warningLines(t, text(t, v, proxyview.TextOptions{})); len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("warning lines %q, want %q", got, want)
+	}
+}

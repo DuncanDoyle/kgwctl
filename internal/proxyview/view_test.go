@@ -665,6 +665,10 @@ func TestParseStrategy(t *testing.T) {
 			t.Errorf("ParseStrategy(%q): want an error", in)
 		}
 	}
+	// Build checks the strategy before it parses the dump.
+	if _, err := proxyview.Build([]byte("{"), proxyview.Options{Strategy: "bogus"}); err == nil || !strings.Contains(err.Error(), "selection strategy") {
+		t.Errorf("Build with strategy bogus: err %v, want the strategy error", err)
+	}
 }
 
 // TestChooseKnownRule: a narrowed route is chosen only when its kept claims
@@ -681,20 +685,23 @@ func TestChooseKnownRule(t *testing.T) {
 	a.Assertion, b.Assertion = ra, rb
 	q := kgateway.Query{Route: proxyview.HTTPRouteRef(orders)}
 	rule1 := 1
+	// merged is a and b merged: exact (the higher), incomplete (b is), not exhaustive (b is not).
+	one, merged := keep.Assertion.(provenance.RouteSource), ra
+	merged.IndexCertainty, merged.Incomplete, merged.Exhaustive = model.Exact, true, false
 	for _, tc := range []struct {
 		name string
 		q    kgateway.Query
 		kept []provenance.Claim
-		want bool
+		want *provenance.RouteSource // nil: not chosen
 	}{
-		{name: "one-reading", q: q, kept: []provenance.Claim{keep}, want: true},
+		{name: "one-reading", q: q, kept: []provenance.Claim{keep}, want: &one},
 		{name: "two-readings", q: q, kept: []provenance.Claim{keep, drop}},
 		{name: "other-rule", q: kgateway.Query{Route: q.Route, RuleIndex: &rule1}, kept: []provenance.Claim{keep}},
-		{name: "differ-only-in-flags", q: q, kept: []provenance.Claim{a, b}, want: true},
+		{name: "differ-only-in-flags", q: q, kept: []provenance.Claim{a, b}, want: &merged},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := proxyview.ChooseKnown(tc.q, kgateway.Selection{Narrowed: []provenance.Narrowing{{Route: n.Route, Kept: tc.kept}}})
-			if !tc.want {
+			if tc.want == nil {
 				if len(got) != 0 {
 					t.Fatalf("chosen %+v, want none", got)
 				}
@@ -703,9 +710,8 @@ func TestChooseKnownRule(t *testing.T) {
 			if len(got) != 1 || got[0].Route != n.Route || len(got[0].Kept) != 1 {
 				t.Fatalf("chosen %+v, want %s with one kept claim", got, n.Route)
 			}
-			want := proxyview.Normalise(provenance.Narrowing{Route: n.Route, Kept: tc.kept}).Kept[0].Assertion
-			if got[0].Kept[0].Assertion != want {
-				t.Errorf("kept %+v, want the normalised %+v", got[0].Kept[0].Assertion, want)
+			if got[0].Kept[0].Assertion != *tc.want {
+				t.Errorf("kept %+v, want %+v", got[0].Kept[0].Assertion, *tc.want)
 			}
 		})
 	}

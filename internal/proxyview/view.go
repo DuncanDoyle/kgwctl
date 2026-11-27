@@ -121,6 +121,10 @@ func Build(body []byte, o Options) (View, error) {
 	if sel.Rule != nil && *sel.Rule < 0 {
 		return View{}, errors.New("rule index must not be negative")
 	}
+	strategy, err := ParseStrategy(string(o.Strategy))
+	if err != nil {
+		return View{}, err
+	}
 	if err := checkShape(body); err != nil {
 		return View{}, err
 	}
@@ -135,10 +139,6 @@ func Build(body []byte, o Options) (View, error) {
 	ix, err := provenance.Compose(full, modules...)
 	if err != nil {
 		return View{}, fmt.Errorf("%w: %w", ErrCompose, err)
-	}
-	strategy, err := ParseStrategy(string(o.Strategy))
-	if err != nil {
-		return View{}, err
 	}
 	v := View{Full: full, Snapshot: full, Chains: chain.Effective(full), Index: ix, Strategy: strategy,
 		Selection: sel, Gateway: o.Gateway, Warnings: warningList(full, ix)}
