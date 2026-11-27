@@ -201,11 +201,12 @@ Each task builds and passes `make test` on its own; no task consumes a type a la
 ## Phase close prerequisites (not done by the implementer)
 1. Codex phase review and triage (queue Q5).
 2. Owner try-out on kind.
-3. Release, in this order, after the owner's go-ahead (design DD-22):
-   1. Merge the phase branch; tag `v0.1.0` on the merged main commit; run `hack/release.sh v0.1.0` (not a dry run). It writes `hack/release/out/v0.1.0/` and refuses if that directory is not empty.
-   2. `git push origin refs/tags/v0.1.0`.
-   3. `git ls-remote origin "refs/tags/v0.1.0^{}" refs/tags/v0.1.0`: the commit equals `hack/release/out/v0.1.0/commit.txt`. Stop on a mismatch.
-   4. `checksums.txt` names exactly the four archives of `publish-files.txt`, and `shasum -a 256 -c checksums.txt` passes in `hack/release/out/v0.1.0/`.
-   5. Clean `GOPATH`/`GOMODCACHE` under `.agents-tmp/`: `go install github.com/DuncanDoyle/kgwctl/cmd/kgwctl@v0.1.0`; `version --client` prints `v0.1.0` (R16). Retry with `GOPROXY=direct` if the proxy has not seen the tag.
-   6. `gh release create v0.1.0 --verify-tag --title v0.1.0 --notes-file <notes>` followed by the five paths of `hack/release/out/v0.1.0/publish-files.txt`, as listed, never a glob.
+3. Release, in this order, after the owner's go-ahead. The design's DD-22 close sequence is the source; this list only points to it:
+   1. Merge the phase branch; tag `v0.1.0` on the merged main commit; run `hack/release.sh v0.1.0` (not a dry run). It claims `hack/release/out/v0.1.0/` with one plain `mkdir` and refuses if that directory exists, even empty.
+   2. Run the five steps the script prints, in order and as printed. Do not retype them from this plan. They are:
+      1. `git push origin refs/tags/v0.1.0`.
+      2. `git ls-remote origin "refs/tags/v0.1.0^{}" refs/tags/v0.1.0`: the commit equals `hack/release/out/v0.1.0/commit.txt`. Stop on a mismatch.
+      3. `checksums.txt` names exactly the four archives of `publish-files.txt`, and `shasum -a 256 -c checksums.txt` passes in `hack/release/out/v0.1.0/`.
+      4. In a fresh `mktemp -d` directory under `.agents-tmp/`, with `GOPATH`, `GOMODCACHE` and `GOBIN` all set inside it: `go install github.com/DuncanDoyle/kgwctl/cmd/kgwctl@v0.1.0`, then run that directory's `bin/kgwctl version --client`; it prints `v0.1.0` (R16). A `GOBIN` from the environment or `go env -w`, or an older binary, cannot change the result. Retry with `GOPROXY=direct` if the proxy has not seen the tag.
+      5. `gh release create v0.1.0 --verify-tag --title v0.1.0 --notes-file <notes>` followed by the five paths of `hack/release/out/v0.1.0/publish-files.txt`, as listed, never a glob.
 4. Close kgwctl#15 and kgwctl#16; tell xdsview its Phase 9 contract is confirmed by a consumer; update the program file (E15 consumed).
