@@ -7,8 +7,10 @@ See [`docs/roadmap.md`](docs/roadmap.md) for what comes next.
 ## Install
 
 ```bash
-go install github.com/DuncanDoyle/kgwctl/cmd/kgwctl@latest
+go install github.com/DuncanDoyle/kgwctl/cmd/kgwctl@v0.1.0
 ```
+
+Each GitHub release also has `kgwctl_<tag>_<os>_<arch>.tar.gz` archives for linux and darwin on amd64 and arm64, with a `checksums.txt`.
 
 ## Commands
 
@@ -323,6 +325,8 @@ Collectors are trusted code, and the Sink does not stop one that opens its own c
 make test           # unit and envtest suite
 make vet lint build
 ```
+
+`hack/release.sh <tag>` builds the release archives from a clean tree at the tag commit into `hack/release/out/<tag>/`; `RELEASE_DRY_RUN=1` skips those checks and writes to `hack/release/out/dry-run/<tag>/`.
 
 The live check runs the commands against a real kgateway install on a local kind cluster. It writes its own kubeconfig files under `hack/live/out/` and needs `kind`, `helm`, `kubectl`, `gh` and `jq`.
 
