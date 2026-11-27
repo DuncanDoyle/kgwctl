@@ -1,0 +1,10 @@
+File ../proxyview/testdata/levels.json
+listener~8080 [::]:8080 · active · port 8080 (inferred)
+└─ vhost listener~8080~orders_example [orders.example] · port 8080 (inferred)
+   └─ route / (prefix) · HTTPRoute shop/orders · rule 0 · match 0 (inferred)
+      filters (request order):
+        1 envoy.filters.http.cors    on
+        2 envoy.filters.http.router  on
+      policies: TrafficPolicy shop/route-p (cors)
+      policies recorded above the route: TrafficPolicy shop/vh-p (cors; vhost), TrafficPolicy shop/rc-p (cors; route config), TrafficPolicy shop/listener-p (cors; listener)
+      backend: kube_shop_orders_8080

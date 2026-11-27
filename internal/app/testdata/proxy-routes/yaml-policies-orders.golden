@@ -59,6 +59,7 @@ item:
       routeConfig: listener~8080
       virtualHost: listener~8080~orders_kgwctl_example
     inferred: []
+    knownHTTPRoutes: notRead
     query:
       route:
         group: gateway.networking.k8s.io

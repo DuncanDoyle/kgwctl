@@ -409,6 +409,7 @@
         }
       },
       "strategy": "strict",
+      "knownHTTPRoutes": "notRead",
       "routes": [
         {
           "id": "L0/C0/N0/RC/V1/R0",

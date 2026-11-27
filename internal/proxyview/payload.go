@@ -334,12 +334,13 @@ type Mirror struct {
 
 // SelectionOut is the --route selection over the whole dump (§5.6).
 type SelectionOut struct {
-	Query      Query            `json:"query"`
-	Strategy   string           `json:"strategy"`
-	Routes     []MatchedRoute   `json:"routes"`
-	Inferred   []InferredRoute  `json:"inferred"`
-	Ambiguous  []AmbiguousRoute `json:"ambiguous"`
-	Unresolved []RouteKey       `json:"unresolved"`
+	Query           Query            `json:"query"`
+	Strategy        string           `json:"strategy"`
+	KnownHTTPRoutes string           `json:"knownHTTPRoutes"` // listed, unavailable or notRead (R24)
+	Routes          []MatchedRoute   `json:"routes"`
+	Inferred        []InferredRoute  `json:"inferred"`
+	Ambiguous       []AmbiguousRoute `json:"ambiguous"`
+	Unresolved      []RouteKey       `json:"unresolved"`
 }
 
 // InferredRoute is a route --select exact listed, not matched: its one
@@ -588,7 +589,7 @@ func (v View) filters(route model.ID, c model.EffectiveChain) []Filter {
 func (v View) selectionOut() *SelectionOut {
 	s := v.Selected
 	out := &SelectionOut{Query: Query{Route: ref(HTTPRouteRef(v.Selection.Route)), RuleIndex: v.Selection.Rule},
-		Strategy: string(v.Strategy), Routes: []MatchedRoute{}, Inferred: []InferredRoute{}, Ambiguous: []AmbiguousRoute{}, Unresolved: []RouteKey{}}
+		Strategy: string(v.Strategy), KnownHTTPRoutes: string(v.KnownInput), Routes: []MatchedRoute{}, Inferred: []InferredRoute{}, Ambiguous: []AmbiguousRoute{}, Unresolved: []RouteKey{}}
 	keys := routeKeys(v.Full)
 	for _, id := range s.Routes {
 		if slices.Contains(v.Inferred, id) {

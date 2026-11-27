@@ -13,12 +13,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DuncanDoyle/xdsview/pkg/adapter/kgateway"
+	"github.com/DuncanDoyle/xdsview/pkg/envoy/model"
+	"github.com/DuncanDoyle/xdsview/pkg/envoy/provenance"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
 	"github.com/DuncanDoyle/kgwctl/internal/app"
 	"github.com/DuncanDoyle/kgwctl/internal/print"
+	"github.com/DuncanDoyle/kgwctl/internal/proxyview"
+	"github.com/DuncanDoyle/kgwctl/internal/proxyview/proxyviewtest"
 	"github.com/DuncanDoyle/kgwctl/internal/testenv"
 )
 
@@ -33,8 +38,14 @@ var captureTime = time.Date(2026, 11, 21, 10, 0, 0, 0, time.UTC)
 // runRoutes runs the root command with h's dialer, a fixed clock and kubeconfig.
 func runRoutes(t *testing.T, kubeconfig string, h app.ProxyTestHooks, args ...string) result {
 	t.Helper()
+	return runRoutesModules(t, kubeconfig, h, nil, args...)
+}
+
+// runRoutesModules is runRoutes with provenance modules; nil is the default.
+func runRoutesModules(t *testing.T, kubeconfig string, h app.ProxyTestHooks, mods []provenance.Module, args ...string) result {
+	t.Helper()
 	var out, errb bytes.Buffer
-	cfg := app.Config{Build: testBuild, Out: &out, Err: &errb, Now: func() time.Time { return captureTime }}
+	cfg := app.Config{Build: testBuild, Out: &out, Err: &errb, Now: func() time.Time { return captureTime }, Modules: mods}
 	root := app.NewRootWithProxyHooks(cfg, h)
 	start := time.Now()
 	code := run(root, append([]string{"--kubeconfig", kubeconfig}, args...)...)
@@ -71,6 +82,8 @@ func TestProxyRoutesFileGolden(t *testing.T) {
 		{name: "collide-meta", args: []string{"--file", dumpsDir + "collide-meta.json", "--gateway", "kgwctl-proxy/proxy"}},
 		{name: "collide-meta-orders", args: []string{"--file", dumpsDir + "collide-meta.json", "--gateway", "kgwctl-proxy/proxy", "--route", "kgwctl-proxy/orders"}},
 		{name: "collide-meta-orders-rule-1", args: []string{"--file", dumpsDir + "collide-meta.json", "--route", "kgwctl-proxy/orders", "--rule", "1"}},
+		// Policy records at every level: the trailer says where each was recorded (D-024).
+		{name: "levels", args: []string{"--file", "../proxyview/testdata/levels.json"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := runRoutes(t, kc, app.ProxyTestHooks{}, append([]string{"proxy", "routes"}, tc.args...)...)
@@ -847,6 +860,43 @@ func TestProxyRoutesSelectFlag(t *testing.T) {
 		if asStrict(out["knownjson"].stdout) != out["strictjson"].stdout {
 			t.Errorf("JSON differs other than in selection.strategy")
 		}
+		golden(t, "proxy-routes", "json-live-policies-orders-known-denied", out["knownjson"].stdout)
+	})
+
+	// R24: selection.knownHTTPRoutes says whether the cluster's HTTPRoutes were listed.
+	t.Run("R24-known-input-status", func(t *testing.T) {
+		kc := unreachableKubeconfig(t, "default")
+		for _, tc := range []struct {
+			name, want string
+			run        func() result
+		}{
+			{"allowed-known", "listed", func() result { return runLive(t, allowed, policies, "known", "json", route...) }},
+			{"allowed-strict", "listed", func() result { return runLive(t, allowed, policies, "strict", "json", route...) }},
+			{"allowed-exact", "listed", func() result { return runLive(t, allowed, policies, "exact", "json", route...) }},
+			{"denied-known", "unavailable", func() result { return runLive(t, denied, policies, "known", "json", route...) }},
+			{"denied-strict", "unavailable", func() result { return runLive(t, denied, policies, "strict", "json", route...) }},
+			{"file-strict", "notRead", func() result {
+				return runRoutes(t, kc, app.ProxyTestHooks{}, "proxy", "routes", "--file", dumpsDir+"policies.json", "--route", "kgwctl-proxy/orders", "-o", "json")
+			}},
+			{"file-exact", "notRead", func() result {
+				return runRoutes(t, kc, app.ProxyTestHooks{}, "proxy", "routes", "--file", dumpsDir+"policies.json", "--route", "kgwctl-proxy/orders", "-o", "json", "--select", "exact")
+			}},
+		} {
+			r := tc.run()
+			var doc struct {
+				Item struct {
+					Selection struct {
+						KnownHTTPRoutes string `json:"knownHTTPRoutes"`
+					}
+				}
+			}
+			if err := json.Unmarshal([]byte(r.stdout), &doc); err != nil || r.code != 0 {
+				t.Fatalf("%s: exit %d, err %v, stdout:\n%s", tc.name, r.code, err, r.stdout)
+			}
+			if got := doc.Item.Selection.KnownHTTPRoutes; got != tc.want {
+				t.Errorf("%s: selection.knownHTTPRoutes %q, want %q", tc.name, got, tc.want)
+			}
+		}
 	})
 
 	t.Run("R24a-later-error", func(t *testing.T) {
@@ -926,4 +976,94 @@ func TestProxyRoutesExactFile(t *testing.T) {
 	if s := doc.Item.Selection; s.Strategy != "exact" || len(s.Routes) != 0 || len(s.Inferred) != 1 {
 		t.Errorf("exact JSON selection %+v, want strategy exact, no route and one inferred", s)
 	}
+}
+
+// inferredIndexCopies is a wrapper's extra: for each exact RouteSource claim,
+// an agreeing copy whose indices are inferred.
+func inferredIndexCopies(_ *model.Snapshot, inner []provenance.Claim) []provenance.Claim {
+	var out []provenance.Claim
+	for _, c := range inner {
+		r, ok := c.Assertion.(provenance.RouteSource)
+		if !ok || c.Certainty != model.Exact {
+			continue
+		}
+		r.IndexCertainty = model.Inferred
+		c.Assertion, c.Ref = r, ""
+		out = append(out, c)
+	}
+	return out
+}
+
+// TestProxyRoutesExactAgreeingClaim: under --select exact --rule, an agreeing
+// claim with inferred indices does not hide the metadata's exact indices (DD-4).
+func TestProxyRoutesExactAgreeingClaim(t *testing.T) {
+	kc := unreachableKubeconfig(t, "default")
+	args := []string{"proxy", "routes", "--file", dumpsDir + "collide-meta.json", "--route", "kgwctl-proxy/orders", "--rule", "0", "--select", "exact"}
+	plain := runRoutes(t, kc, app.ProxyTestHooks{}, args...)
+	if plain.code != 0 || plain.stderr != "" || strings.Contains(plain.stdout, "not matched") || !strings.Contains(plain.stdout, "HTTPRoute kgwctl-proxy/orders · rule 0") {
+		t.Fatalf("default module: exit %d, stderr %q, stdout:\n%s\nwant the route matched", plain.code, plain.stderr, plain.stdout)
+	}
+	// The merged reading's label may say "partly from name"; only the match is checked.
+	mods := []provenance.Module{proxyviewtest.Wrap("example", kgateway.New(), inferredIndexCopies)}
+	text := runRoutesModules(t, kc, app.ProxyTestHooks{}, mods, args...)
+	if text.code != 0 || text.stderr != "" || strings.Contains(text.stdout, "not matched") || !strings.Contains(text.stdout, "HTTPRoute kgwctl-proxy/orders · rule 0") {
+		t.Errorf("text with the agreeing claim: exit %d, stderr %q, stdout:\n%s\nwant the route matched", text.code, text.stderr, text.stdout)
+	}
+	j := runRoutesModules(t, kc, app.ProxyTestHooks{}, mods, append(args, "-o", "json")...)
+	var doc struct {
+		Item struct {
+			Selection struct {
+				Routes, Inferred []any
+			}
+		}
+	}
+	if err := json.Unmarshal([]byte(j.stdout), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if s := doc.Item.Selection; len(s.Routes) != 1 || len(s.Inferred) != 0 {
+		t.Errorf("JSON with the agreeing claim: selection %+v, want one route and none inferred", s)
+	}
+}
+
+// exactOnSecondUse is a wrapper's extra: on the second use of the shared route
+// config, an exact kgwctl-proxy/orders reading with inferred indices.
+func exactOnSecondUse(snap *model.Snapshot, inner []provenance.Claim) []provenance.Claim {
+	route := snap.Listeners[1].FilterChains[0].HCM.RouteConfig.VirtualHosts[0].Routes[0].ID
+	var out []provenance.Claim
+	for _, c := range inner {
+		r, ok := c.Assertion.(provenance.RouteSource)
+		if !ok || c.Subject != route || r.Route != proxyview.HTTPRouteRef(types.NamespacedName{Namespace: "kgwctl-proxy", Name: "orders"}) {
+			continue
+		}
+		r.IndexCertainty, r.Exhaustive = model.Inferred, true
+		c.Assertion, c.Ref, c.Certainty = r, "", model.Exact
+		out = append(out, c)
+	}
+	return out
+}
+
+// TestProxyRoutesSharedSourceOutcomes: two uses of one route config with
+// different outcomes are both listed; equal outcomes print once (DD-5).
+func TestProxyRoutesSharedSourceOutcomes(t *testing.T) {
+	kc := unreachableKubeconfig(t, "default")
+	args := []string{"proxy", "routes", "--file", "../proxyview/testdata/shared-source.json", "--route", "kgwctl-proxy/orders", "--rule", "0", "--select", "exact"}
+	const name = "orders_example-route-0-httproute-orders-kgwctl-proxy-0-0-matcher-0"
+	same := runRoutes(t, kc, app.ProxyTestHooks{}, args...)
+	if same.code != 0 || strings.Count(same.stdout, name) != 1 {
+		t.Errorf("equal outcomes: exit %d, stdout:\n%s\nwant the route listed once", same.code, same.stdout)
+	}
+	mods := []provenance.Module{proxyviewtest.Wrap("example", kgateway.New(), exactOnSecondUse)}
+	r := runRoutesModules(t, kc, app.ProxyTestHooks{}, mods, args...)
+	if r.code != 0 || r.stderr != "" {
+		t.Fatalf("exit %d, stderr %q; want 0 and empty", r.code, r.stderr)
+	}
+	for _, want := range []string{"inferred routes, not matched:\n", "ambiguous routes, not matched:\n"} {
+		if !strings.Contains(r.stdout, want) {
+			t.Errorf("text lacks %q", want)
+		}
+	}
+	if n := strings.Count(r.stdout, name); n != 2 {
+		t.Errorf("text lists the route %d times, want once per outcome", n)
+	}
+	golden(t, "proxy-routes", "exact-shared-source-two-outcomes", r.stdout)
 }

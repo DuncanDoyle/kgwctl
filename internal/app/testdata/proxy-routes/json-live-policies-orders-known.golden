@@ -602,6 +602,7 @@
         }
       },
       "strategy": "known",
+      "knownHTTPRoutes": "listed",
       "routes": [
         {
           "id": "L0/C0/N0/RC/V0/R0",

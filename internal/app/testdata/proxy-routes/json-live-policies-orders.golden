@@ -54,6 +54,7 @@
         }
       },
       "strategy": "strict",
+      "knownHTTPRoutes": "listed",
       "routes": [],
       "inferred": [],
       "ambiguous": [

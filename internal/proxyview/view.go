@@ -63,18 +63,34 @@ func notExact(ix *provenance.Index, routes []model.ID, rule bool) []model.ID {
 		res := provenance.Resolve[provenance.RouteSource](ix, id)
 		ok := res.Certainty == model.Exact && len(res.Candidates) == 1
 		if ok && rule {
-			// An unset IndexCertainty means the reading's own certainty applies.
-			ic := res.Candidates[0].IndexCertainty
-			if ic == model.Unknown {
-				ic = res.Certainty
-			}
-			ok = ic == model.Exact
+			ok = exactIndices(res)
 		}
 		if !ok {
 			out = append(out, id)
 		}
 	}
 	return out
+}
+
+// exactIndices reports whether one claim behind res's one reading has exact
+// indices. It checks each claim before the merge, which keeps the highest
+// set value and so can lose an unset one (DD-4).
+func exactIndices(res provenance.Resolution[provenance.RouteSource]) bool {
+	for _, c := range res.Claims {
+		r, ok := c.Assertion.(provenance.RouteSource)
+		if !ok || c.Certainty != res.Certainty || !sameReading(r, res.Candidates[0]) {
+			continue
+		}
+		// An unset IndexCertainty means the claim's own certainty applies.
+		ic := r.IndexCertainty
+		if ic == model.Unknown {
+			ic = c.Certainty
+		}
+		if ic == model.Exact {
+			return true
+		}
+	}
+	return false
 }
 
 // chooseKnown returns the narrowings of sel whose kept claims name one
@@ -101,14 +117,26 @@ type Selection struct {
 	Rule  *int                 // one rule index; nil: every rule
 }
 
+// KnownInput says whether the cluster's HTTPRoutes were an input (R24).
+type KnownInput string
+
+// Known inputs.
+const (
+	KnownListed      KnownInput = "listed"      // live: the HTTPRoute list succeeded
+	KnownUnavailable KnownInput = "unavailable" // live: the list failed and the command went on without it
+	KnownNotRead     KnownInput = "notRead"     // --file: kgwctl calls no Kubernetes API
+)
+
 // Options are Build's inputs besides the dump.
 type Options struct {
-	Gateway   *types.NamespacedName // the Gateway kgwctl was given; labels listener rows
-	Known     []model.Ref           // the cluster's HTTPRoutes (see HTTPRouteRef); empty with --file
-	Capture   model.Capture         // model.CaptureComplete live; empty with --file
-	Selection Selection
-	Strategy  Strategy            // empty is StrategyStrict
-	Modules   []provenance.Module // nil is DefaultModules()
+	Gateway *types.NamespacedName // the Gateway kgwctl was given; labels listener rows
+	Known   []model.Ref           // the cluster's HTTPRoutes (see HTTPRouteRef); empty with --file
+	// KnownInput says how Known was obtained; empty is KnownListed with Known, else KnownNotRead.
+	KnownInput KnownInput
+	Capture    model.Capture // model.CaptureComplete live; empty with --file
+	Selection  Selection
+	Strategy   Strategy            // empty is StrategyStrict
+	Modules    []provenance.Module // nil is DefaultModules()
 }
 
 // DefaultModules returns the provenance modules of a kgwctl build: the kgateway module.
@@ -127,6 +155,7 @@ type View struct {
 	Inferred       []model.ID             // Select's routes --select exact left unmatched: a reading below exact
 	Strategy       Strategy
 	Selection      Selection
+	KnownInput     KnownInput // never empty after Build
 	Gateway        *types.NamespacedName
 	Warnings       []Warning // DD-12: parser, then index warnings, once each
 }
@@ -166,7 +195,14 @@ func Build(body []byte, o Options) (View, error) {
 		return View{}, fmt.Errorf("%w: %w", ErrCompose, err)
 	}
 	v := View{Full: full, Snapshot: full, Chains: chain.Effective(full), Index: ix, Strategy: strategy,
-		Selection: sel, Gateway: o.Gateway, Warnings: warningList(full, ix)}
+		Selection: sel, KnownInput: o.KnownInput, Gateway: o.Gateway, Warnings: warningList(full, ix)}
+	switch {
+	case v.KnownInput != "":
+	case len(o.Known) > 0:
+		v.KnownInput = KnownListed
+	default:
+		v.KnownInput = KnownNotRead
+	}
 	if sel.Route.Name == "" {
 		if len(o.Known) > 0 {
 			v.Narrowed = kgateway.Narrow(ix, o.Known)

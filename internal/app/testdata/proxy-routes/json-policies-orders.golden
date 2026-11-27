@@ -43,6 +43,7 @@
         }
       },
       "strategy": "strict",
+      "knownHTTPRoutes": "notRead",
       "routes": [],
       "inferred": [],
       "ambiguous": [

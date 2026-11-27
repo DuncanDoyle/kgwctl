@@ -33,7 +33,7 @@ func Text(w io.Writer, v View, o TextOptions) error {
 		snap := *v.Snapshot
 		snap.Warnings = nil
 		opts := render.Options{Header: o.Header, ResponseOrder: o.ResponseOrder, Labels: v.labels(),
-			Notes: v.notes(), Trailer: provenance.Notes(v.Index)}
+			Notes: v.notes(), Trailer: v.trailer()}
 		if err := render.Text(&b, &snap, v.Chains, opts); err != nil {
 			return err
 		}
@@ -66,6 +66,28 @@ func (v View) labels() func(render.Row) []string {
 	}
 }
 
+// recordedAboveLabel labels a route's policy records at its virtual host,
+// route config or listener: where they were recorded, not inheritance (D-024).
+const recordedAboveLabel = "policies recorded above the route"
+
+// trailer is the Trailer hook: provenance.Notes with kgwctl's label for the
+// records above route level.
+func (v View) trailer() func(render.Row) []render.Line {
+	base := provenance.Notes(v.Index)
+	return func(row render.Row) []render.Line {
+		out := base(row)
+		for i := range out {
+			if out[i].Label == xdsviewAboveLabel {
+				out[i].Label = recordedAboveLabel
+			}
+		}
+		return out
+	}
+}
+
+// xdsviewAboveLabel is provenance.Notes' label for the same records.
+const xdsviewAboveLabel = "inherited policies"
+
 // notes is the Notes hook: OneCandidateNote under a route Known narrowed to
 // one reading that --select known did not choose (DD-6).
 func (v View) notes() func(render.Row) []string {
@@ -81,7 +103,8 @@ func (v View) notes() func(render.Row) []string {
 }
 
 // selectionText writes the no-match line and the routes listed, not matched.
-// A route of a shared route config is listed once, by its source path.
+// Uses of a shared route config with the same outcome and readings are
+// listed once, by source path; different outcomes are each listed (DD-5).
 func (v View) selectionText(b *bytes.Buffer) {
 	s := v.Selected
 	if s == nil {
@@ -96,40 +119,65 @@ func (v View) selectionText(b *bytes.Buffer) {
 	}
 	type entry struct {
 		rc, name   string
-		route      model.ID
+		unres, inf bool
+		detail     string // the outcome's text after the name
+	}
+	// outcome is what one use of a source shows; equal outcomes print once.
+	type outcome struct {
+		key        model.ID
+		detail     string
 		unres, inf bool
 	}
+	routeLabel := provenance.Labels(v.Index, nil)
 	var list []entry
-	seen := map[model.ID]bool{}
-	names := map[string]int{}
+	seen := map[outcome]bool{}
+	names := map[string]map[model.ID]bool{} // route name to its source keys
 	walk(v.Full, func(hcm model.HCMConfig, _ model.VirtualHost, r model.Route) {
 		if !ambiguous[r.ID] && !unresolved[r.ID] && !inferred[r.ID] {
 			return
+		}
+		e := entry{name: r.Name, unres: unresolved[r.ID], inf: inferred[r.ID]}
+		switch {
+		case e.inf:
+			// The reading as the tree prints it.
+			e.detail = strings.Join(routeLabel(render.Row{Subject: r.ID, Route: r.ID}), " · ")
+		case e.unres:
+			e.detail = "origin unresolved"
+		default:
+			e.detail = v.ambiguousText(r.ID)
 		}
 		key := r.SourcePath
 		if key == "" {
 			key = r.ID
 		}
-		if seen[key] {
+		o := outcome{key: key, detail: e.detail, unres: e.unres, inf: e.inf}
+		if seen[o] {
 			return
 		}
-		seen[key] = true
-		names[r.Name]++
-		list = append(list, entry{rc: hcm.RouteConfig.Name, name: r.Name, route: r.ID, unres: unresolved[r.ID], inf: inferred[r.ID]})
-	})
-	label := func(e entry) string {
-		if names[e.name] > 1 {
-			return e.name + " · route config " + e.rc
+		seen[o] = true
+		if names[r.Name] == nil {
+			names[r.Name] = map[model.ID]bool{}
 		}
-		return e.name
+		names[r.Name][key] = true
+		e.rc = hcm.RouteConfig.Name
+		list = append(list, e)
+	})
+	line := func(e entry) string {
+		out := "  " + e.name
+		if len(names[e.name]) > 1 {
+			out += " · route config " + e.rc
+		}
+		if e.detail != "" {
+			out += " · " + e.detail
+		}
+		return clean(out)
 	}
-	// Inferred routes first, each with its reading as the tree prints it.
-	routeLabel := provenance.Labels(v.Index, nil)
+	// Inferred routes first.
 	for i, e := range slices.DeleteFunc(slices.Clone(list), func(e entry) bool { return !e.inf }) {
 		if i == 0 {
 			fmt.Fprintln(b, "inferred routes, not matched:")
 		}
-		fmt.Fprintln(b, clean("  "+strings.Join(append([]string{label(e)}, routeLabel(render.Row{Subject: e.route, Route: e.route})...), " · ")))
+		fmt.Fprintln(b, line(e))
 	}
 	list = slices.DeleteFunc(list, func(e entry) bool { return e.inf })
 	var amb, unres bool
@@ -145,23 +193,24 @@ func (v View) selectionText(b *bytes.Buffer) {
 		fmt.Fprintln(b, "ambiguous routes, not matched:")
 	}
 	for _, e := range list {
-		label := label(e)
-		if e.unres {
-			fmt.Fprintln(b, clean("  "+label+" · origin unresolved"))
-			continue
-		}
-		var refs []string
-		for _, r := range provenance.Resolve[provenance.RouteSource](v.Index, e.route).Candidates {
-			if s := r.Route.String(); len(refs) == 0 || refs[len(refs)-1] != s {
-				refs = append(refs, s)
-			}
-		}
-		line := "  " + label + " · ambiguous: " + strings.Join(refs, ", ")
-		if n, ok := v.narrowing(e.route); ok && len(readings(n.Kept)) == 1 {
-			line += " · " + OneCandidateNote
-		}
-		fmt.Fprintln(b, clean(line))
+		fmt.Fprintln(b, line(e))
 	}
+}
+
+// ambiguousText is an ambiguous route's outcome: its readings' HTTPRoutes,
+// and OneCandidateNote when Known narrowed it to one.
+func (v View) ambiguousText(route model.ID) string {
+	var refs []string
+	for _, r := range provenance.Resolve[provenance.RouteSource](v.Index, route).Candidates {
+		if s := r.Route.String(); len(refs) == 0 || refs[len(refs)-1] != s {
+			refs = append(refs, s)
+		}
+	}
+	out := "ambiguous: " + strings.Join(refs, ", ")
+	if n, ok := v.narrowing(route); ok && len(readings(n.Kept)) == 1 {
+		out += " · " + OneCandidateNote
+	}
+	return out
 }
 
 // target names the selected HTTPRoute and rule, e.g. "HTTPRoute ns/x rule 1".

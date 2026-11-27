@@ -194,10 +194,14 @@ func TestPayloadPolicyLevels(t *testing.T) {
 		}
 	}
 	out := text(t, v, proxyview.TextOptions{})
-	for _, want := range []string{"policies: TrafficPolicy shop/route-p (cors)\n", "inherited policies: TrafficPolicy shop/vh-p (cors; vhost), TrafficPolicy shop/rc-p (cors; route config), TrafficPolicy shop/listener-p (cors; listener)\n"} {
+	for _, want := range []string{"policies: TrafficPolicy shop/route-p (cors)\n", "policies recorded above the route: TrafficPolicy shop/vh-p (cors; vhost), TrafficPolicy shop/rc-p (cors; route config), TrafficPolicy shop/listener-p (cors; listener)\n"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("text lacks %q:\n%s", want, out)
 		}
+	}
+	// Where the records are, not inheritance (D-024).
+	if strings.Contains(out, "inherited") {
+		t.Errorf("text claims inheritance:\n%s", out)
 	}
 }
 

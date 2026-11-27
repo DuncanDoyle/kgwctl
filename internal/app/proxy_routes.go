@@ -225,7 +225,7 @@ func routesFromFile(cmd *cobra.Command, f *Flags, req routesRequest, path string
 	if req.gateway != nil {
 		src.Gateway = gatewayRef(*req.gateway)
 	}
-	return printRoutes(cmd, body, path, routesInput{gateway: req.gateway}, req, header, src)
+	return printRoutes(cmd, body, path, routesInput{gateway: req.gateway, knownInput: proxyview.KnownNotRead}, req, header, src)
 }
 
 func routesLive(cmd *cobra.Command, f *Flags, now func() time.Time, hooks proxyTestHooks, req routesRequest, name, pod string) error {
@@ -271,6 +271,7 @@ func routesLive(cmd *cobra.Command, f *Flags, now func() time.Time, hooks proxyT
 	}
 
 	known, err := knownHTTPRoutesByCtx(ctx, c)
+	knownInput := proxyview.KnownListed
 	switch {
 	case err != nil && errors.Is(context.Cause(ctx), context.DeadlineExceeded):
 		return &ExitError{Code: 2, Err: fmt.Errorf("could not finish loading the HTTPRoutes of the cluster within --%s %v (the config dump of Pod %s was read)", flagRequestTimeout, f.RequestTimeout, r.target)}
@@ -280,11 +281,12 @@ func routesLive(cmd *cobra.Command, f *Flags, now func() time.Time, hooks proxyT
 		// Without the list, origins come from the dump alone; nothing ambiguous becomes a match.
 		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not list HTTPRoutes: %v\n", err)
 		req.knownFailed = true
+		knownInput = proxyview.KnownUnavailable
 	}
 	header := fmt.Sprintf("Gateway %s · pod %s · %s", gw, r.target, r.capture.CapturedAt.UTC().Format(time.RFC3339))
 	at := r.capture.CapturedAt.UTC()
 	src := proxyview.Source{Gateway: gatewayRef(gw), Pod: &proxyview.Ref{Kind: "Pod", Namespace: r.target.Namespace, Name: r.target.Name}, CapturedAt: &at}
-	return printRoutes(cmd, r.body, "Pod "+r.target.String(), routesInput{gateway: &gw, known: known, capture: model.CaptureComplete}, req, header, src)
+	return printRoutes(cmd, r.body, "Pod "+r.target.String(), routesInput{gateway: &gw, known: known, knownInput: knownInput, capture: model.CaptureComplete}, req, header, src)
 }
 
 // tooLarge reports a dump over --max-size (design §4.1). A live dump can also
@@ -337,6 +339,8 @@ type routesInput struct {
 	gateway *types.NamespacedName // live, or --gateway with --file
 	known   []model.Ref           // the cluster's HTTPRoutes; empty with --file
 	capture model.Capture         // complete live; empty with --file (design DD-2)
+	// knownInput says whether known was listed, could not be, or was not read (--file).
+	knownInput proxyview.KnownInput
 }
 
 // printRoutes builds the view from body and prints the tree, or the envelope
@@ -354,7 +358,7 @@ func printRoutes(cmd *cobra.Command, body []byte, source string, in routesInput,
 
 // writeRoutes builds the view and writes it to stdout.
 func writeRoutes(cmd *cobra.Command, body []byte, source string, in routesInput, req routesRequest, header string, src proxyview.Source) error {
-	v, err := proxyview.Build(body, proxyview.Options{Gateway: in.gateway, Known: in.known, Capture: in.capture, Selection: req.sel, Strategy: req.strategy, Modules: req.modules})
+	v, err := proxyview.Build(body, proxyview.Options{Gateway: in.gateway, Known: in.known, KnownInput: in.knownInput, Capture: in.capture, Selection: req.sel, Strategy: req.strategy, Modules: req.modules})
 	switch {
 	case errors.Is(err, proxyview.ErrNotConfigDump):
 		return &ExitError{Code: 2, Err: fmt.Errorf("%s: %w", source, err)}
