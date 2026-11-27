@@ -170,6 +170,8 @@ After the tree, `--route` lists the routes it did not match (see below). Every w
 
 `-o json|yaml` prints one `ProxyRoutes` document ([`docs/output.md`](docs/output.md)): the source, the listener tree with each route's origin and filters, the selection and the warnings. It leaves out the dump's raw config (`typedConfig`, `typedPerFilterConfig` and `metadata`); `proxy dump` gives the dump unchanged. Each `id` is valid only within one document, so don't store it or compare it across dumps. Exit codes: `0` when printed, `2` on any error.
 
+The text and the document are smaller than the dump, but they can still hold secrets: header and query match values, header values that routes add, and the error details of a listener Envoy rejected. These can contain credentials or tokens. Check the output before you attach it to a ticket, as with `proxy dump`.
+
 #### How `--route` picks routes
 
 kgwctl must find out which HTTPRoute each Envoy route comes from. Sometimes it can't be sure. `--select` sets how sure it must be before `--route` shows a route.
