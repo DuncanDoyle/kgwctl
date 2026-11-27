@@ -66,7 +66,7 @@ Fixtures are the recorded dumps in `testdata/dumps/` and the live fixtures of `h
 | R12a | As R11, on a dump where the kgateway module records a TrafficPolicy field it cannot link (`merge.*` field `exampleField`) and the route has per-filter config for slot `example/filter`. `m` adds a `FilterLink` from that inner record (by its `Ref`) to the slot | Through `pkg/cli`: the filter's JSON `policies` has the record at level `route`, certainty `inferred`; its text row ends `· TrafficPolicy ns/p (exampleField, inferred)`. The default build shows the record only on the `policies:` line. |
 | R12b | As R11, but `m` adds an invalid claim (no evidence) on a route; run once with `m` named `example` and once named `other` | `claim-dropped` in `warnings` with kgwctl's message (DD-10). Text and JSON are byte-equal between the two names; no claim ID and no module name in either. |
 | R13 | `WithProvenanceModules(a, b)` with `a.Name() == b.Name()` | `proxy routes` exits 2: `compose provenance modules: …`. Other commands work. |
-| R14 | `-o json` or `-o yaml` of `describe`, `version`, `check`, `proxy routes`; a bundle's `manifest.json`, `check.json`, `version.json` | `schemaVersion: kgwctl.kgateway.dev/v1alpha2`. Only `ProxyRoutes` changes shape. |
+| R14 | `-o json` or `-o yaml` of `describe`, `version`, `check`, `proxy routes`; a bundle's `manifest.json` and `check.json` | `schemaVersion: kgwctl.kgateway.dev/v1alpha2`. Only `ProxyRoutes` changes shape. The bundle's `cluster/version.json` has no envelope and stays unchanged. |
 | R15 | `bundle` with a discovery selector that excludes `team-b` | The manifest records `team-b` under `unwatched`, as today. Scope `unknown` records no names. |
 | R15a | A TrafficPolicy whose ancestor status at the current generation is `Accepted=False/Invalid` and `Attached=False/Pending` | `check` reports KGWUI-002 for it, not KGWUI-003. The bundle's `check.json` has the same finding. |
 | R15b | A network filter whose config comes from ECDS that xdsview could not establish, in a chain without an HCM | JSON: the network filter has `configSource: "unresolved"`; the chain has no `hcm`. Text: `(ECDS, unresolved)` and `HTTP filters unknown: …`, as xdsview renders it. No raw config. |
@@ -91,7 +91,7 @@ Fixtures are the recorded dumps in `testdata/dumps/` and the live fixtures of `h
 | `proxy routes` JSON/YAML | New `ProxyRoutes` shape (§5). Raw `typedConfig`, `typedPerFilterConfig` and `metadata` are gone. |
 | All JSON/YAML | `schemaVersion` is `kgwctl.kgateway.dev/v1alpha2`. Other kinds keep their fields. |
 | `check` | Snellius v0.9.0 findings: KGWUI-002 for rejected policies (was KGWUI-003), DirectResponse status findings, and new IDs for policy-ancestor KGWUI-002 findings. |
-| `bundle` | `manifest.json`, `check.json` and `version.json` move to `v1alpha2`. Content unchanged. |
+| `bundle` | `manifest.json` and `check.json` move to `v1alpha2`. Content unchanged. `cluster/version.json` has no envelope and is unchanged. |
 | `version` | The client version is right for `go install …@<tag>` and release binaries. |
 | Flags | New `proxy routes --select strict\|known`, default `strict`. |
 | Exit codes, RBAC | Unchanged; `--select known` with `--file` is a usage error (exit 2). |
