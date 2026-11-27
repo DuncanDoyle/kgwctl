@@ -263,7 +263,8 @@ Downstream collectors are trusted in-process code. The Sink and the guard protec
 ## D-032 — `proxy routes` takes a route selection strategy (2026-11-27, phase 4b) — decided by the owner 2026-11-27
 **Context:** Under xdsview v0.7.0, `kgateway.Select` leaves a route ambiguous when only the cluster's HTTPRoutes (Known) narrowed its readings to one. kgwctl's selection has been strict so far (D-022). krp also selects such a route (xdsview D-022). The owner wants both behaviours available in kgwctl.
 **Decision:**
-- `proxy routes --select strict|known`, default `strict`.
+- `proxy routes --select exact|strict|known`, default `strict`. Each value adds one kind of evidence to the one before it.
+- `exact` (added by the owner 2026-11-27): only a route whose one reading has certainty `exact` is selected; with `--rule`, its rule index must be exact too. With kgateway, exact readings come from route metadata. A route `strict` would select on an inferred reading is listed as inferred, not matched. Works with `--file`.
 - `strict`: a route Known narrowed to one reading stays ambiguous and is listed, never selected.
 - `known`: such a route is also selected when the one reading Known kept matches the query. Text and JSON mark it as chosen from known HTTPRoutes, and JSON records the strategy used.
 - `--select known` needs the cluster's HTTPRoutes, so with `--file` it is a usage error.
