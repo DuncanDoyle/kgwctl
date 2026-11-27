@@ -1,0 +1,33 @@
+# A TrafficPolicy the controller rejected: Accepted=False/Invalid and
+# Attached=False/Pending at the policy's current generation.
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: rejected
+  namespace: default
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: example
+status:
+  ancestors:
+    - ancestorRef:
+        group: gateway.networking.k8s.io
+        kind: Gateway
+        name: http
+        namespace: kgateway-system
+      controllerName: kgateway.dev/kgateway
+      conditions:
+        - type: Accepted
+          status: "False"
+          reason: Invalid
+          message: invalid policy
+          observedGeneration: 1
+          lastTransitionTime: "2026-01-01T00:00:00Z"
+        - type: Attached
+          status: "False"
+          reason: Pending
+          message: Policy is not attached
+          observedGeneration: 1
+          lastTransitionTime: "2026-01-01T00:00:00Z"

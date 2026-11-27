@@ -380,3 +380,25 @@ spec:
 		t.Errorf("-n team-a: replica namespace team-d added: %v", got)
 	}
 }
+
+func TestDiscoveryScopeExcluded(t *testing.T) {
+	ns := func(name, team string) *corev1.Namespace {
+		return &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name, Labels: map[string]string{"team": team}}}
+	}
+	nss := []*corev1.Namespace{ns("team-b", "b"), ns("team-a", "a")}
+	sel := install.Scope{
+		Mode:      install.ScopeSelectors,
+		Selectors: []metav1.LabelSelector{{MatchLabels: map[string]string{"team": "a"}}},
+	}
+
+	if d := discoveryScope(sel, true, nss); d.Mode != "selectors" || !slices.Equal(d.Unwatched, []string{"team-b"}) {
+		t.Errorf("selectors: %+v, want Unwatched [team-b]", d)
+	}
+	unknown := install.Scope{Mode: install.ScopeUnknown, Err: "envFrom"}
+	if d := discoveryScope(unknown, true, nss); d.Mode != "unknown" || len(d.Unwatched) != 0 || d.Reason == "" {
+		t.Errorf("unknown: %+v, want no names and a reason", d)
+	}
+	if d := discoveryScope(sel, false, nss); d.Mode != "namespaces-unreadable" || len(d.Unwatched) != 0 {
+		t.Errorf("unreadable: %+v", d)
+	}
+}

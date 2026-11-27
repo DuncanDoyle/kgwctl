@@ -150,7 +150,6 @@ func scopeReason(err string) string {
 }
 
 // discoveryScope records an install's Snellius scope for the manifest.
-// Unwatched is a local loop until Snellius ships Scope.Excluded.
 func discoveryScope(s install.Scope, nsReadable bool, nss []*corev1.Namespace) pb.DiscoveryScope {
 	d := pb.DiscoveryScope{Mode: string(s.Mode), Reason: scopeReason(s.Err), Source: discoverySource}
 	switch {
@@ -169,12 +168,9 @@ func discoveryScope(s install.Scope, nsReadable bool, nss []*corev1.Namespace) p
 		d.Mode, d.Reason = "namespaces-unreadable", "Namespaces could not be read; nothing is scope-filtered"
 		return d
 	}
-	for _, n := range nss {
-		if !s.Contains(n.Name, n) {
-			d.Unwatched = append(d.Unwatched, n.Name)
-		}
+	if names, known := s.Excluded(nss); known {
+		d.Unwatched = names
 	}
-	slices.Sort(d.Unwatched)
 	return d
 }
 

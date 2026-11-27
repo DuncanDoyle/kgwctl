@@ -613,3 +613,18 @@ func TestBundleRegistryAlias(t *testing.T) {
 }
 
 var _ proxydump.Dialer = fakeAdmin{}
+
+// TestBundleCheckRejectedPolicy: the bundle's check.json carries KGWUI-002 for
+// a rejected policy and no KGWUI-003.
+func TestBundleCheckRejectedPolicy(t *testing.T) {
+	env := checkEnv(t, checkInstall, checkController, checkPolicyRejected)
+	a := archiveWith(t, env.Kubeconfig, statsRegistry(fakeStats{}), app.BundleTestHooks{Check: fastHooks(metricsScraper{})}, "--skip", "version")
+	b, ok := a.File("check/check.json")
+	if !ok {
+		t.Fatal("archive lacks check/check.json")
+	}
+	codes := findingCodes(t, string(b))
+	if !slices.Contains(codes, "KGWUI-002") || slices.Contains(codes, "KGWUI-003") {
+		t.Errorf("codes %v, want KGWUI-002 and no KGWUI-003\n%s", codes, b)
+	}
+}
