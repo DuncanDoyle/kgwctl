@@ -6,12 +6,12 @@ Base: cd2fbaa
 Author: anthropic (claude-opus-5-5 controller; Claude subagents)
 Advisory: none
 Docs: docs/phases/phase-4b/
-Status: design review
+Status: implementing 4b.1
 
 ### Queue
-- [x] Q1 Design r2 and implementation plan (2 planned sub-phases); D-032 owner-decided, D-033 to D-035 proposed
-- [ ] Q2 Cross-model review of design + plan (Codex) + triage ← CURRENT
-- [ ] Q3 Implementation
+- [x] Q1 Design r5 and implementation plan (2 planned sub-phases); D-032 owner-decided, D-033 to D-035 proposed
+- [x] Q2 Cross-model review of design + plan: 4 Codex rounds (reviews/design-codex.md, -r2 to -r4) + triage; last fixes are wording
+- [ ] Q3 Implementation: 4b.1 (migration, payload, `--select`, seam), 4b.2 (Snellius, version, release script, live check) ← CURRENT
 - [ ] Q4 Live check on kind, goldens reviewed
 - [ ] Q5 Phase review (Codex) + triage, fixes
 - [ ] Q6 Close, tag `v0.1.0`
@@ -19,7 +19,7 @@ Status: design review
 ### Exit gates
 - [ ] tests/vet pass (observed)
 - [ ] all queue items done or deferred
-- [ ] design+plan cross-model review + triage
+- [x] design+plan cross-model review + triage: reviews/design-codex.md … -r4.md
 - [ ] phase cross-model review + triage
 - [ ] decisions.md / design / plan in sync with code
 - [ ] phase-4b-complete.md written, roadmap updated, tracked items closed
