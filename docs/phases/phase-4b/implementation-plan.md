@@ -135,8 +135,18 @@ Each task builds and passes `make test` on its own; no task consumes a type a la
 - [ ] Commit `feat(cli): provenance module seam for downstream builds`.
 
 ### Task 4b.1.4: README
-**Files:** modify `README.md` (`proxy routes`, `Extending`).
-- [ ] `proxy routes`: the sample tree from the reviewed `collide-meta-orders` golden; warnings at the end; one paragraph on `--select strict|known` (why `strict` is the default, what `known` marks, that it needs a live cluster, why it can differ from krp); the JSON paragraph, naming the raw-config exclusion and the ID scope.
+**Files:** modify `README.md` (`proxy routes`, `Extending`), `internal/app/proxy_routes.go` (long help of `proxy routes`).
+- [ ] `proxy routes`: the sample tree from the reviewed `collide-meta-orders` golden; warnings at the end; the JSON paragraph, naming the raw-config exclusion and the ID scope.
+- [ ] `proxy routes`, a subsection "How `--route` picks routes" (owner request: explain `--select` properly). Plain words for a reader whose first language isn't English; short sentences; no xdsview internals:
+  - why an Envoy route's HTTPRoute can be unclear: without route metadata kgateway joins `httproute-<name>-<ns>-…` with dashes, so `team-a/orders` and `a/orders-team` give the same route name; a name and namespace without dashes give one reading;
+  - the three values in order, each adding one kind of evidence, with one example command each: `exact` (route metadata only), `strict` (default; also a name with one reading), `known` (also a name the cluster's HTTPRoutes narrow to one reading);
+  - a table of cases × strategies (metadata on; one reading; several readings with one in the cluster; several in the cluster) showing match / inferred / ambiguous / "chosen from known HTTPRoutes";
+  - the risk of `known`, as the four-step story: an HTTPRoute deleted, another created, the proxy still serving the old route, `known` naming the wrong one; that is why `strict` is the default;
+  - `known` needs the live cluster (usage error with `--file`); `exact` and `strict` work with `--file`;
+  - turning on route metadata (`enableRouteSourceMetadata`) makes all three agree;
+  - how to see the choice in output: text labels `(inferred)`, `(chosen from known HTTPRoutes)`, the "ambiguous"/"inferred … not matched" lists; JSON `selection.strategy`, `chosenBy`, `selection.inferred`;
+  - why `known` can differ from krp (krp narrows with `--route` itself).
+- [ ] `kgwctl proxy routes --help`: a short paragraph on `--select` (what each value adds, the default, `known` not with `--file`) pointing to the README section. Update help goldens if any.
 - [ ] `Extending`: one line on `WithProvenanceModules` and wrapping `kgateway.New()`.
 - [ ] Check that docs cite D-032 to D-035 once the controller has added D-033 to D-035.
 - [ ] Verify: `make -C … test`.
