@@ -17,7 +17,8 @@ tag="$1"
 [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || die "not a version tag: $tag"
 
 # A git-ignored go.work or a host GOFLAGS must not change what gets built.
-export GOWORK=off GOFLAGS=
+# A non-empty GOFLAGS also overrides one set with `go env -w`.
+export GOWORK=off GOFLAGS=-mod=readonly
 
 dry_run=false
 [ "${RELEASE_DRY_RUN:-}" = "1" ] && dry_run=true
