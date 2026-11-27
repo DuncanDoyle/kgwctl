@@ -168,7 +168,7 @@ func (v View) selectionText(b *bytes.Buffer) {
 		key              model.ID
 		unres, inf, note bool
 		certainty        model.Certainty
-		readings         string // the effective readings, %#v
+		readings         string // readingsKey
 	}
 	var list []entry
 	seen := map[outcome]bool{}
@@ -194,7 +194,7 @@ func (v View) selectionText(b *bytes.Buffer) {
 		}
 		if !e.unres {
 			res := provenance.Resolve[provenance.RouteSource](v.Index, r.ID)
-			o.certainty, o.readings = res.Certainty, fmt.Sprintf("%#v", effective(res))
+			o.certainty, o.readings = res.Certainty, readingsKey(res)
 			o.note = !e.inf && v.oneCandidate(r.ID)
 		}
 		if seen[o] {
@@ -272,6 +272,17 @@ func (v View) ambiguousText(route model.ID, indices bool) string {
 		out += " · " + OneCandidateNote
 	}
 	return out
+}
+
+// readingsKey is res's effective readings, sorted, for comparing outcomes:
+// HTTPRoute, rule index, rule name, match index and index certainty.
+func readingsKey(res provenance.Resolution[provenance.RouteSource]) string {
+	var keys []string
+	for _, r := range effective(res) {
+		keys = append(keys, fmt.Sprintf("%#v|%d|%q|%d|%d", r.Route, r.RuleIndex, r.RuleName, r.MatchIndex, r.IndexCertainty))
+	}
+	slices.Sort(keys)
+	return strings.Join(keys, "\n")
 }
 
 // oneCandidate reports whether Known narrowed route to one reading.

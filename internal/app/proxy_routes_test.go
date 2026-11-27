@@ -1119,6 +1119,39 @@ func TestProxyRoutesSharedSourceSameOutcome(t *testing.T) {
 	golden(t, "proxy-routes", "shared-source-same-outcome", r.stdout)
 }
 
+// reversedOnSecondUse wraps a module and reverses the order of its
+// RouteSource claims on the second use of the shared route config.
+type reversedOnSecondUse struct{ provenance.Module }
+
+func (reversedOnSecondUse) Name() string { return "example" }
+
+func (m reversedOnSecondUse) Claims(snap *model.Snapshot) []provenance.Claim {
+	claims := m.Module.Claims(snap)
+	route := snap.Listeners[1].FilterChains[0].HCM.RouteConfig.VirtualHosts[0].Routes[0].ID
+	var at []int
+	for i, c := range claims {
+		if _, ok := c.Assertion.(provenance.RouteSource); ok && c.Subject == route {
+			at = append(at, i)
+		}
+	}
+	for i, j := 0, len(at)-1; i < j; i, j = i+1, j-1 {
+		claims[at[i]], claims[at[j]] = claims[at[j]], claims[at[i]]
+	}
+	return claims
+}
+
+// TestProxyRoutesSharedSourceClaimOrder: two uses with the same readings in
+// a different claim order print once (DD-5).
+func TestProxyRoutesSharedSourceClaimOrder(t *testing.T) {
+	kc := unreachableKubeconfig(t, "default")
+	args := []string{"proxy", "routes", "--file", "../proxyview/testdata/shared-source.json", "--route", "kgwctl-proxy/orders", "--rule", "0"}
+	r := runRoutesModules(t, kc, app.ProxyTestHooks{}, []provenance.Module{reversedOnSecondUse{kgateway.New()}}, args...)
+	const name = "orders_example-route-0-httproute-orders-kgwctl-proxy-0-0-matcher-0"
+	if n := strings.Count(r.stdout, name); r.code != 0 || n != 1 {
+		t.Errorf("exit %d, text lists the route %d times:\n%s\nwant once", r.code, n, r.stdout)
+	}
+}
+
 // exactOnSecondUse is a wrapper's extra: on the second use of the shared route
 // config, an exact kgwctl-proxy/orders reading with inferred indices.
 func exactOnSecondUse(snap *model.Snapshot, inner []provenance.Claim) []provenance.Claim {
