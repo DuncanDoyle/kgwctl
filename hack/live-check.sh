@@ -449,11 +449,30 @@ SHAPE_META='collide and source("orders.kgwctl.example") == "kgwctl-proxy/orders"
 # shape_check <file> <predicate>: true when the predicate holds.
 shape_check() { jq -e "$JQ_DEFS $2" "$1" >/dev/null 2>&1; }
 
-# Runs content_check and the shape checks on every golden; exits 1 if one fails.
+# routes_json_check <dump>: proxy routes --file <dump> -o json is v1alpha2 with listeners and a route with filters.
+routes_json_check() {
+  local f="$1" out code=0
+  out="$OUT/goldens-check/$(basename "$f")"
+  "$OUT/kgwctl" proxy routes --file "$f" -o json >"$out" 2>"$out.stderr" || code=$?
+  if [ "$code" -eq 0 ] && jq -e '.schemaVersion == "kgwctl.kgateway.dev/v1alpha2" and .kind == "ProxyRoutes"
+    and (.item.listeners | length > 0)
+    and any(.item.listeners[].filterChains[]?.hcm.virtualHosts[]?.routes[]?; (.filters // []) | length > 0)' \
+    "$out" >/dev/null; then
+    log "routes json $(basename "$f"): ok"
+  else
+    log "FAIL routes json $(basename "$f"): exit $code, or not v1alpha2 with listeners and a route with filters; see $out"
+    return 1
+  fi
+}
+
+# Runs content_check, the shape checks and routes_json_check on every golden; exits 1 if one fails.
 goldens_check() {
   local f name var failed=0 dir="$ROOT/testdata/dumps"
+  build
+  mkdir -p "$OUT/goldens-check"
   for f in "${GOLDENS[@]}"; do
     content_check "$dir/$f.json" || failed=1
+    routes_json_check "$dir/$f.json" || failed=1
   done
   for f in demo:SHAPE_DEMO policies:SHAPE_POLICIES collide-meta:SHAPE_META; do
     name="${f%%:*}" var="${f#*:}"
@@ -521,12 +540,14 @@ goldens() {
 }
 
 ORDERS="$PROXY_NS/orders"
-# The orders route's filters in request order, and its policy list, on the proxy fixtures.
+# The orders route's filters in request order, its route line, the policy on each filter and its policy
+# list, as in the reviewed golden internal/app/testdata/proxy-routes/collide-meta-orders.golden.
 ORDERS_FILTERS="ext_auth/kgwctl-proxy/authz ratelimit/local dynamic_modules/simple_mutations envoy.filters.http.router"
-ORDERS_EXTAUTH="TrafficPolicy $PROXY_NS/orders-extauth (extAuth)"
-ORDERS_RATELIMIT="TrafficPolicy $PROXY_NS/orders-ratelimit (rateLimit.local)"
-ORDERS_TRANSFORM="TrafficPolicy $PROXY_NS/orders-transformation (transformation)"
-ORDERS_POLICIES="policies: $ORDERS_EXTAUTH, $ORDERS_RATELIMIT, $ORDERS_TRANSFORM"
+ORDERS_ROUTE="route / (prefix) · HTTPRoute $ORDERS · rule 0 · match 0"
+ORDERS_EXTAUTH="TrafficPolicy $PROXY_NS/orders-extauth (extAuth, inferred)"
+ORDERS_RATELIMIT="TrafficPolicy $PROXY_NS/orders-ratelimit (rateLimit.local, inferred)"
+ORDERS_TRANSFORM="TrafficPolicy $PROXY_NS/orders-transformation (transformation, inferred)"
+ORDERS_POLICIES="policies: TrafficPolicy $PROXY_NS/orders-extauth (extAuth), TrafficPolicy $PROXY_NS/orders-ratelimit (rateLimit.local), TrafficPolicy $PROXY_NS/orders-transformation (transformation)"
 # The vhosts of the two route names that both read as kgwctl-proxy/orders and proxy/orders-kgwctl.
 COLLIDING=(orders-kgwctl_proxy_example orders_kgwctl_example)
 
@@ -544,26 +565,30 @@ routes_run() {
   return "$code"
 }
 
+# untree <file>: the lines without the tree drawing and indentation in front of them.
+untree() { sed -E 's/^[^[:alnum:]]*//' "$1"; }
+
 # expect_matched <file>: exit 0, orders matched, its filters in order, the policy on each filter and the policy list.
 expect_matched() {
   local f="$1" n order entry ok=0
   n="$(basename "$f")"
-  order="$(awk '$1 ~ /^[0-9]+$/ { print $2 }' "$f" | paste -sd' ' -)"
+  order="$(untree "$f" | awk '$1 ~ /^[0-9]+$/ { print $2 }' | paste -sd' ' -)"
   [ "$(cat "$f.exit")" = 0 ] || { log "FAIL $n: exit $(cat "$f.exit"), want 0"; ok=1; }
-  grep -qF "· HTTPRoute $ORDERS · rule 0 · match 0" "$f" || { log "FAIL $n: $ORDERS not matched"; ok=1; }
+  untree "$f" | grep -qxF "$ORDERS_ROUTE" || { log "FAIL $n: no route line '$ORDERS_ROUTE'"; ok=1; }
   [ "$order" = "$ORDERS_FILTERS" ] || { log "FAIL $n: filters '$order', want '$ORDERS_FILTERS'"; ok=1; }
   # Each entry is "<index> <filter>|<policy>".
   for entry in "1 ext_auth/kgwctl-proxy/authz|$ORDERS_EXTAUTH" "2 ratelimit/local|$ORDERS_RATELIMIT" \
     "3 dynamic_modules/simple_mutations|$ORDERS_TRANSFORM"; do
-    grep -E "^ +${entry%%|*} +enabled by route " "$f" | grep -qF "· ${entry#*|}" ||
+    untree "$f" | grep -E "^${entry%%|*} +enabled by route " | grep -qF "· ${entry#*|}" ||
       { log "FAIL $n: ${entry%%|*} does not name ${entry#*|}"; ok=1; }
   done
-  grep -qxF "      $ORDERS_POLICIES" "$f" || { log "FAIL $n: policy list differs"; ok=1; }
+  untree "$f" | grep -qxF "$ORDERS_POLICIES" || { log "FAIL $n: policy list differs"; ok=1; }
   if grep -q ambiguous "$f"; then log "FAIL $n: lists an ambiguous route"; ok=1; fi
+  if grep -q "chosen from known" "$f"; then log "FAIL $n: a route is chosen from known HTTPRoutes"; ok=1; fi
   return "$ok"
 }
 
-# expect_ambiguous <file>: exit 0, no match, both colliding routes listed as ambiguous.
+# expect_ambiguous <file>: exit 0, no match, both colliding routes listed as ambiguous, none chosen from known.
 expect_ambiguous() {
   local f="$1" n v ok=0
   n="$(basename "$f")"
@@ -574,6 +599,32 @@ expect_ambiguous() {
       { log "FAIL $n: the $v route is not listed as ambiguous"; ok=1; }
   done
   if grep -q "filters (request order)" "$f"; then log "FAIL $n: shows a matched route"; ok=1; fi
+  if grep -q "chosen from known" "$f"; then log "FAIL $n: a route is chosen from known HTTPRoutes"; ok=1; fi
+  return "$ok"
+}
+
+# expect_json <file> <matched|ambiguous> [strategy]: exit 0, a v1alpha2 ProxyRoutes document with the
+# selection strategy (default strict). matched: one selected route, chosen by select, whose running filters
+# in order are $ORDERS_FILTERS. ambiguous: no selected route, two ambiguous ones, no route in listeners.
+# shellcheck disable=SC2016
+expect_json() {
+  local f="$1" want="$2" strategy="${3:-strict}" n ok=0 q
+  n="$(basename "$f")"
+  [ "$(cat "$f.exit")" = 0 ] || { log "FAIL $n: exit $(cat "$f.exit"), want 0"; ok=1; }
+  q='def routes: [.item.listeners[]?.filterChains[]?.hcm.virtualHosts[]?.routes[]?];
+    .schemaVersion == "kgwctl.kgateway.dev/v1alpha2" and .kind == "ProxyRoutes"
+    and .item.selection.strategy == $s and'
+  case "$want" in
+    matched) q="$q"' (.item.selection.routes | length == 1 and .[0].chosenBy == "select")
+      and (.item.selection.ambiguous | length == 0)
+      and (.item.selection.routes[0].id as $id | [routes[] | select(.id == $id)]
+        | length == 1 and ([.[0].filters[] | select(.runs == "yes") | .name] | join(" ")) == $filters)' ;;
+    ambiguous) q="$q"' .item.selection.routes == [] and (.item.selection.ambiguous | length == 2)
+      and (routes | length == 0)' ;;
+    *) log "expect_json: unknown case $want"; return 1 ;;
+  esac
+  jq -e --arg s "$strategy" --arg filters "$ORDERS_FILTERS" "$q" "$f" >/dev/null ||
+    { log "FAIL $n: not a $want v1alpha2 ProxyRoutes document with strategy $strategy"; ok=1; }
   return "$ok"
 }
 
@@ -611,6 +662,13 @@ routes() {
   expect_matched "$dir/meta-live.txt" || failed=1
   expect_matched "$dir/meta-file.txt" || failed=1
   same_view "$dir/meta-live.txt" "$dir/meta-file.txt" || failed=1
+  routes_run "$dir/meta-live.json" "$op" proxy -n "$PROXY_NS" "${sel[@]}" -o json || true
+  expect_json "$dir/meta-live.json" matched || failed=1
+  # exact accepts only routes with route metadata: orders matches.
+  routes_run "$dir/meta-exact.txt" "$op" proxy -n "$PROXY_NS" "${sel[@]}" --select exact || true
+  expect_matched "$dir/meta-exact.txt" || failed=1
+  routes_run "$dir/meta-exact.json" "$op" proxy -n "$PROXY_NS" "${sel[@]}" --select exact -o json || true
+  expect_json "$dir/meta-exact.json" matched exact || failed=1
 
   route_meta false
   trap - EXIT
@@ -623,6 +681,28 @@ routes() {
   expect_ambiguous "$dir/off-live.txt" || failed=1
   expect_ambiguous "$dir/off-file.txt" || failed=1
   same_view "$dir/off-live.txt" "$dir/off-file.txt" || failed=1
+  routes_run "$dir/off-live.json" "$op" proxy -n "$PROXY_NS" "${sel[@]}" -o json || true
+  expect_json "$dir/off-live.json" ambiguous || failed=1
+  # Without route metadata exact accepts no route by name: both stay ambiguous.
+  routes_run "$dir/off-exact.txt" "$op" proxy -n "$PROXY_NS" "${sel[@]}" --select exact || true
+  expect_ambiguous "$dir/off-exact.txt" || failed=1
+  routes_run "$dir/off-exact.json" "$op" proxy -n "$PROXY_NS" "${sel[@]}" --select exact -o json || true
+  expect_json "$dir/off-exact.json" ambiguous exact || failed=1
+  # Both colliding HTTPRoutes are in the cluster, so known chooses neither (R20).
+  routes_run "$dir/off-known.txt" "$op" proxy -n "$PROXY_NS" "${sel[@]}" --select known || true
+  expect_ambiguous "$dir/off-known.txt" || failed=1
+  routes_run "$dir/off-known.json" "$op" proxy -n "$PROXY_NS" "${sel[@]}" --select known -o json || true
+  expect_json "$dir/off-known.json" ambiguous known || failed=1
+  # known needs the cluster's HTTPRoutes, so it refuses --file (R22).
+  code=0
+  routes_run "$dir/off-file-known.txt" - --file "$dir/off-dump.json" "${file[@]}" --select known || code=$?
+  if [ "$code" -ne 2 ]; then
+    log "FAIL off-file-known.txt: exit $code, want 2"
+    failed=1
+  elif ! grep -q -- '--select known' "$dir/off-file-known.txt.stderr"; then
+    log "FAIL off-file-known.txt.stderr does not name --select known"
+    failed=1
+  fi
 
   code=0
   routes_run "$dir/reader.txt" "$OUT/reader.kubeconfig" proxy -n "$PROXY_NS" "${sel[@]}" || code=$?
