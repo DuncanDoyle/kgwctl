@@ -11,21 +11,36 @@ Status: implementing 4b.1
 ### Queue
 - [x] Q1 Design r5 and implementation plan (2 planned sub-phases); D-032 owner-decided, D-033 to D-035 proposed
 - [x] Q2 Cross-model review of design + plan: 4 Codex rounds (reviews/design-codex.md, -r2 to -r4) + triage; last fixes are wording
-- [ ] Q3 Implementation: 4b.1 (migration, payload, `--select`, seam), 4b.2 (Snellius, version, release script, live check) ← CURRENT
-- [ ] Q4 Live check on kind, goldens reviewed
-- [ ] Q5 Phase review (Codex) + triage, fixes
+- [x] Q3 Implementation: 4b.1 (migration, payload, `--select` incl. `exact`, seam), 4b.2 (Snellius, version, release script, live check) — phase-4b.1-complete.md, phase-4b.2-complete.md
+- [x] Q4 Live check on kind, goldens reviewed (4b.2.4)
+- [ ] Q5 Phase review (Codex) + triage, fixes: reviews/phase-codex.md, 8 accepted → 4b.3 ← CURRENT
 - [ ] Q6 Close, tag `v0.1.0`
 
 ### Exit gates
 - [ ] tests/vet pass (observed)
 - [ ] all queue items done or deferred
 - [x] design+plan cross-model review + triage: reviews/design-codex.md … -r4.md
-- [ ] phase cross-model review + triage
+- [x] phase cross-model review + triage: reviews/phase-codex.md
 - [ ] decisions.md / design / plan in sync with code
 - [ ] phase-4b-complete.md written, roadmap updated, tracked items closed
 
 ## Sub-phase
-none
+Sub-phase: 4b.3 — Phase review fixes
+Kind: stabilization
+Base: 5645777
+Brief: docs/phases/phase-4b/phase-4b.3-brief.md
+
+### Allowed work
+bug fixes, missing designed behaviour, tests, docs
+
+### Not allowed
+new features, architecture changes, new dependencies
+
+### Queue
+- [ ] S1 Release script: atomic tag directory (#1), install check with fresh dirs and `GOBIN` (#2) ← CURRENT
+- [ ] S2 Selection and text: index certainty before merge (#3), dedup by outcome (#4), JSON input status for `known` (#5), "recorded at" label (#6), coverage of `model.Ref` (#8)
+- [ ] S3 README sharing warning (#7); design and output docs synced
+- [ ] S4 Gates, live check, Codex review of 5645777..HEAD + triage
 
 ## Program
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
