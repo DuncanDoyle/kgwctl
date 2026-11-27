@@ -336,7 +336,7 @@ type Mirror struct {
 type SelectionOut struct {
 	Query           Query            `json:"query"`
 	Strategy        string           `json:"strategy"`
-	KnownHTTPRoutes string           `json:"knownHTTPRoutes"` // listed, unavailable or notRead (R24)
+	KnownHTTPRoutes string           `json:"knownHTTPRoutes"` // listed, unavailable or notRead (R24); --route only
 	Routes          []MatchedRoute   `json:"routes"`
 	Inferred        []InferredRoute  `json:"inferred"`
 	Ambiguous       []AmbiguousRoute `json:"ambiguous"`

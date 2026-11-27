@@ -233,8 +233,9 @@ The renderer prints no warning. `render.Text` takes subject warnings only from `
 |---|---|
 | `query` | `route` (Ref) and `ruleIndex` when `--rule` is set. |
 | `strategy` | `exact`, `strict` or `known`: the `--select` value used. Always present. |
+| `knownHTTPRoutes` | Whether the cluster's HTTPRoutes were an input to this selection: `listed` (live, the list succeeded, also when empty), `unavailable` (live, the list failed and the command went on) or `notRead` (`--file`). Always present (R24). The guarantee is scoped to `--route`: without it there is no `selection`, and a failed list shows on stderr only, although kgwctl still narrows origins with a list that succeeds. (4b.3) |
 | `routes` | The matched routes: `id`, `routeConfig`, `virtualHost`, `name`, `chosenBy` (`select` for a route in `Select(...).Routes`, `known` for one `--select known` added). Every one is in `listeners`. |
-| `inferred` | Under `exact`, routes of `Select(...).Routes` whose reading, or with `--rule` whose indices, are below exact: the key fields plus `readings`. Not in `listeners`. `[]` otherwise. |
+| `inferred` | Under `exact`, routes of `Select(...).Routes` whose reading is below exact, or with `--rule` whose rule or match index is unknown or below exact: the key fields plus `readings`. Not in `listeners`. `[]` otherwise. |
 | `ambiguous` | Routes with several readings, at least one matching, or one left only by Known and not chosen: the same key fields plus `readings` and `narrowed`. Not in `listeners`. |
 | `unresolved` | Routes with no reading whose name carries the HTTPRoute's marker: the key fields. Not in `listeners`. |
 
