@@ -1152,6 +1152,34 @@ func TestProxyRoutesSharedSourceClaimOrder(t *testing.T) {
 	}
 }
 
+// exactCopiesOnSecondUse is a wrapper's extra: on the second use of the
+// shared route config, an exact copy of each RouteSource claim.
+func exactCopiesOnSecondUse(snap *model.Snapshot, inner []provenance.Claim) []provenance.Claim {
+	route := snap.Listeners[1].FilterChains[0].HCM.RouteConfig.VirtualHosts[0].Routes[0].ID
+	var out []provenance.Claim
+	for _, c := range inner {
+		if _, ok := c.Assertion.(provenance.RouteSource); ok && c.Subject == route {
+			c.Ref, c.Certainty = "", model.Exact
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// TestProxyRoutesSharedSourceCertainty: an exact and an inferred ambiguous use
+// with equal candidate values both print, and the lines tell them apart (DD-5).
+func TestProxyRoutesSharedSourceCertainty(t *testing.T) {
+	kc := unreachableKubeconfig(t, "default")
+	args := []string{"proxy", "routes", "--file", "../proxyview/testdata/shared-source.json", "--route", "kgwctl-proxy/orders", "--rule", "0"}
+	mods := []provenance.Module{proxyviewtest.Wrap("example", kgateway.New(), exactCopiesOnSecondUse)}
+	r := runRoutesModules(t, kc, app.ProxyTestHooks{}, mods, args...)
+	const name = "orders_example-route-0-httproute-orders-kgwctl-proxy-0-0-matcher-0"
+	if n := strings.Count(r.stdout, name); r.code != 0 || r.stderr != "" || n != 2 || !strings.Contains(r.stdout, "(inferred)") {
+		t.Errorf("exit %d, stderr %q, text lists the route %d times:\n%s\nwant two lines, the inferred one marked", r.code, r.stderr, n, r.stdout)
+	}
+	golden(t, "proxy-routes", "shared-source-certainty", r.stdout)
+}
+
 // exactOnSecondUse is a wrapper's extra: on the second use of the shared route
 // config, an exact kgwctl-proxy/orders reading with inferred indices.
 func exactOnSecondUse(snap *model.Snapshot, inner []provenance.Claim) []provenance.Claim {

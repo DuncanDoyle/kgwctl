@@ -254,14 +254,18 @@ func (v View) selectionText(b *bytes.Buffer) {
 }
 
 // ambiguousText is an ambiguous route's outcome: its readings' HTTPRoutes,
-// with their indices if indices is set, and OneCandidateNote when Known
-// narrowed it to one.
+// with their indices and a certainty below exact if indices is set, and
+// OneCandidateNote when Known narrowed it to one.
 func (v View) ambiguousText(route model.ID, indices bool) string {
 	var refs []string
-	for _, r := range provenance.Resolve[provenance.RouteSource](v.Index, route).Candidates {
+	res := provenance.Resolve[provenance.RouteSource](v.Index, route)
+	for _, r := range res.Candidates {
 		s := r.Route.String()
 		if indices {
 			s = readingText(r)
+			if c := topCertainty(res); c != model.Exact {
+				s += " (" + c.String() + ")"
+			}
 		}
 		if len(refs) == 0 || refs[len(refs)-1] != s {
 			refs = append(refs, s)
@@ -275,11 +279,13 @@ func (v View) ambiguousText(route model.ID, indices bool) string {
 }
 
 // readingsKey is res's effective readings, sorted, for comparing outcomes:
-// HTTPRoute, rule index, rule name, match index and index certainty.
+// HTTPRoute, rule index, rule name, match index, index certainty and the
+// reading's own (top) certainty.
 func readingsKey(res provenance.Resolution[provenance.RouteSource]) string {
 	var keys []string
+	top := topCertainty(res)
 	for _, r := range effective(res) {
-		keys = append(keys, fmt.Sprintf("%#v|%d|%q|%d|%d", r.Route, r.RuleIndex, r.RuleName, r.MatchIndex, r.IndexCertainty))
+		keys = append(keys, fmt.Sprintf("%#v|%d|%q|%d|%d|%d", r.Route, r.RuleIndex, r.RuleName, r.MatchIndex, r.IndexCertainty, top))
 	}
 	slices.Sort(keys)
 	return strings.Join(keys, "\n")
