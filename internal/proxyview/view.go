@@ -41,6 +41,36 @@ const (
 	StrategyKnown  Strategy = "known"  // also a route Known narrowed to one matching reading
 )
 
+// ParseStrategy parses a --select value: empty is StrategyStrict, and any
+// value other than "strict" or "known" is an error.
+func ParseStrategy(s string) (Strategy, error) {
+	switch st := Strategy(s); st {
+	case "":
+		return StrategyStrict, nil
+	case StrategyStrict, StrategyKnown:
+		return st, nil
+	}
+	return "", fmt.Errorf("unknown selection strategy %q: want strict or known", s)
+}
+
+// chooseKnown returns the narrowings of sel whose kept claims name one
+// reading, compared as provenance.Resolve merges them, that matches q, each
+// normalised (DD-4, DD-6). It is krp's rule over kgateway.Select's result.
+func chooseKnown(q kgateway.Query, sel kgateway.Selection) []provenance.Narrowing {
+	var out []provenance.Narrowing
+	for _, n := range sel.Narrowed {
+		if rs := readings(n.Kept); len(rs) == 1 && matches(q, rs[0]) {
+			out = append(out, normalise(n))
+		}
+	}
+	return out
+}
+
+// matches reports whether reading r names the HTTPRoute and rule of q.
+func matches(q kgateway.Query, r provenance.RouteSource) bool {
+	return r.Route == q.Route && (q.RuleIndex == nil || r.RuleIndex == *q.RuleIndex) && (q.RuleName == "" || r.RuleName == q.RuleName)
+}
+
 // Selection narrows a view to one HTTPRoute.
 type Selection struct {
 	Route types.NamespacedName // empty Name: no narrowing
@@ -83,7 +113,8 @@ func HTTPRouteRef(n types.NamespacedName) model.Ref {
 
 // Build parses body and runs xdsview's pipeline (design §4.1): chain.Effective,
 // provenance.Compose, kgateway.Select under --route or kgateway.Narrow with
-// Known, then model.Prune under --route. Valid JSON without a configs array is
+// Known, then model.Prune under --route to Select's routes and, under
+// StrategyKnown, the chosen ones. Valid JSON without a configs array is
 // ErrNotConfigDump; a Compose error wraps ErrCompose.
 func Build(body []byte, o Options) (View, error) {
 	sel := o.Selection
@@ -105,9 +136,9 @@ func Build(body []byte, o Options) (View, error) {
 	if err != nil {
 		return View{}, fmt.Errorf("%w: %w", ErrCompose, err)
 	}
-	strategy := o.Strategy
-	if strategy == "" {
-		strategy = StrategyStrict
+	strategy, err := ParseStrategy(string(o.Strategy))
+	if err != nil {
+		return View{}, err
 	}
 	v := View{Full: full, Snapshot: full, Chains: chain.Effective(full), Index: ix, Strategy: strategy,
 		Selection: sel, Gateway: o.Gateway, Warnings: warningList(full, ix)}
@@ -117,8 +148,12 @@ func Build(body []byte, o Options) (View, error) {
 		}
 		return v, nil
 	}
-	s := kgateway.Select(ix, full, kgateway.Query{Route: HTTPRouteRef(sel.Route), RuleIndex: sel.Rule, Known: o.Known})
+	q := kgateway.Query{Route: HTTPRouteRef(sel.Route), RuleIndex: sel.Rule, Known: o.Known}
+	s := kgateway.Select(ix, full, q)
 	v.Selected, v.Narrowed = &s, s.Narrowed
+	if strategy == StrategyKnown {
+		v.Chosen = chooseKnown(q, s)
+	}
 	keep := map[model.ID]bool{}
 	for _, id := range v.Routes() {
 		keep[id] = true

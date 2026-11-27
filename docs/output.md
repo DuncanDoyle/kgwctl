@@ -510,6 +510,7 @@ The item is kgwctl's own view of the dump, built with [xdsview](https://github.c
 - **No raw config.** The dump's own `typedConfig`, `typedPerFilterConfig` and `metadata` are left out; `proxy dump` gives the dump unchanged. What they decide is here in typed form: each filter's `state`, `level`, `perFilterType` and `configSource`, and the policy records. Route header operations stay, as in the text, so check the output before you share it.
 - **`configSource`** on a network filter, HTTP filter or chain entry: absent for inline config; `ecds` or `ecdsDefault` when the ECDS config was resolved; `unresolved` when the filter uses discovery and its config could not be established for this occurrence: missing from the dump, present but ambiguous, or any network filter with discovery. An unresolved network filter may itself be an HCM, so its chain's HTTP filters are unknown. `runs` and `state` come from xdsview and do not follow from `configSource`: an unresolved filter the HCM disables is still `runs: no`.
 - **Warnings.** `warnings` is one list: every parser warning of the whole dump, then every provenance warning, each once. The text prints the same list once, after the tree.
+- **Selection strategy.** `--select` decides which routes `--route` matches. `strict`, the default, matches only routes whose one reading matches `--route` and `--rule`. A route that only the cluster's HTTPRoutes narrowed to that reading stays in `selection.ambiguous`: Envoy can still serve the route of a deleted HTTPRoute whose name collides with a live one. `known` also matches such a route and marks it `chosenBy: known`, in `selection.routes` and in its `origin`. Without `--route` the strategy changes nothing. `--select known` with `--file` is a usage error, since a file has no cluster HTTPRoutes.
 
 ### ProxyRoutes
 
@@ -811,7 +812,7 @@ One entry per HCM filter, in HCM order. Request order is the entries whose `runs
 | `routeConfig` | string | Route config name. |
 | `virtualHost` | string | Virtual host name. |
 | `name` | string | Envoy route name. |
-| `chosenBy` | string | `select` for a route `kgateway.Select` matched, `known` for one `--select known` added. |
+| `chosenBy` | string | `select` for a route with one matching reading, under either strategy; `known` for one that `--select known` added. |
 | `readings` | Reading[] | Every reading, set-aside ones included. |
 | `narrowed` | boolean | The cluster's HTTPRoutes set a reading aside. |
 

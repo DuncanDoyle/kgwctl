@@ -30,6 +30,7 @@ type routesOptions struct {
 	rule                               int
 	response                           bool
 	output                             string
+	selectStrategy                     string
 }
 
 // newProxyRoutesCmd builds proxy routes (phase 3 design §3.1).
@@ -66,6 +67,8 @@ func newProxyRoutesCmd(now func() time.Time, hooks proxyTestHooks) *cobra.Comman
 	fs.StringVar(&o.pod, "pod", "", "Read this replica of the Gateway, Ready or not")
 	fs.StringVar(&o.route, "route", "", "Show only the routes of HTTPRoute `<ns>/<name>`; <name> alone uses -n or the context's namespace")
 	fs.IntVar(&o.rule, "rule", 0, "With --route, show only this rule `index`")
+	fs.StringVar(&o.selectStrategy, "select", string(proxyview.StrategyStrict),
+		"How --route picks routes: strict lists a route that only the cluster's HTTPRoutes narrowed as ambiguous; known also selects it")
 	fs.BoolVar(&o.response, "response", false, "Also show each route's response order")
 	fs.StringVarP(&o.output, "output", "o", print.FormatText, "Output format: text, json or yaml")
 	fs.StringVar(&o.maxSize, "max-size", defaultMaxSize, "Largest config dump to parse, as a `quantity` such as 64Mi")
@@ -86,6 +89,9 @@ type routesRequest struct {
 	routeNS  bool // --route named its namespace
 	response bool
 	output   string
+	strategy proxyview.Strategy
+	// knownFailed: live, the HTTPRoute list failed and the command went on without it.
+	knownFailed bool
 }
 
 // parseRoutes checks the flag combinations before any I/O.
@@ -103,6 +109,14 @@ func parseRoutes(cmd *cobra.Command, args []string, o routesOptions) (routesRequ
 	case !req.live && o.pod != "":
 		return req, usageError(cmd, "--pod works only live, not with --file")
 	}
+	s, err := proxyview.ParseStrategy(o.selectStrategy)
+	switch {
+	case err != nil:
+		return req, usageError(cmd, "invalid --select %q: want strict or known", o.selectStrategy)
+	case s == proxyview.StrategyKnown && !req.live:
+		return req, usageError(cmd, "--select known needs the cluster's HTTPRoutes; it does not work with --file")
+	}
+	req.strategy = s
 	if o.gateway != "" {
 		gw, ok := splitRef(o.gateway)
 		if !ok || gw.Namespace == "" {
@@ -255,6 +269,7 @@ func routesLive(cmd *cobra.Command, f *Flags, now func() time.Time, hooks proxyT
 	case err != nil:
 		// Without the list, origins come from the dump alone; nothing ambiguous becomes a match.
 		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not list HTTPRoutes: %v\n", err)
+		req.knownFailed = true
 	}
 	header := fmt.Sprintf("Gateway %s · pod %s · %s", gw, r.target, r.capture.CapturedAt.UTC().Format(time.RFC3339))
 	at := r.capture.CapturedAt.UTC()
@@ -315,9 +330,21 @@ type routesInput struct {
 }
 
 // printRoutes builds the view from body and prints the tree, or the envelope
-// for -o json|yaml, with src as its source.
+// for -o json|yaml, with src as its source. Under --route --select known
+// without the HTTPRoute list, a warning follows a successful write (DD-4).
 func printRoutes(cmd *cobra.Command, body []byte, source string, in routesInput, req routesRequest, header string, src proxyview.Source) error {
-	v, err := proxyview.Build(body, proxyview.Options{Gateway: in.gateway, Known: in.known, Capture: in.capture, Selection: req.sel})
+	if err := writeRoutes(cmd, body, source, in, req, header, src); err != nil {
+		return err
+	}
+	if req.knownFailed && req.strategy == proxyview.StrategyKnown && req.sel.Route.Name != "" {
+		fmt.Fprintln(cmd.ErrOrStderr(), "Warning: --select known: no route can be chosen from known HTTPRoutes")
+	}
+	return nil
+}
+
+// writeRoutes builds the view and writes it to stdout.
+func writeRoutes(cmd *cobra.Command, body []byte, source string, in routesInput, req routesRequest, header string, src proxyview.Source) error {
+	v, err := proxyview.Build(body, proxyview.Options{Gateway: in.gateway, Known: in.known, Capture: in.capture, Selection: req.sel, Strategy: req.strategy})
 	switch {
 	case errors.Is(err, proxyview.ErrNotConfigDump):
 		return &ExitError{Code: 2, Err: fmt.Errorf("%s: %w", source, err)}

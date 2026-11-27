@@ -16,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/DuncanDoyle/kgwctl/internal/proxyview"
+	"github.com/DuncanDoyle/kgwctl/internal/proxyview/proxyviewtest"
 )
 
 var (
@@ -649,5 +650,180 @@ func TestNormaliseMergesReading(t *testing.T) {
 	labels := provenance.Labels(v.Index, []provenance.Narrowing{n})(render.Row{Subject: route.Subject, Route: route.Subject})
 	if len(labels) != 1 || !strings.Contains(labels[0], "(chosen from known HTTPRoutes)") || strings.Contains(labels[0], "ambiguous:") {
 		t.Errorf("labels %q, want one reading chosen from known HTTPRoutes", labels)
+	}
+}
+
+// TestParseStrategy: empty is strict; only strict and known are valid.
+func TestParseStrategy(t *testing.T) {
+	for in, want := range map[string]proxyview.Strategy{"": proxyview.StrategyStrict, "strict": proxyview.StrategyStrict, "known": proxyview.StrategyKnown} {
+		if got, err := proxyview.ParseStrategy(in); err != nil || got != want {
+			t.Errorf("ParseStrategy(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+	for _, in := range []string{"bogus", "Known", " strict"} {
+		if _, err := proxyview.ParseStrategy(in); err == nil {
+			t.Errorf("ParseStrategy(%q): want an error", in)
+		}
+	}
+}
+
+// TestChooseKnownRule: a narrowed route is chosen only when its kept claims
+// name one reading that matches the query; the result is normalised.
+func TestChooseKnownRule(t *testing.T) {
+	v := build(t, golden(t, "policies.json"), proxyview.Options{Known: refs(orders), Selection: proxyview.Selection{Route: orders}})
+	n := v.Narrowed[0]
+	keep, drop := n.Kept[0], n.Dropped[0]
+	// a and b differ from keep only in IndexCertainty, Incomplete and Exhaustive.
+	a, b := keep, keep
+	ra, rb := keep.Assertion.(provenance.RouteSource), keep.Assertion.(provenance.RouteSource)
+	ra.IndexCertainty, ra.Incomplete, ra.Exhaustive = model.Inferred, false, true
+	rb.IndexCertainty, rb.Incomplete, rb.Exhaustive = model.Exact, true, false
+	a.Assertion, b.Assertion = ra, rb
+	q := kgateway.Query{Route: proxyview.HTTPRouteRef(orders)}
+	rule1 := 1
+	for _, tc := range []struct {
+		name string
+		q    kgateway.Query
+		kept []provenance.Claim
+		want bool
+	}{
+		{name: "one-reading", q: q, kept: []provenance.Claim{keep}, want: true},
+		{name: "two-readings", q: q, kept: []provenance.Claim{keep, drop}},
+		{name: "other-rule", q: kgateway.Query{Route: q.Route, RuleIndex: &rule1}, kept: []provenance.Claim{keep}},
+		{name: "differ-only-in-flags", q: q, kept: []provenance.Claim{a, b}, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := proxyview.ChooseKnown(tc.q, kgateway.Selection{Narrowed: []provenance.Narrowing{{Route: n.Route, Kept: tc.kept}}})
+			if !tc.want {
+				if len(got) != 0 {
+					t.Fatalf("chosen %+v, want none", got)
+				}
+				return
+			}
+			if len(got) != 1 || got[0].Route != n.Route || len(got[0].Kept) != 1 {
+				t.Fatalf("chosen %+v, want %s with one kept claim", got, n.Route)
+			}
+			want := proxyview.Normalise(provenance.Narrowing{Route: n.Route, Kept: tc.kept}).Kept[0].Assertion
+			if got[0].Kept[0].Assertion != want {
+				t.Errorf("kept %+v, want the normalised %+v", got[0].Kept[0].Assertion, want)
+			}
+		})
+	}
+}
+
+// chosenRow is the route row text of a route --select known chose.
+const chosenRow = "HTTPRoute kgwctl-proxy/orders · rule 0 · match 0 (chosen from known HTTPRoutes)"
+
+// TestBuildStrategySameCapture: R3/R19 and R2/R20 on one capture.
+func TestBuildStrategySameCapture(t *testing.T) {
+	body := golden(t, "policies.json")
+	public := types.NamespacedName{Namespace: "kgwctl-proxy", Name: "public"}
+	opts := func(known []model.Ref, s proxyview.Strategy) proxyview.Options {
+		return proxyview.Options{Gateway: proxyGW, Known: known, Selection: proxyview.Selection{Route: orders}, Strategy: s}
+	}
+	// proxy/orders-kgwctl is deleted.
+	single := refs(orders, public)
+	strict := build(t, body, opts(single, proxyview.StrategyStrict))
+	if len(strict.Routes()) != 0 || strict.Chosen != nil {
+		t.Errorf("strict: routes %v, chosen %v; want none", strict.Routes(), strict.Chosen)
+	}
+	known := build(t, body, opts(single, proxyview.StrategyKnown))
+	var chosen []model.ID
+	for _, n := range known.Chosen {
+		chosen = append(chosen, n.Route)
+	}
+	if got := names(known, known.Routes()); !slices.Equal(got, collidingRoutes) || !slices.Equal(names(known, chosen), collidingRoutes) {
+		t.Fatalf("known: routes %v, chosen %v; want both colliding routes", got, names(known, chosen))
+	}
+	out := text(t, known, proxyview.TextOptions{})
+	if n := strings.Count(out, chosenRow+"\n"); n != 2 || known.Matched() != 2 {
+		t.Errorf("known: %d rows end with the marker, matched %d; want 2 and 2:\n%s", n, known.Matched(), out)
+	}
+	for _, bad := range []string{"ambiguous", "no route matches", proxyview.OneCandidateNote} {
+		if strings.Contains(out, bad) {
+			t.Errorf("known: text has %q:\n%s", bad, out)
+		}
+	}
+
+	// Both HTTPRoutes exist: Known narrows nothing, so the strategies agree.
+	both := append(single, proxyview.HTTPRouteRef(ordersKgwctl))
+	s, k := build(t, body, opts(both, proxyview.StrategyStrict)), build(t, body, opts(both, proxyview.StrategyKnown))
+	if len(s.Routes()) != 0 || len(k.Routes()) != 0 {
+		t.Errorf("both: routes %v and %v, want none", s.Routes(), k.Routes())
+	}
+	if a, b := text(t, s, proxyview.TextOptions{}), text(t, k, proxyview.TextOptions{}); a != b {
+		t.Errorf("both: text differs:\nstrict:\n%s\nknown:\n%s", a, b)
+	}
+}
+
+// flagCopies is a wrapper's extra: for each kgwctl-proxy/orders reading, a
+// claim that differs only in IndexCertainty, Incomplete and Exhaustive.
+func flagCopies(_ *model.Snapshot, inner []provenance.Claim) []provenance.Claim {
+	var out []provenance.Claim
+	for _, c := range inner {
+		r, ok := c.Assertion.(provenance.RouteSource)
+		if !ok || r.Route != proxyview.HTTPRouteRef(orders) {
+			continue
+		}
+		r.IndexCertainty = model.Exact
+		if r.IndexCertainty == c.Assertion.(provenance.RouteSource).IndexCertainty {
+			r.IndexCertainty = model.Inferred
+		}
+		r.Incomplete, r.Exhaustive = !r.Incomplete, !r.Exhaustive
+		c.Assertion, c.Ref = r, ""
+		out = append(out, c)
+	}
+	return out
+}
+
+// TestKnownMarkerTextAndJSON: R26, a chosen route whose kept claims differ
+// only in IndexCertainty, Incomplete and Exhaustive prints one reading.
+func TestKnownMarkerTextAndJSON(t *testing.T) {
+	body := golden(t, "policies.json")
+	known := refs(orders, types.NamespacedName{Namespace: "kgwctl-proxy", Name: "public"})
+	var first string
+	for _, name := range []string{"example", "other"} {
+		mods := []provenance.Module{proxyviewtest.Wrap(name, kgateway.New(), flagCopies)}
+		v := build(t, body, proxyview.Options{Gateway: proxyGW, Known: known, Selection: proxyview.Selection{Route: orders}, Strategy: proxyview.StrategyKnown, Modules: mods})
+		if len(v.Warnings) != 0 {
+			t.Fatalf("%s: warnings %+v, want none", name, v.Warnings)
+		}
+		for _, n := range v.Narrowed {
+			if len(n.Kept) != 2 {
+				t.Fatalf("%s: %s kept %d claims, want the original and its copy", name, n.Route, len(n.Kept))
+			}
+		}
+		out := text(t, v, proxyview.TextOptions{})
+		if n := strings.Count(out, chosenRow+"\n"); n != 2 || strings.Contains(out, "ambiguous") {
+			t.Errorf("%s: %d marked rows, want 2 and no ambiguous:\n%s", name, n, out)
+		}
+		p := v.Payload(proxyview.Source{})
+		if len(p.Selection.Routes) != 2 || len(p.Selection.Ambiguous) != 0 {
+			t.Fatalf("%s: selection %+v, want two routes", name, p.Selection)
+		}
+		for _, m := range p.Selection.Routes {
+			if m.ChosenBy != "known" {
+				t.Errorf("%s: %s chosenBy %q, want known", name, m.Name, m.ChosenBy)
+			}
+		}
+		if got := out + marshal(t, p); first == "" {
+			first = got
+		} else if got != first {
+			t.Errorf("%s: output differs from the first wrapper name", name)
+		}
+	}
+}
+
+// TestStrategyNoEffectWithoutRoute: R23 at the view, the same text and payload.
+func TestStrategyNoEffectWithoutRoute(t *testing.T) {
+	body := golden(t, "policies.json")
+	known := refs(orders, types.NamespacedName{Namespace: "kgwctl-proxy", Name: "public"})
+	var outs []string
+	for _, s := range []proxyview.Strategy{proxyview.StrategyStrict, proxyview.StrategyKnown} {
+		v := build(t, body, proxyview.Options{Gateway: proxyGW, Known: known, Strategy: s})
+		outs = append(outs, text(t, v, proxyview.TextOptions{})+marshal(t, v.Payload(proxyview.Source{})))
+	}
+	if outs[0] != outs[1] {
+		t.Errorf("strict and known differ without --route:\n%s\n---\n%s", outs[0], outs[1])
 	}
 }

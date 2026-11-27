@@ -621,15 +621,11 @@ func TestProxyRoutesUndecodableHCM(t *testing.T) {
 	args := []string{"proxy", "routes", "--file", "testdata/proxy/hcm-undecodable.json"}
 	const warning = `listener "listener~80" filter chain "listener~80": skipped HTTP connection manager`
 
-	r := runRoutes(t, "unused-kubeconfig", app.ProxyTestHooks{}, args...)
-	if r.code != 0 || r.stderr != "" {
-		t.Fatalf("text: exit %d, stderr %q; want 0 and empty", r.code, r.stderr)
+	txt := runRoutes(t, "unused-kubeconfig", app.ProxyTestHooks{}, args...)
+	if txt.code != 0 || txt.stderr != "" {
+		t.Fatalf("text: exit %d, stderr %q; want 0 and empty", txt.code, txt.stderr)
 	}
-	if !strings.HasPrefix(lastLine(r.stdout), "warning: "+warning) || strings.Count(r.stdout, "warning:") != 1 || !strings.Contains(r.stdout, "listener~80") {
-		t.Errorf("text lacks the warning or the listener:\n%s", r.stdout)
-	}
-
-	r = runRoutes(t, "unused-kubeconfig", app.ProxyTestHooks{}, append(args, "-o", "json")...)
+	r := runRoutes(t, "unused-kubeconfig", app.ProxyTestHooks{}, append(args, "-o", "json")...)
 	if r.code != 0 || r.stderr != "" {
 		t.Fatalf("json: exit %d, stderr %q; want 0 and empty", r.code, r.stderr)
 	}
@@ -642,8 +638,12 @@ func TestProxyRoutesUndecodableHCM(t *testing.T) {
 	if err := json.Unmarshal([]byte(r.stdout), &doc); err != nil {
 		t.Fatal(err)
 	}
-	if len(doc.Item.Warnings) != 1 || !strings.Contains(doc.Item.Warnings[0].Message, warning) || len(doc.Item.Listeners) != 1 {
-		t.Errorf("JSON warnings %+v, listeners %d; want one naming the listener and filter chain", doc.Item.Warnings, len(doc.Item.Listeners))
+	if len(doc.Item.Warnings) != 1 || !strings.HasPrefix(doc.Item.Warnings[0].Message, warning) || len(doc.Item.Listeners) != 1 {
+		t.Fatalf("JSON warnings %+v, listeners %d; want one naming the listener and filter chain", doc.Item.Warnings, len(doc.Item.Listeners))
+	}
+	// The message names the listener and filter chain, so the line adds nothing.
+	if lastLine(txt.stdout) != "warning: "+doc.Item.Warnings[0].Message || strings.Count(txt.stdout, "warning:") != 1 {
+		t.Errorf("text lacks the warning line, once and as the message:\n%s", txt.stdout)
 	}
 }
 
@@ -657,4 +657,186 @@ func TestProxyRoutesUpdatingListenerKept(t *testing.T) {
 	if !strings.Contains(r.stdout, "listener~80") || !strings.Contains(r.stdout, "active · updating") {
 		t.Errorf("stdout lacks the updating listener:\n%s", r.stdout)
 	}
+}
+
+// serveBody is a fake admin server that serves body on every request.
+func serveBody(t *testing.T, body []byte) fakeDialer {
+	t.Helper()
+	return newFakeDialer(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(body) })
+}
+
+func readDump(t *testing.T, name string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(dumpsDir + name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// asStrict returns known JSON with its strategy named strict, to compare with strict JSON.
+func asStrict(s string) string {
+	return strings.Replace(s, `"strategy": "known"`, `"strategy": "strict"`, 1)
+}
+
+const (
+	listWarning  = "Warning: could not list HTTPRoutes: "
+	knownWarning = "Warning: --select known: no route can be chosen from known HTTPRoutes"
+	// chosenRow is the route row of a route --select known chose.
+	chosenRow = "HTTPRoute kgwctl-proxy/orders · rule 0 · match 0 (chosen from known HTTPRoutes)"
+)
+
+// stderrLines splits stderr into lines without the final newline.
+func stderrLines(s string) []string {
+	return strings.Split(strings.TrimSuffix(s, "\n"), "\n")
+}
+
+// TestProxyRoutesSelectFlag: --select at the command boundary (R19, R21 to R24a).
+func TestProxyRoutesSelectFlag(t *testing.T) {
+	// Context 1 is denied the HTTPRoute list; context 0 is allowed it.
+	env := newEnv(t, testenv.Options{Fixtures: []string{routesFixture}, Contexts: 2})
+	env.Proxies[1].Rule(testenv.Match{Kind: testenv.KindAcquire, Resource: "httproutes.gateway.networking.k8s.io"}, testenv.Action{Status: http.StatusForbidden})
+	allowed, denied := testenv.ContextName(0), testenv.ContextName(1)
+	live := []string{"proxy", "routes", "proxy", "-n", "kgwctl-proxy"}
+	route := []string{"--route", "kgwctl-proxy/orders"}
+	policies, collide := readDump(t, "policies.json"), readDump(t, "collide-meta.json")
+	// runLive runs live proxy routes in context ctx, serving body, with --select s and -o o.
+	runLive := func(t *testing.T, ctx string, body []byte, s, o string, extra ...string) result {
+		t.Helper()
+		args := append(append(append([]string{"--context", ctx}, live...), extra...), "--select", s, "-o", o)
+		return runRoutes(t, env.Kubeconfig, app.ProxyTestHooks{Dialer: serveBody(t, body)}, args...)
+	}
+
+	t.Run("usage", func(t *testing.T) {
+		before := len(env.Proxies[0].Requests())
+		missing := filepath.Join(t.TempDir(), "nope.json")
+		const withFile = "--select known needs the cluster's HTTPRoutes; it does not work with --file"
+		for _, tc := range []struct {
+			args []string
+			want string
+		}{
+			{args: []string{"--file", missing, "--select", "known"}, want: withFile},
+			{args: []string{"--file", missing, "--select", "known", "--route", "kgwctl-proxy/orders"}, want: withFile},
+			{args: []string{"--file", missing, "--select", "bogus"}, want: `invalid --select "bogus"`},
+			{args: []string{"proxy", "-n", "kgwctl-proxy", "--select", "bogus"}, want: `invalid --select "bogus"`},
+		} {
+			r := runRoutes(t, env.Kubeconfig, app.ProxyTestHooks{}, append([]string{"proxy", "routes"}, tc.args...)...)
+			if r.code != 2 || r.stdout != "" || !strings.Contains(r.stderr, tc.want) || strings.Contains(r.stderr, "nope.json") {
+				t.Errorf("%v: exit %d, stdout %q, stderr %q; want 2, empty and %q without reading the file", tc.args, r.code, r.stdout, r.stderr, tc.want)
+			}
+		}
+		if reqs := env.Proxies[0].Requests()[before:]; len(reqs) != 0 {
+			t.Errorf("usage errors sent %d requests: %v", len(reqs), reqs)
+		}
+	})
+
+	t.Run("R21-select-match", func(t *testing.T) {
+		out := map[string]string{}
+		for _, s := range []string{"strict", "known"} {
+			for _, o := range []string{"text", "json"} {
+				r := runLive(t, allowed, collide, s, o, route...)
+				if r.code != 0 || r.stderr != "" {
+					t.Fatalf("%s %s: exit %d, stderr %q; want 0 and empty", s, o, r.code, r.stderr)
+				}
+				out[s+o] = r.stdout
+			}
+		}
+		if out["stricttext"] != out["knowntext"] {
+			t.Errorf("text differs:\nstrict:\n%s\nknown:\n%s", out["stricttext"], out["knowntext"])
+		}
+		if asStrict(out["knownjson"]) != out["strictjson"] || !strings.Contains(out["knownjson"], `"strategy": "known"`) {
+			t.Errorf("JSON differs other than in selection.strategy:\nstrict:\n%s\nknown:\n%s", out["strictjson"], out["knownjson"])
+		}
+		if !strings.Contains(out["knownjson"], `"chosenBy": "select"`) || strings.Contains(out["knownjson"], `"chosenBy": "known"`) {
+			t.Errorf("known JSON: want the route chosen by select:\n%s", out["knownjson"])
+		}
+	})
+
+	t.Run("R19-known-chooses", func(t *testing.T) {
+		for _, o := range []string{"text", "json"} {
+			r := runLive(t, allowed, policies, "known", o, route...)
+			if r.code != 0 || r.stderr != "" {
+				t.Fatalf("%s: exit %d, stderr %q; want 0 and empty", o, r.code, r.stderr)
+			}
+			name := "live-policies-orders-known"
+			if o == "json" {
+				name = "json-" + name
+				if n := strings.Count(r.stdout, `"chosenBy": "known"`); n != 4 {
+					t.Errorf("JSON has %d chosenBy known, want 4 (selection and origin of both routes)", n)
+				}
+			} else if n := strings.Count(r.stdout, chosenRow+"\n"); n != 2 || strings.Contains(r.stdout, "ambiguous") {
+				t.Errorf("text has %d marked rows, want 2 and nothing ambiguous:\n%s", n, r.stdout)
+			}
+			golden(t, "proxy-routes", name, r.stdout)
+		}
+	})
+
+	t.Run("R23-no-route", func(t *testing.T) {
+		for _, tc := range []struct {
+			name, ctx string
+		}{{"allowed", allowed}, {"denied", denied}} {
+			for _, o := range []string{"text", "json"} {
+				s, k := runLive(t, tc.ctx, policies, "strict", o), runLive(t, tc.ctx, policies, "known", o)
+				if s.code != 0 || k.code != 0 || s.stdout != k.stdout || s.stderr != k.stderr {
+					t.Errorf("%s %s: exit %d and %d; stdout or stderr differ between strategies; stderr %q and %q", tc.name, o, s.code, k.code, s.stderr, k.stderr)
+				}
+				lines := stderrLines(k.stderr)
+				switch {
+				case tc.name == "allowed" && k.stderr != "":
+					t.Errorf("allowed %s: stderr %q, want empty", o, k.stderr)
+				case tc.name == "denied" && (len(lines) != 1 || !strings.HasPrefix(lines[0], listWarning)):
+					t.Errorf("denied %s: stderr %q, want the list warning only", o, k.stderr)
+				}
+			}
+		}
+	})
+
+	t.Run("R24-route-list-denied", func(t *testing.T) {
+		out := map[string]result{}
+		for _, s := range []string{"strict", "known"} {
+			for _, o := range []string{"text", "json"} {
+				r := runLive(t, denied, policies, s, o, route...)
+				if r.code != 0 {
+					t.Fatalf("%s %s: exit %d, stderr %q; want 0", s, o, r.code, r.stderr)
+				}
+				want := 1
+				if s == "known" {
+					want = 2
+				}
+				lines := stderrLines(r.stderr)
+				if len(lines) != want || !strings.HasPrefix(lines[0], listWarning) || (want == 2 && lines[1] != knownWarning) {
+					t.Errorf("%s %s: stderr %q, want the list warning and under known %q", s, o, r.stderr, knownWarning)
+				}
+				out[s+o] = r
+			}
+		}
+		if out["stricttext"].stdout != out["knowntext"].stdout {
+			t.Errorf("text differs:\nstrict:\n%s\nknown:\n%s", out["stricttext"].stdout, out["knowntext"].stdout)
+		}
+		if asStrict(out["knownjson"].stdout) != out["strictjson"].stdout {
+			t.Errorf("JSON differs other than in selection.strategy")
+		}
+	})
+
+	t.Run("R24a-later-error", func(t *testing.T) {
+		r := runLive(t, denied, []byte("{"), "known", "text", route...)
+		lines := stderrLines(r.stderr)
+		if r.code != 2 || r.stdout != "" || len(lines) != 2 || !strings.HasPrefix(lines[0], listWarning) || !strings.Contains(lines[1], "parse config dump") {
+			t.Errorf("exit %d, stdout %q, stderr %q; want 2, empty, the list warning and the parse error", r.code, r.stdout, r.stderr)
+		}
+	})
+
+	t.Run("write-error", func(t *testing.T) {
+		for _, o := range []string{"text", "json"} {
+			var errb bytes.Buffer
+			cfg := app.Config{Build: testBuild, Out: failWriter{}, Err: &errb, Now: func() time.Time { return captureTime }}
+			root := app.NewRootWithProxyHooks(cfg, app.ProxyTestHooks{Dialer: serveBody(t, policies)})
+			args := append(append([]string{"--kubeconfig", env.Kubeconfig, "--context", denied}, live...), "--route", "kgwctl-proxy/orders", "--select", "known", "-o", o)
+			code := run(root, args...)
+			lines := stderrLines(errb.String())
+			if code != 2 || len(lines) != 2 || !strings.HasPrefix(lines[0], listWarning) || !strings.Contains(lines[1], "write routes") {
+				t.Errorf("%s: exit %d, stderr %q; want 2, the list warning and the write error", o, code, errb.String())
+			}
+		}
+	})
 }

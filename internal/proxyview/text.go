@@ -39,11 +39,7 @@ func Text(w io.Writer, v View, o TextOptions) error {
 	}
 	v.selectionText(&b)
 	for _, warn := range v.Warnings {
-		line := "warning: " + warn.Message
-		if warn.Subject != "" {
-			line += " (" + describeSubject(v.Full, model.ID(warn.Subject)) + ")"
-		}
-		fmt.Fprintln(&b, clean(line))
+		fmt.Fprintln(&b, clean(warningText(v.Full, warn)))
 	}
 	_, err := w.Write(b.Bytes())
 	return err

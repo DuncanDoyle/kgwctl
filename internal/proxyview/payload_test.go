@@ -324,6 +324,36 @@ func TestPayloadECDSAmbiguousHTTPFilter(t *testing.T) {
 	}
 }
 
+// TestPayloadStrategy: R19, a route --select known chose, and R21, a route
+// Select matched under known.
+func TestPayloadStrategy(t *testing.T) {
+	known := refs(orders, types.NamespacedName{Namespace: "kgwctl-proxy", Name: "public"})
+	v := build(t, golden(t, "policies.json"), proxyview.Options{Gateway: proxyGW, Known: known, Selection: proxyview.Selection{Route: orders}, Strategy: proxyview.StrategyKnown})
+	p := v.Payload(proxyview.Source{})
+	if p.Selection.Strategy != "known" || len(p.Selection.Routes) != 2 || len(p.Selection.Ambiguous) != 0 {
+		t.Fatalf("selection %+v, want known with two routes and none ambiguous", p.Selection)
+	}
+	rs := payloadRoutes(p)
+	for _, m := range p.Selection.Routes {
+		r, ok := rs[m.ID]
+		if m.ChosenBy != "known" || !ok {
+			t.Fatalf("%s: chosenBy %q, in listeners %v; want known and true", m.Name, m.ChosenBy, ok)
+		}
+		if o := r.Origin; o.ChosenBy != "known" || !o.Narrowed || o.Certainty != "ambiguous" {
+			t.Errorf("%s: origin %+v, want chosenBy known, narrowed, ambiguous", m.Name, o)
+		}
+	}
+	if s := marshal(t, p); !strings.Contains(s, `"strategy":"known"`) || strings.Count(s, `"chosenBy":"known"`) != 4 {
+		t.Errorf("JSON lacks the strategy or four chosenBy known: %s", s)
+	}
+
+	// A route Select matched stays chosenBy select under known.
+	p = build(t, golden(t, "collide-meta.json"), proxyview.Options{Known: refs(orders, ordersKgwctl), Selection: proxyview.Selection{Route: orders}, Strategy: proxyview.StrategyKnown}).Payload(proxyview.Source{})
+	if p.Selection.Strategy != "known" || len(p.Selection.Routes) != 1 || p.Selection.Routes[0].ChosenBy != "select" {
+		t.Errorf("collide-meta: selection %+v, want known with one route chosen by select", p.Selection)
+	}
+}
+
 // TestPayloadStrategyField: under strict, the selection names its strategy
 // and every route was chosen by Select.
 func TestPayloadStrategyField(t *testing.T) {

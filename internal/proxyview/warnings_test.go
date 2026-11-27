@@ -65,8 +65,9 @@ func TestWarningsPrunedHCMSlot(t *testing.T) {
 		t.Fatalf("warnings %+v, want one on the second HCM's slot", ws)
 	}
 	lines := warningLines(t, text(t, v, proxyview.TextOptions{}))
-	if len(lines) != 1 || !strings.Contains(lines[0], ws[0].Message) || !strings.HasSuffix(lines[0], "(filter ecds/x in listener listener~8080)") {
-		t.Errorf("warning lines %q, want the slot warning once with its subject", lines)
+	// The message names the filter; the line adds only its listener.
+	if want := "warning: " + ws[0].Message + " (in listener listener~8080)"; len(lines) != 1 || lines[0] != want {
+		t.Errorf("warning lines %q, want %q", lines, want)
 	}
 }
 
@@ -131,7 +132,8 @@ func TestWarningsDroppedClaimMessage(t *testing.T) {
 				t.Errorf("%s: output names the module or a claim ID: %s", name, s)
 			}
 		}
-		if lines := warningLines(t, out); len(lines) != 1 || !strings.HasPrefix(lines[0], "warning: "+want) {
+		// The message describes the subject, so the line names it once.
+		if lines := warningLines(t, out); len(lines) != 1 || lines[0] != "warning: "+want {
 			t.Errorf("%s: warning lines %q", name, lines)
 		}
 	}

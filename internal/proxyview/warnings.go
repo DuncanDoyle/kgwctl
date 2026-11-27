@@ -46,6 +46,22 @@ func warningList(full *model.Snapshot, ix *provenance.Index) []Warning {
 	return out
 }
 
+// warningText is w's line in the text block, naming its subject once. Every
+// message names it, but ecds-ambiguous names only the filter, so its listener is added.
+func warningText(full *model.Snapshot, w Warning) string {
+	line := "warning: " + w.Message
+	if w.Code != model.WarnECDSAmbiguous || w.Subject == "" {
+		return line
+	}
+	id := model.ID(w.Subject)
+	for _, l := range full.Listeners {
+		if id.Within(l.ID) {
+			return line + " (in listener " + l.Name + ")"
+		}
+	}
+	return line + " (" + describeSubject(full, id) + ")"
+}
+
 // describeSubject names the occurrence id of full in words, such as
 // `route x in virtual host y`; `occurrence <id>` when full lacks it.
 func describeSubject(full *model.Snapshot, id model.ID) string {
