@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/DuncanDoyle/xdsview/pkg/envoy/model"
+	"github.com/DuncanDoyle/xdsview/pkg/envoy/provenance"
 	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -33,8 +34,9 @@ type routesOptions struct {
 	selectStrategy                     string
 }
 
-// newProxyRoutesCmd builds proxy routes (phase 3 design §3.1).
-func newProxyRoutesCmd(now func() time.Time, hooks proxyTestHooks) *cobra.Command {
+// newProxyRoutesCmd builds proxy routes (phase 3 design §3.1). It composes modules;
+// nil means proxyview.DefaultModules().
+func newProxyRoutesCmd(now func() time.Time, modules []provenance.Module, hooks proxyTestHooks) *cobra.Command {
 	var o routesOptions
 	cmd := &cobra.Command{
 		Use:   "routes [<gateway>]",
@@ -58,7 +60,7 @@ func newProxyRoutesCmd(now func() time.Time, hooks proxyTestHooks) *cobra.Comman
 			if err != nil {
 				return &ExitError{Code: 2, Err: err}
 			}
-			return proxyRoutes(cmd, f, now, hooks, args, o)
+			return proxyRoutes(cmd, f, now, modules, hooks, args, o)
 		},
 	}
 	fs := cmd.Flags()
@@ -91,6 +93,7 @@ type routesRequest struct {
 	response bool
 	output   string
 	strategy proxyview.Strategy
+	modules  []provenance.Module // nil: proxyview.DefaultModules()
 	// knownFailed: live, the HTTPRoute list failed and the command went on without it.
 	knownFailed bool
 }
@@ -161,11 +164,12 @@ func splitRef(s string) (types.NamespacedName, bool) {
 	return types.NamespacedName{}, false
 }
 
-func proxyRoutes(cmd *cobra.Command, f *Flags, now func() time.Time, hooks proxyTestHooks, args []string, o routesOptions) error {
+func proxyRoutes(cmd *cobra.Command, f *Flags, now func() time.Time, modules []provenance.Module, hooks proxyTestHooks, args []string, o routesOptions) error {
 	req, err := parseRoutes(cmd, args, o)
 	if err != nil {
 		return err
 	}
+	req.modules = modules
 	if !req.live {
 		return routesFromFile(cmd, f, req, o.file)
 	}
@@ -345,7 +349,7 @@ func printRoutes(cmd *cobra.Command, body []byte, source string, in routesInput,
 
 // writeRoutes builds the view and writes it to stdout.
 func writeRoutes(cmd *cobra.Command, body []byte, source string, in routesInput, req routesRequest, header string, src proxyview.Source) error {
-	v, err := proxyview.Build(body, proxyview.Options{Gateway: in.gateway, Known: in.known, Capture: in.capture, Selection: req.sel, Strategy: req.strategy})
+	v, err := proxyview.Build(body, proxyview.Options{Gateway: in.gateway, Known: in.known, Capture: in.capture, Selection: req.sel, Strategy: req.strategy, Modules: req.modules})
 	switch {
 	case errors.Is(err, proxyview.ErrNotConfigDump):
 		return &ExitError{Code: 2, Err: fmt.Errorf("%s: %w", source, err)}

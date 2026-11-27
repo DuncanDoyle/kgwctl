@@ -7,6 +7,7 @@ import (
 	"reflect"
 
 	"github.com/DuncanDoyle/snellius/pkg/extension"
+	"github.com/DuncanDoyle/xdsview/pkg/envoy/provenance"
 	"github.com/spf13/cobra"
 
 	"github.com/DuncanDoyle/kgwctl/internal/app"
@@ -23,6 +24,7 @@ type options struct {
 	build    BuildInfo
 
 	collectors []bundle.Collector
+	modules    []provenance.Module
 }
 
 // Option configures NewRootCommand.
@@ -48,6 +50,14 @@ func WithBundleCollectors(c ...bundle.Collector) Option {
 	return func(o *options) { o.collectors = append(o.collectors, c...) }
 }
 
+// WithProvenanceModules sets the provenance modules `proxy routes` composes, in place of
+// the default kgateway module; calls add to one set, and a call with no modules keeps the default.
+// Wrap kgateway.New() in a module under your own name, never "kgateway"; two modules with
+// one name make `proxy routes` exit 2. Other commands do not use the modules.
+func WithProvenanceModules(m ...provenance.Module) Option {
+	return func(o *options) { o.modules = append(o.modules, m...) }
+}
+
 // WithBuildInfo sets the build information that version reports.
 func WithBuildInfo(b BuildInfo) Option { return func(o *options) { o.build = b } }
 
@@ -63,7 +73,7 @@ func NewRootCommand(opts ...Option) *cobra.Command {
 		o.registry = extension.New()
 	}
 	logIgnored(o.registry)
-	return app.NewRoot(app.Config{Name: o.name, Registry: o.registry, Commands: o.commands, Collectors: o.collectors, Build: o.build})
+	return app.NewRoot(app.Config{Name: o.name, Registry: o.registry, Commands: o.commands, Collectors: o.collectors, Modules: o.modules, Build: o.build})
 }
 
 // Execute runs root and returns the exit code: 0, or 1 after "Error: <msg>" on stderr.

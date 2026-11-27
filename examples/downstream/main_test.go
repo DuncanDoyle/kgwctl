@@ -124,6 +124,20 @@ func TestDownstreamCommand(t *testing.T) {
 	}
 }
 
+// TestDownstreamProxyRoutes: proxy routes runs with the wrapping module and
+// matches the route as the default build does; --file needs no cluster.
+func TestDownstreamProxyRoutes(t *testing.T) {
+	var out, errb bytes.Buffer
+	root := newRoot()
+	root.SetOut(&out)
+	root.SetErr(&errb)
+	root.SetArgs([]string{"proxy", "routes", "--file", "../../testdata/dumps/collide-meta.json", "--route", "kgwctl-proxy/orders"})
+	const want = "└─ route / (prefix) · HTTPRoute kgwctl-proxy/orders · rule 0 · match 0\n"
+	if code := cli.Execute(root); code != 0 || errb.Len() != 0 || !strings.Contains(out.String(), want) || strings.Contains(out.String(), "no route matches") {
+		t.Errorf("exit %d, stderr %q, stdout:\n%s\nwant the matched route %q", code, errb.String(), out.String(), want)
+	}
+}
+
 // bundleArchive runs `bundle` against env and returns the extracted archive.
 func bundleArchive(t *testing.T, env *testenv.Env, args ...string) bundletest.Archive {
 	t.Helper()

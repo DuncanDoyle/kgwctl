@@ -3,6 +3,7 @@ package cli_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"slices"
@@ -13,6 +14,9 @@ import (
 	"github.com/DuncanDoyle/snellius/pkg/extension"
 	"github.com/DuncanDoyle/snellius/pkg/objects"
 	"github.com/DuncanDoyle/snellius/pkg/proxystats"
+	"github.com/DuncanDoyle/xdsview/pkg/adapter/kgateway"
+	"github.com/DuncanDoyle/xdsview/pkg/envoy/model"
+	"github.com/DuncanDoyle/xdsview/pkg/envoy/provenance"
 	"github.com/spf13/cobra"
 
 	"github.com/DuncanDoyle/kgwctl/pkg/bundle"
@@ -126,4 +130,147 @@ func TestWithBundleCollectors(t *testing.T) {
 			}
 		})
 	}
+}
+
+// linkField wraps the kgateway module under its own name, as a downstream build
+// does, and links the record of exampleField to the example/filter slot.
+type linkField struct{ inner provenance.Module }
+
+func (linkField) Name() string { return "example" }
+
+func (m linkField) Claims(snap *model.Snapshot) []provenance.Claim {
+	inner := m.inner.Claims(snap)
+	var slot model.ID
+	for _, f := range snap.Listeners[0].FilterChains[0].HCM.HTTPFilters {
+		if f.Name == "example/filter" {
+			slot = f.ID
+		}
+	}
+	out := inner
+	for _, c := range inner {
+		rec, ok := c.Assertion.(provenance.PolicyRecord)
+		if !ok || rec.Field != "exampleField" {
+			continue
+		}
+		out = append(out, provenance.Claim{Subject: c.Subject, Certainty: model.Inferred,
+			Assertion: provenance.FilterLink{Record: c.Ref, Slot: slot},
+			Evidence:  []provenance.Evidence{{Kind: provenance.EvidenceMetadata, Subject: c.Subject, Field: "metadata.filter_metadata.example", Object: &rec.Policy}}})
+	}
+	return out
+}
+
+// named is a module that only has a name.
+type named string
+
+func (n named) Name() string                            { return string(n) }
+func (named) Claims(*model.Snapshot) []provenance.Claim { return nil }
+
+// runRoutes runs `proxy routes` on the downstream-field dump and returns the exit code and output.
+func runRoutes(t *testing.T, root *cobra.Command, args ...string) (code int, stdout, stderr string) {
+	t.Helper()
+	var out, errb bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&errb)
+	root.SetArgs(append([]string{"proxy", "routes", "--file", "testdata/downstream-field.json", "--route", "shop/orders"}, args...))
+	code = cli.Execute(root)
+	return code, out.String(), errb.String()
+}
+
+// filterRow returns the text row of the example/filter slot.
+func filterRow(t *testing.T, out string) string {
+	t.Helper()
+	for _, l := range strings.Split(out, "\n") {
+		if strings.Contains(l, "example/filter") {
+			return l
+		}
+	}
+	t.Fatalf("no example/filter row:\n%s", out)
+	return ""
+}
+
+// TestWithProvenanceModules: R12a, R13 and the empty call, at the command boundary.
+func TestWithProvenanceModules(t *testing.T) {
+	const policiesLine = "policies: TrafficPolicy ns/p (exampleField)\n"
+	t.Run("a wrapper links an inner record to a slot", func(t *testing.T) {
+		code, stdout, stderr := runRoutes(t, cli.NewRootCommand(cli.WithProvenanceModules(linkField{kgateway.New()})))
+		if code != 0 || stderr != "" {
+			t.Fatalf("exit %d, stderr %q", code, stderr)
+		}
+		if row := filterRow(t, stdout); !strings.HasSuffix(row, " · TrafficPolicy ns/p (exampleField, inferred)") {
+			t.Errorf("filter row %q lacks the linked record", row)
+		}
+		if !strings.Contains(stdout, policiesLine) {
+			t.Errorf("stdout lacks %q:\n%s", policiesLine, stdout)
+		}
+		code, stdout, _ = runRoutes(t, cli.NewRootCommand(cli.WithProvenanceModules(linkField{kgateway.New()})), "-o", "json")
+		var doc struct {
+			Item struct {
+				Listeners []struct {
+					FilterChains []struct {
+						HCM struct {
+							VirtualHosts []struct {
+								Routes []struct {
+									Filters []struct {
+										Name     string
+										Policies []struct {
+											Policy    struct{ Kind, Namespace, Name string }
+											Field     string
+											Level     string
+											Certainty string
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		if err := json.Unmarshal([]byte(stdout), &doc); code != 0 || err != nil {
+			t.Fatalf("exit %d, decode %v", code, err)
+		}
+		var found bool
+		for _, f := range doc.Item.Listeners[0].FilterChains[0].HCM.VirtualHosts[0].Routes[0].Filters {
+			if f.Name != "example/filter" {
+				continue
+			}
+			found = len(f.Policies) == 1 && f.Policies[0].Policy.Kind == "TrafficPolicy" && f.Policies[0].Policy.Namespace == "ns" &&
+				f.Policies[0].Policy.Name == "p" && f.Policies[0].Field == "exampleField" && f.Policies[0].Level == "route" && f.Policies[0].Certainty == "inferred"
+		}
+		if !found {
+			t.Errorf("example/filter policies lack the linked record:\n%s", stdout)
+		}
+	})
+	t.Run("the default build shows the record on the policies line only", func(t *testing.T) {
+		code, stdout, stderr := runRoutes(t, cli.NewRootCommand())
+		if code != 0 || stderr != "" || !strings.Contains(stdout, policiesLine) || strings.Contains(filterRow(t, stdout), "TrafficPolicy") {
+			t.Errorf("exit %d, stderr %q, stdout:\n%s", code, stderr, stdout)
+		}
+	})
+	t.Run("no modules keeps the default", func(t *testing.T) {
+		for _, args := range [][]string{nil, {"-o", "json"}} {
+			_, def, _ := runRoutes(t, cli.NewRootCommand(), args...)
+			code, got, stderr := runRoutes(t, cli.NewRootCommand(cli.WithProvenanceModules()), args...)
+			if code != 0 || stderr != "" || got != def {
+				t.Errorf("%v: exit %d, stderr %q, stdout:\n%s\nwant:\n%s", args, code, stderr, got, def)
+			}
+		}
+	})
+	t.Run("two modules with one name exit 2", func(t *testing.T) {
+		root := func() *cobra.Command {
+			return cli.NewRootCommand(cli.WithProvenanceModules(named("example"), named("example")))
+		}
+		code, stdout, stderr := runRoutes(t, root())
+		if code != 2 || stdout != "" || !strings.Contains(stderr, "compose provenance modules") {
+			t.Errorf("exit %d, stdout %q, stderr %q; want 2 and compose provenance modules", code, stdout, stderr)
+		}
+		// Other commands do not compose.
+		var out bytes.Buffer
+		r := root()
+		r.SetOut(&out)
+		r.SetArgs([]string{"version", "--client"})
+		if code := cli.Execute(r); code != 0 {
+			t.Errorf("version --client: exit %d", code)
+		}
+	})
 }

@@ -1,6 +1,6 @@
 // Command vendorctl is a downstream CLI built only on pkg/cli. It registers a
 // pack with a policy kind, an install detector, a collector and a check, and
-// a command, to show the extension seam.
+// a command, and wraps the kgateway provenance module, to show the extension seam.
 package main
 
 import (
@@ -18,6 +18,9 @@ import (
 	"github.com/DuncanDoyle/snellius/pkg/health"
 	"github.com/DuncanDoyle/snellius/pkg/install"
 	"github.com/DuncanDoyle/snellius/pkg/kinds"
+	"github.com/DuncanDoyle/xdsview/pkg/adapter/kgateway"
+	"github.com/DuncanDoyle/xdsview/pkg/envoy/model"
+	"github.com/DuncanDoyle/xdsview/pkg/envoy/provenance"
 	"github.com/spf13/cobra"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -67,6 +70,7 @@ func newRoot() *cobra.Command {
 		cli.WithName("vendorctl"),
 		cli.WithRegistry(newRegistry()),
 		cli.WithBundleCollectors(evidence{}),
+		cli.WithProvenanceModules(exampleModule{inner: kgateway.New()}),
 		cli.WithCommands(&cobra.Command{
 			Use:   "hello",
 			Short: "Print hello",
@@ -75,6 +79,16 @@ func newRoot() *cobra.Command {
 		}),
 	)
 }
+
+// exampleModule is the provenance module of proxy routes: the kgateway module under
+// the distribution's own name. A distribution would add its own claims here.
+type exampleModule struct{ inner provenance.Module }
+
+// Name is the module's own name; reusing "kgateway" would collide.
+func (exampleModule) Name() string { return packName }
+
+// Claims returns the kgateway module's claims unchanged.
+func (m exampleModule) Claims(snap *model.Snapshot) []provenance.Claim { return m.inner.Claims(snap) }
 
 // evidence is the example bundle collector. It writes a secret-shaped value through
 // Object and Text, which the Sink redacts, then tries writes the Sink refuses.

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/DuncanDoyle/snellius/pkg/extension"
+	"github.com/DuncanDoyle/xdsview/pkg/envoy/provenance"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"k8s.io/client-go/rest"
@@ -34,7 +35,9 @@ type Config struct {
 	Commands []*cobra.Command
 	// Collectors are downstream bundle collectors, run after the built-in ones.
 	Collectors []pb.Collector
-	Build      BuildInfo
+	// Modules are the provenance modules proxy routes composes; nil means proxyview.DefaultModules().
+	Modules []provenance.Module
+	Build   BuildInfo
 	// Out and Err default to os.Stdout and os.Stderr.
 	Out, Err io.Writer
 	// Now is the clock AGE is measured against; nil means time.Now.
@@ -196,7 +199,7 @@ func newRoot(cfg Config, hooks checkTestHooks, proxyHooks proxyTestHooks, bundle
 	root.SetErr(cfg.Err)
 	(&Flags{}).Bind(root.PersistentFlags())
 	root.AddCommand(newGetCmd(cfg.Registry, cfg.Now), newDescribeCmd(cfg.Registry, cfg.Now), newVersionCmd(cfg.Registry, cfg.Build),
-		newCheckCmd(cfg.Registry, cfg.Build, cfg.Now, hooks), newProxyCmd(cfg.Now, proxyHooks),
+		newCheckCmd(cfg.Registry, cfg.Build, cfg.Now, hooks), newProxyCmd(cfg.Now, cfg.Modules, proxyHooks),
 		newBundleCmd(cfg.Registry, cfg.Build, cfg.Collectors, bundleHooks))
 	root.AddCommand(cfg.Commands...)
 	return root
