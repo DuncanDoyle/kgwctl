@@ -32,6 +32,7 @@ import (
 
 	"github.com/DuncanDoyle/kgwctl/internal/app"
 	"github.com/DuncanDoyle/kgwctl/internal/bundle/bundletest"
+	"github.com/DuncanDoyle/kgwctl/internal/print"
 	"github.com/DuncanDoyle/kgwctl/internal/proxydump"
 	"github.com/DuncanDoyle/kgwctl/internal/testenv"
 )
@@ -354,6 +355,26 @@ func TestCheckCollectorMatchesCheck(t *testing.T) {
 	}
 	if g, w := normalizeJSON(t, got), normalizeJSON(t, []byte(r.stdout)); !reflect.DeepEqual(g, w) {
 		t.Errorf("check.json differs from check -o json:\n got %s\nwant %s", got, r.stdout)
+	}
+}
+
+// TestBundleManifestSchemaVersion: the bundle's enveloped members carry the
+// current schema version. version.json is not enveloped, so it has none.
+func TestBundleManifestSchemaVersion(t *testing.T) {
+	env := checkEnv(t, checkInstall, checkController)
+	a := archiveWith(t, env.Kubeconfig, statsRegistry(fakeStats{}), app.BundleTestHooks{Check: fastHooks(metricsScraper{})}, "-n", "kgateway-system")
+	for path, want := range map[string]string{"manifest.json": print.SchemaVersion, "check/check.json": print.SchemaVersion, "cluster/version.json": ""} {
+		b, ok := a.File(path)
+		if !ok {
+			t.Fatalf("archive lacks %s", path)
+		}
+		var doc struct{ SchemaVersion string }
+		if err := json.Unmarshal(b, &doc); err != nil {
+			t.Fatalf("%s: %v", path, err)
+		}
+		if doc.SchemaVersion != want {
+			t.Errorf("%s schemaVersion %q, want %q", path, doc.SchemaVersion, want)
+		}
 	}
 }
 

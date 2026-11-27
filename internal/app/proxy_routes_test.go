@@ -18,6 +18,7 @@ import (
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
 	"github.com/DuncanDoyle/kgwctl/internal/app"
+	"github.com/DuncanDoyle/kgwctl/internal/print"
 	"github.com/DuncanDoyle/kgwctl/internal/testenv"
 )
 
@@ -322,7 +323,10 @@ func TestProxyRoutesJSONOneDocument(t *testing.T) {
 			var doc struct {
 				SchemaVersion string
 				Kind          string
-				Item          struct{ Source, Snapshot map[string]any }
+				Item          struct {
+					Source    map[string]any
+					Listeners []any
+				}
 			}
 			if err := dec.Decode(&doc); err != nil {
 				t.Fatalf("decode: %v\n%s", err, r.stdout)
@@ -330,8 +334,11 @@ func TestProxyRoutesJSONOneDocument(t *testing.T) {
 			if _, err := dec.Token(); err != io.EOF {
 				t.Fatalf("stdout holds more than one document (next token err %v)", err)
 			}
-			if doc.SchemaVersion != "kgwctl.kgateway.dev/v1alpha1" || doc.Kind != "ProxyRoutes" {
+			if doc.SchemaVersion != print.SchemaVersion || doc.Kind != "ProxyRoutes" {
 				t.Errorf("envelope = %q %q", doc.SchemaVersion, doc.Kind)
+			}
+			if doc.Item.Source == nil || doc.Item.Listeners == nil {
+				t.Errorf("item lacks source or listeners: %+v", doc.Item)
 			}
 			if strings.Contains(r.stdout, `"listeners": null`) {
 				t.Errorf("stdout has null listeners")
@@ -358,7 +365,7 @@ func TestProxyRoutesYAMLGolden(t *testing.T) {
 
 // TestProxyRoutesLiveJSON: a live source names the Gateway, Pod and capture
 // time, and a route only the cluster's HTTPRoutes narrowed keeps an ambiguous
-// origin marked narrowedByKnown, in the snapshot and under --route in ambiguous.
+// origin marked narrowed, in listeners and under --route in selection.ambiguous.
 func TestProxyRoutesLiveJSON(t *testing.T) {
 	env := newEnv(t, testenv.Options{Fixtures: []string{routesFixture}})
 	for _, tc := range []struct {
@@ -366,7 +373,7 @@ func TestProxyRoutesLiveJSON(t *testing.T) {
 		args []string
 		want []string
 	}{
-		{name: "live-policies", want: []string{`"certainty": "ambiguous"`, `"narrowedByKnown": true`}},
+		{name: "live-policies", want: []string{`"certainty": "ambiguous"`, `"narrowed": true`, `"notInCluster": true`}},
 		{name: "live-policies-orders", args: []string{"--route", "orders"}, want: []string{`"ambiguous": [`, `"listeners": []`}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -531,8 +538,14 @@ func TestProxyRoutesHTTPRouteListDenied(t *testing.T) {
 	}
 }
 
+// lastLine returns the last line of s, without its newline.
+func lastLine(s string) string {
+	lines := strings.Split(strings.TrimSuffix(s, "\n"), "\n")
+	return lines[len(lines)-1]
+}
+
 // TestProxyRoutesParserWarning: a section the parser skipped is a warning on
-// stdout next to the surviving routes, in the tree and in JSON.
+// stdout, once in the block after the tree, and in JSON next to the surviving routes.
 func TestProxyRoutesParserWarning(t *testing.T) {
 	raw, err := os.ReadFile(dumpsDir + "demo.json")
 	if err != nil {
@@ -561,7 +574,7 @@ func TestProxyRoutesParserWarning(t *testing.T) {
 	if r.code != 0 || r.stderr != "" {
 		t.Fatalf("text: exit %d, stderr %q; want 0 and empty", r.code, r.stderr)
 	}
-	if !strings.Contains(r.stdout, "warning: skipped route config") || !strings.Contains(r.stdout, "shop.team-a.example") {
+	if !strings.HasPrefix(lastLine(r.stdout), "warning: skipped route config") || strings.Count(r.stdout, "warning:") != 1 || !strings.Contains(r.stdout, "shop.team-a.example") {
 		t.Errorf("text lacks the warning or the surviving routes:\n%s", r.stdout)
 	}
 
@@ -571,15 +584,15 @@ func TestProxyRoutesParserWarning(t *testing.T) {
 	}
 	var doc struct {
 		Item struct {
-			Snapshot struct{ Listeners []any }
-			Warnings []string
+			Listeners []any
+			Warnings  []struct{ Subject, Code, Message string }
 		}
 	}
 	if err := json.Unmarshal([]byte(r.stdout), &doc); err != nil {
 		t.Fatal(err)
 	}
-	if len(doc.Item.Warnings) != 1 || !strings.Contains(doc.Item.Warnings[0], "skipped route config") || len(doc.Item.Snapshot.Listeners) != 1 {
-		t.Errorf("JSON warnings %q, listeners %d; want one warning next to the listener", doc.Item.Warnings, len(doc.Item.Snapshot.Listeners))
+	if len(doc.Item.Warnings) != 1 || !strings.Contains(doc.Item.Warnings[0].Message, "skipped route config") || len(doc.Item.Listeners) != 3 {
+		t.Errorf("JSON warnings %+v, listeners %d; want one warning next to listener~80 and the two static listeners", doc.Item.Warnings, len(doc.Item.Listeners))
 	}
 	if !strings.Contains(r.stdout, "shop.team-a.example") {
 		t.Errorf("JSON lacks the surviving routes")
@@ -603,7 +616,7 @@ func TestProxyRoutesPortForwardForbidden(t *testing.T) {
 }
 
 // TestProxyRoutesUndecodableHCM: an HTTP connection manager whose typed_config
-// does not decode is a warning next to its listener, in the tree and in JSON.
+// does not decode is a warning, once after the tree, and in JSON.
 func TestProxyRoutesUndecodableHCM(t *testing.T) {
 	args := []string{"proxy", "routes", "--file", "testdata/proxy/hcm-undecodable.json"}
 	const warning = `listener "listener~80" filter chain "listener~80": skipped HTTP connection manager`
@@ -612,7 +625,7 @@ func TestProxyRoutesUndecodableHCM(t *testing.T) {
 	if r.code != 0 || r.stderr != "" {
 		t.Fatalf("text: exit %d, stderr %q; want 0 and empty", r.code, r.stderr)
 	}
-	if !strings.Contains(r.stdout, "warning: "+warning) || !strings.Contains(r.stdout, "listener~80") {
+	if !strings.HasPrefix(lastLine(r.stdout), "warning: "+warning) || strings.Count(r.stdout, "warning:") != 1 || !strings.Contains(r.stdout, "listener~80") {
 		t.Errorf("text lacks the warning or the listener:\n%s", r.stdout)
 	}
 
@@ -620,12 +633,17 @@ func TestProxyRoutesUndecodableHCM(t *testing.T) {
 	if r.code != 0 || r.stderr != "" {
 		t.Fatalf("json: exit %d, stderr %q; want 0 and empty", r.code, r.stderr)
 	}
-	var doc struct{ Item struct{ Warnings []string } }
+	var doc struct {
+		Item struct {
+			Listeners []any
+			Warnings  []struct{ Subject, Code, Message string }
+		}
+	}
 	if err := json.Unmarshal([]byte(r.stdout), &doc); err != nil {
 		t.Fatal(err)
 	}
-	if len(doc.Item.Warnings) != 1 || !strings.Contains(doc.Item.Warnings[0], warning) {
-		t.Errorf("JSON warnings %q, want one naming the listener and filter chain", doc.Item.Warnings)
+	if len(doc.Item.Warnings) != 1 || !strings.Contains(doc.Item.Warnings[0].Message, warning) || len(doc.Item.Listeners) != 1 {
+		t.Errorf("JSON warnings %+v, listeners %d; want one naming the listener and filter chain", doc.Item.Warnings, len(doc.Item.Listeners))
 	}
 }
 

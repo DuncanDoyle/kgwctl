@@ -15,6 +15,7 @@ import (
 	"github.com/DuncanDoyle/snellius/pkg/install"
 
 	"github.com/DuncanDoyle/kgwctl/internal/app"
+	"github.com/DuncanDoyle/kgwctl/internal/print"
 	"github.com/DuncanDoyle/kgwctl/internal/testenv"
 )
 
@@ -147,7 +148,7 @@ func TestVersion(t *testing.T) {
 						if err := json.Unmarshal([]byte(r.stdout), &env); err != nil {
 							t.Fatalf("stdout is not JSON: %v", err)
 						}
-						if env.SchemaVersion != "kgwctl.kgateway.dev/v1alpha1" || env.Kind != "Version" || len(env.Item) == 0 {
+						if env.SchemaVersion != print.SchemaVersion || env.Kind != "Version" || len(env.Item) == 0 {
 							t.Errorf("envelope = %+v", env)
 						}
 					}

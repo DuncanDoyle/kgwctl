@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/DuncanDoyle/xdsview/pkg/envoy/model"
-	"github.com/DuncanDoyle/xdsview/pkg/envoy/render"
 	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -202,7 +201,7 @@ func routesFromFile(cmd *cobra.Command, f *Flags, req routesRequest, path string
 	if req.gateway != nil {
 		src.Gateway = gatewayRef(*req.gateway)
 	}
-	return printRoutes(cmd, body, path, req.gateway, nil, req, header, src)
+	return printRoutes(cmd, body, path, routesInput{gateway: req.gateway}, req, header, src)
 }
 
 func routesLive(cmd *cobra.Command, f *Flags, now func() time.Time, hooks proxyTestHooks, req routesRequest, name, pod string) error {
@@ -259,8 +258,8 @@ func routesLive(cmd *cobra.Command, f *Flags, now func() time.Time, hooks proxyT
 	}
 	header := fmt.Sprintf("Gateway %s · pod %s · %s", gw, r.target, r.capture.CapturedAt.UTC().Format(time.RFC3339))
 	at := r.capture.CapturedAt.UTC()
-	src := proxyview.Source{Gateway: gatewayRef(gw), Pod: &model.Ref{Kind: "Pod", Namespace: r.target.Namespace, Name: r.target.Name}, CapturedAt: &at}
-	return printRoutes(cmd, r.body, "Pod "+r.target.String(), &gw, known, req, header, src)
+	src := proxyview.Source{Gateway: gatewayRef(gw), Pod: &proxyview.Ref{Kind: "Pod", Namespace: r.target.Namespace, Name: r.target.Name}, CapturedAt: &at}
+	return printRoutes(cmd, r.body, "Pod "+r.target.String(), routesInput{gateway: &gw, known: known, capture: model.CaptureComplete}, req, header, src)
 }
 
 // tooLarge reports a dump over --max-size (design §4.1). A live dump can also
@@ -304,27 +303,36 @@ func knownHTTPRoutes(ctx context.Context, c load.Clients) ([]model.Ref, error) {
 }
 
 // gatewayRef is the envelope's reference to a Gateway.
-func gatewayRef(n types.NamespacedName) *model.Ref {
-	return &model.Ref{Group: "gateway.networking.k8s.io", Kind: "Gateway", Namespace: n.Namespace, Name: n.Name}
+func gatewayRef(n types.NamespacedName) *proxyview.Ref {
+	return &proxyview.Ref{Group: "gateway.networking.k8s.io", Kind: "Gateway", Namespace: n.Namespace, Name: n.Name}
+}
+
+// routesInput is what proxy routes knows beyond the dump.
+type routesInput struct {
+	gateway *types.NamespacedName // live, or --gateway with --file
+	known   []model.Ref           // the cluster's HTTPRoutes; empty with --file
+	capture model.Capture         // complete live; empty with --file (design DD-2)
 }
 
 // printRoutes builds the view from body and prints the tree, or the envelope
 // for -o json|yaml, with src as its source.
-func printRoutes(cmd *cobra.Command, body []byte, source string, gw *types.NamespacedName, known []model.Ref, req routesRequest, header string, src proxyview.Source) error {
-	v, err := proxyview.Build(body, gw, known, req.sel)
-	if errors.Is(err, proxyview.ErrNotConfigDump) {
+func printRoutes(cmd *cobra.Command, body []byte, source string, in routesInput, req routesRequest, header string, src proxyview.Source) error {
+	v, err := proxyview.Build(body, proxyview.Options{Gateway: in.gateway, Known: in.known, Capture: in.capture, Selection: req.sel})
+	switch {
+	case errors.Is(err, proxyview.ErrNotConfigDump):
 		return &ExitError{Code: 2, Err: fmt.Errorf("%s: %w", source, err)}
-	}
-	if err != nil {
+	case errors.Is(err, proxyview.ErrCompose):
+		return &ExitError{Code: 2, Err: err}
+	case err != nil:
 		return &ExitError{Code: 2, Err: fmt.Errorf("parse config dump of %s: %w", source, err)}
 	}
 	if req.output != print.FormatText {
-		if err := print.Envelope(cmd.OutOrStdout(), req.output, "ProxyRoutes", proxyview.Item{Source: src, View: v}); err != nil {
+		if err := print.Envelope(cmd.OutOrStdout(), req.output, "ProxyRoutes", v.Payload(src)); err != nil {
 			return &ExitError{Code: 2, Err: fmt.Errorf("write routes: %w", err)}
 		}
 		return nil
 	}
-	if err := proxyview.Text(cmd.OutOrStdout(), v, render.Options{Header: header, ResponseOrder: req.response}); err != nil {
+	if err := proxyview.Text(cmd.OutOrStdout(), v, proxyview.TextOptions{Header: header, ResponseOrder: req.response}); err != nil {
 		return &ExitError{Code: 2, Err: fmt.Errorf("write routes: %w", err)}
 	}
 	return nil

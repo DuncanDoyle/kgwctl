@@ -10,4 +10,4 @@ item:
     name: params
     namespace: default
 kind: Describe
-schemaVersion: kgwctl.kgateway.dev/v1alpha1
+schemaVersion: kgwctl.kgateway.dev/v1alpha2

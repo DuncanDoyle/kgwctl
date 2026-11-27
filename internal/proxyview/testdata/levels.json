@@ -1,0 +1,32 @@
+{
+  "configs": [
+    {
+      "@type": "type.googleapis.com/envoy.admin.v3.ListenersConfigDump",
+      "dynamic_listeners": [
+        {
+          "name": "listener~8080",
+          "active_state": {"listener": {"name": "listener~8080", "address": {"socket_address": {"address": "::", "port_value": 8080}},
+            "metadata": {"filter_metadata": {"merge.TrafficPolicy.gateway.kgateway.dev": {"cors": ["gateway.kgateway.dev/TrafficPolicy/shop/listener-p"]}}},
+            "filter_chains": [{"name": "listener~8080", "filters": [{"name": "envoy.filters.network.http_connection_manager",
+              "typed_config": {"@type": "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
+                "rds": {"route_config_name": "listener~8080"},
+                "http_filters": [
+                  {"name": "envoy.filters.http.cors", "typed_config": {"@type": "type.googleapis.com/envoy.extensions.filters.http.cors.v3.Cors"}},
+                  {"name": "envoy.filters.http.router", "typed_config": {"@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router"}}]}}]}]}}
+        }
+      ]
+    },
+    {
+      "@type": "type.googleapis.com/envoy.admin.v3.RoutesConfigDump",
+      "dynamic_route_configs": [
+        {"route_config": {"name": "listener~8080",
+          "metadata": {"filter_metadata": {"merge.TrafficPolicy.gateway.kgateway.dev": {"cors": ["gateway.kgateway.dev/TrafficPolicy/shop/rc-p"]}}},
+          "virtual_hosts": [{"name": "listener~8080~orders_example", "domains": ["orders.example"],
+            "metadata": {"filter_metadata": {"merge.TrafficPolicy.gateway.kgateway.dev": {"cors": ["gateway.kgateway.dev/TrafficPolicy/shop/vh-p"]}}},
+            "routes": [{"name": "listener~8080~orders_example-route-0-httproute-orders-shop-0-0-matcher-0", "match": {"prefix": "/"},
+              "metadata": {"filter_metadata": {"merge.TrafficPolicy.gateway.kgateway.dev": {"cors": ["gateway.kgateway.dev/TrafficPolicy/shop/route-p"]}}},
+              "route": {"cluster": "kube_shop_orders_8080"}}]}]}}
+      ]
+    }
+  ]
+}

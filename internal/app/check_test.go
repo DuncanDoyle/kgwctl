@@ -32,6 +32,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/DuncanDoyle/kgwctl/internal/app"
+	"github.com/DuncanDoyle/kgwctl/internal/print"
 	"github.com/DuncanDoyle/kgwctl/internal/testenv"
 )
 
@@ -425,8 +426,8 @@ func oneEnvelope(t *testing.T, s []byte, installs int) {
 	if err := dec.Decode(&doc); err != nil {
 		t.Fatalf("decode: %v\n%s", err, s)
 	}
-	if doc.Kind != "Check" || doc.SchemaVersion != "kgwctl.kgateway.dev/v1alpha1" || len(doc.Item.Installs) != installs {
-		t.Errorf("envelope = %s %s with %d installs, want Check kgwctl.kgateway.dev/v1alpha1 with %d", doc.Kind, doc.SchemaVersion, len(doc.Item.Installs), installs)
+	if doc.Kind != "Check" || doc.SchemaVersion != print.SchemaVersion || len(doc.Item.Installs) != installs {
+		t.Errorf("envelope = %s %s with %d installs, want Check %s with %d", doc.Kind, doc.SchemaVersion, len(doc.Item.Installs), print.SchemaVersion, installs)
 	}
 	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		t.Errorf("a second document follows the envelope: %v", err)

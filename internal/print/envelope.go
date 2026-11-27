@@ -11,7 +11,7 @@ import (
 )
 
 // SchemaVersion versions the JSON/YAML envelope; renaming or removing a field bumps it.
-const SchemaVersion = "kgwctl.kgateway.dev/v1alpha1"
+const SchemaVersion = "kgwctl.kgateway.dev/v1alpha2"
 
 // Output formats.
 const (

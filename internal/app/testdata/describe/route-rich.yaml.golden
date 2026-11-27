@@ -93,4 +93,4 @@ item:
           type: RegularExpression
           value: v[12]
 kind: Describe
-schemaVersion: kgwctl.kgateway.dev/v1alpha1
+schemaVersion: kgwctl.kgateway.dev/v1alpha2
