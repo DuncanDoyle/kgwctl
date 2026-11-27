@@ -56,7 +56,7 @@ func ParseStrategy(s string) (Strategy, error) {
 }
 
 // notExact returns the routes whose one reading is not exact; with rule, also
-// those whose rule and match indices are not exact (DD-4). It reads certainty only.
+// those whose rule or match index is unknown or not exact (DD-4). It reads certainty only.
 func notExact(ix *provenance.Index, routes []model.ID, rule bool) []model.ID {
 	var out []model.ID
 	for _, id := range routes {
@@ -64,7 +64,8 @@ func notExact(ix *provenance.Index, routes []model.ID, rule bool) []model.ID {
 		ok := res.Certainty == model.Exact && len(res.Candidates) == 1
 		if ok && rule {
 			// Unset effective index certainty: equal to the reading's, exact.
-			ok = effective(res)[0].IndexCertainty == model.Unknown
+			r := effective(res)[0]
+			ok = r.IndexCertainty == model.Unknown && r.RuleIndex >= 0 && r.MatchIndex >= 0
 		}
 		if !ok {
 			out = append(out, id)

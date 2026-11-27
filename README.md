@@ -180,7 +180,7 @@ kgwctl must find out which HTTPRoute each Envoy route comes from. Sometimes it c
 
 **The three values.** Each value accepts what the one before it accepts, plus one more case.
 
-1. `exact`: only routes whose origin is certain, because they carry route metadata. With `--rule`, the rule and match index must come from route metadata too.
+1. `exact`: only routes whose origin is certain, because they carry route metadata. With `--rule`, the rule index and the match index must both be known and come from route metadata too.
    ```bash
    kgwctl proxy routes proxy -n kgwctl-proxy --route kgwctl-proxy/orders --select exact
    ```

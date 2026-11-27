@@ -1051,6 +1051,40 @@ func TestProxyRoutesExactAgreeingClaim(t *testing.T) {
 	}
 }
 
+// TestProxyRoutesExactUnknownMatch: metadata with a rule index and no match,
+// on a route name with no index. strict matches; exact --rule lists it as inferred (DD-4).
+func TestProxyRoutesExactUnknownMatch(t *testing.T) {
+	kc := unreachableKubeconfig(t, "default")
+	args := []string{"proxy", "routes", "--file", "../proxyview/testdata/rule-no-match.json", "--route", "shop/orders", "--rule", "0"}
+	strict := runRoutes(t, kc, app.ProxyTestHooks{}, args...)
+	if strict.code != 0 || strict.stderr != "" || strings.Contains(strict.stdout, "not matched") || !strings.Contains(strict.stdout, " · HTTPRoute shop/orders · rule 0\n") {
+		t.Errorf("strict: exit %d, stderr %q, stdout:\n%s\nwant the route matched", strict.code, strict.stderr, strict.stdout)
+	}
+	exact := runRoutes(t, kc, app.ProxyTestHooks{}, append(args, "--select", "exact")...)
+	want := "no route matches HTTPRoute shop/orders rule 0\ninferred routes, not matched:\n  custom-orders-route · HTTPRoute shop/orders · rule 0\n"
+	if exact.code != 0 || exact.stderr != "" || !strings.HasSuffix(exact.stdout, want) {
+		t.Errorf("exact: exit %d, stderr %q, stdout:\n%s\nwant it to end with:\n%s", exact.code, exact.stderr, exact.stdout, want)
+	}
+	j := runRoutes(t, kc, app.ProxyTestHooks{}, append(args, "--select", "exact", "-o", "json")...)
+	var doc struct {
+		Item struct {
+			Selection struct {
+				Routes   []any
+				Inferred []struct {
+					Readings []struct{ RuleIndex, MatchIndex int }
+				}
+			}
+		}
+	}
+	if err := json.Unmarshal([]byte(j.stdout), &doc); err != nil {
+		t.Fatal(err)
+	}
+	s := doc.Item.Selection
+	if len(s.Routes) != 0 || len(s.Inferred) != 1 || len(s.Inferred[0].Readings) != 1 || s.Inferred[0].Readings[0].MatchIndex != -1 {
+		t.Errorf("exact JSON selection %+v, want no route and one inferred with match index -1", s)
+	}
+}
+
 // exactOnSecondUse is a wrapper's extra: on the second use of the shared route
 // config, an exact kgwctl-proxy/orders reading with inferred indices.
 func exactOnSecondUse(snap *model.Snapshot, inner []provenance.Claim) []provenance.Claim {

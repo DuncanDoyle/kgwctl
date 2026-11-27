@@ -344,7 +344,7 @@ type SelectionOut struct {
 }
 
 // InferredRoute is a route --select exact listed, not matched: its one
-// reading, or with --rule its indices, are below exact.
+// reading, or with --rule its indices, are below exact or unknown.
 type InferredRoute struct {
 	RouteKey
 	Readings []Reading `json:"readings"`
