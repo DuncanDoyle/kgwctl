@@ -568,12 +568,21 @@ routes_run() {
 # untree <file>: the lines without the tree drawing and indentation in front of them.
 untree() { sed -E 's/^[^[:alnum:]]*//' "$1"; }
 
+# no_stderr <file>: a healthy run writes nothing to <file>.stderr (R23, R24); shows its first lines if it did.
+no_stderr() {
+  [ -s "$1.stderr" ] || return 0
+  log "FAIL $(basename "$1"): unexpected stderr:"
+  head -n 5 "$1.stderr" | indent
+  return 1
+}
+
 # expect_matched <file>: exit 0, orders matched, its filters in order, the policy on each filter and the policy list.
 expect_matched() {
   local f="$1" n order entry ok=0
   n="$(basename "$f")"
   order="$(untree "$f" | awk '$1 ~ /^[0-9]+$/ { print $2 }' | paste -sd' ' -)"
   [ "$(cat "$f.exit")" = 0 ] || { log "FAIL $n: exit $(cat "$f.exit"), want 0"; ok=1; }
+  no_stderr "$f" || ok=1
   untree "$f" | grep -qxF "$ORDERS_ROUTE" || { log "FAIL $n: no route line '$ORDERS_ROUTE'"; ok=1; }
   [ "$order" = "$ORDERS_FILTERS" ] || { log "FAIL $n: filters '$order', want '$ORDERS_FILTERS'"; ok=1; }
   # Each entry is "<index> <filter>|<policy>".
@@ -593,6 +602,7 @@ expect_ambiguous() {
   local f="$1" n v ok=0
   n="$(basename "$f")"
   [ "$(cat "$f.exit")" = 0 ] || { log "FAIL $n: exit $(cat "$f.exit"), want 0"; ok=1; }
+  no_stderr "$f" || ok=1
   grep -qxF "no route matches HTTPRoute $ORDERS" "$f" || { log "FAIL $n: no 'no route matches' line"; ok=1; }
   for v in "${COLLIDING[@]}"; do
     grep -qxF "  listener~8080~$v-route-0-httproute-orders-kgwctl-proxy-0-0-matcher-0 · ambiguous: HTTPRoute $ORDERS, HTTPRoute proxy/orders-kgwctl" "$f" ||
@@ -604,13 +614,14 @@ expect_ambiguous() {
 }
 
 # expect_json <file> <matched|ambiguous> [strategy]: exit 0, a v1alpha2 ProxyRoutes document with the
-# selection strategy (default strict). matched: one selected route, chosen by select, whose running filters
-# in order are $ORDERS_FILTERS. ambiguous: no selected route, two ambiguous ones, no route in listeners.
+# selection strategy (default strict). matched: one selected route, chosen by select, whose one reading is
+# $ORDERS and whose running filters in order are $ORDERS_FILTERS. ambiguous: no selected route, two ambiguous ones, no route in listeners.
 # shellcheck disable=SC2016
 expect_json() {
   local f="$1" want="$2" strategy="${3:-strict}" n ok=0 q
   n="$(basename "$f")"
   [ "$(cat "$f.exit")" = 0 ] || { log "FAIL $n: exit $(cat "$f.exit"), want 0"; ok=1; }
+  no_stderr "$f" || ok=1
   q='def routes: [.item.listeners[]?.filterChains[]?.hcm.virtualHosts[]?.routes[]?];
     .schemaVersion == "kgwctl.kgateway.dev/v1alpha2" and .kind == "ProxyRoutes"
     and .item.selection.strategy == $s and'
@@ -618,12 +629,13 @@ expect_json() {
     matched) q="$q"' (.item.selection.routes | length == 1 and .[0].chosenBy == "select")
       and (.item.selection.ambiguous | length == 0)
       and (.item.selection.routes[0].id as $id | [routes[] | select(.id == $id)]
-        | length == 1 and ([.[0].filters[] | select(.runs == "yes") | .name] | join(" ")) == $filters)' ;;
+        | length == 1 and ([.[0].filters[] | select(.runs == "yes") | .name] | join(" ")) == $filters
+        and [.[0].origin.readings[].route | "\(.kind) \(.namespace)/\(.name)"] == ["HTTPRoute " + $orders])' ;;
     ambiguous) q="$q"' .item.selection.routes == [] and (.item.selection.ambiguous | length == 2)
       and (routes | length == 0)' ;;
     *) log "expect_json: unknown case $want"; return 1 ;;
   esac
-  jq -e --arg s "$strategy" --arg filters "$ORDERS_FILTERS" "$q" "$f" >/dev/null ||
+  jq -e --arg s "$strategy" --arg filters "$ORDERS_FILTERS" --arg orders "$ORDERS" "$q" "$f" >/dev/null ||
     { log "FAIL $n: not a $want v1alpha2 ProxyRoutes document with strategy $strategy"; ok=1; }
   return "$ok"
 }
