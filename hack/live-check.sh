@@ -614,7 +614,7 @@ expect_ambiguous() {
 }
 
 # expect_json <file> <matched|ambiguous> [strategy]: exit 0, a v1alpha2 ProxyRoutes document with the
-# selection strategy (default strict). matched: one selected route, chosen by select, whose one reading is
+# selection strategy (default strict) and the cluster's HTTPRoutes listed (every caller runs live). matched: one selected route, chosen by select, whose one reading is
 # $ORDERS and whose running filters in order are $ORDERS_FILTERS. ambiguous: no selected route, two ambiguous ones, no route in listeners.
 # shellcheck disable=SC2016
 expect_json() {
@@ -624,7 +624,7 @@ expect_json() {
   no_stderr "$f" || ok=1
   q='def routes: [.item.listeners[]?.filterChains[]?.hcm.virtualHosts[]?.routes[]?];
     .schemaVersion == "kgwctl.kgateway.dev/v1alpha2" and .kind == "ProxyRoutes"
-    and .item.selection.strategy == $s and'
+    and .item.selection.strategy == $s and .item.selection.knownHTTPRoutes == "listed" and'
   case "$want" in
     matched) q="$q"' (.item.selection.routes | length == 1 and .[0].chosenBy == "select")
       and (.item.selection.ambiguous | length == 0)
