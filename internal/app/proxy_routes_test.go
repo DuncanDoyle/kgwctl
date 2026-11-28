@@ -1152,6 +1152,49 @@ func TestProxyRoutesSharedSourceClaimOrder(t *testing.T) {
 	}
 }
 
+// copiesOnSecondUse returns a wrapper's extra that adds, on the second use of
+// the shared route config, a copy of each RouteSource claim edited by f.
+func copiesOnSecondUse(f func(i int, r *provenance.RouteSource, c provenance.Claim)) func(*model.Snapshot, []provenance.Claim) []provenance.Claim {
+	return func(snap *model.Snapshot, inner []provenance.Claim) []provenance.Claim {
+		route := snap.Listeners[1].FilterChains[0].HCM.RouteConfig.VirtualHosts[0].Routes[0].ID
+		var out []provenance.Claim
+		for _, c := range inner {
+			if r, ok := c.Assertion.(provenance.RouteSource); ok && c.Subject == route {
+				f(len(out), &r, c)
+				c.Assertion, c.Ref = r, ""
+				out = append(out, c)
+			}
+		}
+		return out
+	}
+}
+
+// TestProxyRoutesSharedSourceIncomplete: two uses that differ only by an
+// incomplete reading both print, as JSON shows them apart (DD-5).
+func TestProxyRoutesSharedSourceIncomplete(t *testing.T) {
+	kc := unreachableKubeconfig(t, "default")
+	args := []string{"proxy", "routes", "--file", "../proxyview/testdata/shared-source.json", "--route", "kgwctl-proxy/orders", "--rule", "0"}
+	extra := copiesOnSecondUse(func(i int, r *provenance.RouteSource, _ provenance.Claim) { r.Incomplete = i == 0 })
+	r := runRoutesModules(t, kc, app.ProxyTestHooks{}, []provenance.Module{proxyviewtest.Wrap("example", kgateway.New(), extra)}, args...)
+	const name = "orders_example-route-0-httproute-orders-kgwctl-proxy-0-0-matcher-0"
+	if n := strings.Count(r.stdout, name); r.code != 0 || r.stderr != "" || n != 2 {
+		t.Errorf("exit %d, stderr %q, text lists the route %d times:\n%s\nwant twice", r.code, r.stderr, n, r.stdout)
+	}
+}
+
+// TestProxyRoutesSharedSourceExplicitIndex: an unset index certainty and an
+// explicit one equal to the claim's print once, as JSON omits both (DD-4, DD-5).
+func TestProxyRoutesSharedSourceExplicitIndex(t *testing.T) {
+	kc := unreachableKubeconfig(t, "default")
+	args := []string{"proxy", "routes", "--file", "../proxyview/testdata/shared-source.json", "--route", "kgwctl-proxy/orders", "--rule", "0"}
+	extra := copiesOnSecondUse(func(_ int, r *provenance.RouteSource, c provenance.Claim) { r.IndexCertainty = c.Certainty })
+	r := runRoutesModules(t, kc, app.ProxyTestHooks{}, []provenance.Module{proxyviewtest.Wrap("example", kgateway.New(), extra)}, args...)
+	const name = "orders_example-route-0-httproute-orders-kgwctl-proxy-0-0-matcher-0"
+	if n := strings.Count(r.stdout, name); r.code != 0 || r.stderr != "" || n != 1 {
+		t.Errorf("exit %d, stderr %q, text lists the route %d times:\n%s\nwant once", r.code, r.stderr, n, r.stdout)
+	}
+}
+
 // exactCopiesOnSecondUse is a wrapper's extra: on the second use of the
 // shared route config, an exact copy of each RouteSource claim.
 func exactCopiesOnSecondUse(snap *model.Snapshot, inner []provenance.Claim) []provenance.Claim {

@@ -278,14 +278,13 @@ func (v View) ambiguousText(route model.ID, indices bool) string {
 	return out
 }
 
-// readingsKey is res's effective readings, sorted, for comparing outcomes:
-// HTTPRoute, rule index, rule name, match index, index certainty and the
-// reading's own (top) certainty.
+// readingsKey is res's readings as JSON prints them, sorted, for comparing
+// outcomes: two uses share a key exactly when their JSON readings are equal.
 func readingsKey(res provenance.Resolution[provenance.RouteSource]) string {
 	var keys []string
 	top := topCertainty(res)
 	for _, r := range effective(res) {
-		keys = append(keys, fmt.Sprintf("%#v|%d|%q|%d|%d|%d", r.Route, r.RuleIndex, r.RuleName, r.MatchIndex, r.IndexCertainty, top))
+		keys = append(keys, fmt.Sprintf("%#v", reading(r, top)))
 	}
 	slices.Sort(keys)
 	return strings.Join(keys, "\n")
