@@ -33,7 +33,7 @@ func Text(w io.Writer, v View, o TextOptions) error {
 		snap := *v.Snapshot
 		snap.Warnings = nil
 		opts := render.Options{Header: o.Header, ResponseOrder: o.ResponseOrder, Labels: v.labels(),
-			Notes: v.notes(), Trailer: v.trailer()}
+			Notes: v.notes(), Trailer: provenance.Notes(v.Index)}
 		if err := render.Text(&b, &snap, v.Chains, opts); err != nil {
 			return err
 		}
@@ -111,28 +111,6 @@ func readingText(r provenance.RouteSource) string {
 	}
 	return s
 }
-
-// recordedAboveLabel labels a route's policy records at its virtual host,
-// route config or listener: where they were recorded, not inheritance (D-024).
-const recordedAboveLabel = "policies recorded above the route"
-
-// trailer is the Trailer hook: provenance.Notes with kgwctl's label for the
-// records above route level.
-func (v View) trailer() func(render.Row) []render.Line {
-	base := provenance.Notes(v.Index)
-	return func(row render.Row) []render.Line {
-		out := base(row)
-		for i := range out {
-			if out[i].Label == xdsviewAboveLabel {
-				out[i].Label = recordedAboveLabel
-			}
-		}
-		return out
-	}
-}
-
-// xdsviewAboveLabel is provenance.Notes' label for the same records.
-const xdsviewAboveLabel = "inherited policies"
 
 // notes is the Notes hook: OneCandidateNote under a route Known narrowed to
 // one reading that --select known did not choose (DD-6).

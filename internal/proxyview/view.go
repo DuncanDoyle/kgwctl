@@ -88,8 +88,7 @@ func effective(res provenance.Resolution[provenance.RouteSource]) []provenance.R
 // indexCertainty is the index certainty of reading r over the claims at
 // certainty c: the highest, where unset means the claim's own certainty. It
 // stays unset only when that highest value comes from unset claims alone, so
-// an explicit marker survives. Resolve's merge keeps the highest set value
-// and so can turn an unset (exact) one into inferred (DD-4).
+// an explicit marker survives; Resolve's merge prefers unset on a tie (DD-4).
 func indexCertainty(claims []provenance.Claim, r provenance.RouteSource, c model.Certainty) model.Certainty {
 	ic, explicit := model.Unknown, false
 	for _, cl := range claims {

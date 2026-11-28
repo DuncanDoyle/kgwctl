@@ -47,7 +47,7 @@ func warningList(full *model.Snapshot, ix *provenance.Index) []Warning {
 }
 
 // locatedCodes are the warning codes whose messages already name their
-// subject's location: xdsview v0.7.0's labelled parser warnings and kgwctl's own.
+// subject's location: xdsview's labelled parser warnings and kgwctl's own.
 var locatedCodes = map[string]bool{
 	model.WarnHCMSkipped: true, model.WarnRouteConfigSkipped: true, model.WarnRDSMissing: true,
 	model.WarnRDSAmbiguous: true, model.WarnClaimDropped: true, model.WarnLinkDropped: true,

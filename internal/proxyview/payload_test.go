@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/DuncanDoyle/xdsview/pkg/envoy/model"
+	"github.com/DuncanDoyle/xdsview/pkg/envoy/provenance"
 	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/DuncanDoyle/kgwctl/internal/proxyview"
@@ -194,7 +195,7 @@ func TestPayloadPolicyLevels(t *testing.T) {
 		}
 	}
 	out := text(t, v, proxyview.TextOptions{})
-	for _, want := range []string{"policies: TrafficPolicy shop/route-p (cors)\n", "policies recorded above the route: TrafficPolicy shop/vh-p (cors; vhost), TrafficPolicy shop/rc-p (cors; route config), TrafficPolicy shop/listener-p (cors; listener)\n"} {
+	for _, want := range []string{provenance.PoliciesLabel + ": TrafficPolicy shop/route-p (cors)\n", provenance.AboveRouteLabel + ": TrafficPolicy shop/vh-p (cors; vhost), TrafficPolicy shop/rc-p (cors; route config), TrafficPolicy shop/listener-p (cors; listener)\n"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("text lacks %q:\n%s", want, out)
 		}
