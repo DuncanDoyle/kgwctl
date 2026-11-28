@@ -645,6 +645,10 @@ func TestLabelsMergesKeptReading(t *testing.T) {
 	if len(labels) != 1 || !strings.Contains(labels[0], "(chosen from known HTTPRoutes)") || strings.Contains(labels[0], "ambiguous:") {
 		t.Errorf("labels %q, want one reading chosen from known HTTPRoutes", labels)
 	}
+	// The exact index certainty wins, so the weaker inferred one adds no marker.
+	if len(labels) == 1 && strings.Contains(labels[0], "(partly from name)") {
+		t.Errorf("label %q, want the exact index certainty without (partly from name)", labels[0])
+	}
 }
 
 // TestParseStrategy: empty is strict; only exact, strict and known are valid.
@@ -701,8 +705,45 @@ func TestChooseKnownRule(t *testing.T) {
 			if len(got) != 1 || got[0].Route != n.Route || !reflect.DeepEqual(got[0].Kept, tc.kept) {
 				t.Fatalf("chosen %+v, want %s with its kept claims unchanged", got, n.Route)
 			}
+			// The chosen row shows the merged index certainty: exact, so no (partly from name).
+			if l := provenance.Labels(v.Index, got)(render.Row{Subject: n.Route, Route: n.Route}); len(l) != 1 || l[0] != chosenRow {
+				t.Errorf("label %q, want %q", l, chosenRow)
+			}
 		})
 	}
+	// The chosen route's JSON shows the merged index certainty and Incomplete; the label shows neither
+	// flag. Exhaustive is not observable here: inferred claims are never complete.
+	mods := []provenance.Module{proxyviewtest.Wrap("example", kgateway.New(), flagPair)}
+	kv := build(t, golden(t, "policies.json"), proxyview.Options{Known: refs(orders), Selection: proxyview.Selection{Route: orders}, Strategy: proxyview.StrategyKnown, Modules: mods})
+	routes := payloadRoutes(kv.Payload(proxyview.Source{}))
+	r, ok := routes[string(n.Route)]
+	if !ok || r.Origin.ChosenBy != "known" {
+		t.Fatalf("chosen route origin %+v, want chosen by known", r.Origin)
+	}
+	i := slices.IndexFunc(r.Origin.Readings, func(rd proxyview.Reading) bool { return !rd.NotInCluster })
+	if i < 0 || r.Origin.Readings[i].IndexCertainty != "exact" || !r.Origin.Readings[i].Incomplete {
+		t.Errorf("origin %+v, want the kept reading with exact indices and incomplete", r.Origin)
+	}
+}
+
+// flagPair is a wrapper's extra: for each kgwctl-proxy/orders reading, one
+// copy with inferred indices, not incomplete and exhaustive, and one with
+// exact indices, incomplete and not exhaustive.
+func flagPair(_ *model.Snapshot, inner []provenance.Claim) []provenance.Claim {
+	var out []provenance.Claim
+	for _, c := range inner {
+		r, ok := c.Assertion.(provenance.RouteSource)
+		if !ok || r.Route != proxyview.HTTPRouteRef(orders) {
+			continue
+		}
+		a, b := r, r
+		a.IndexCertainty, a.Incomplete, a.Exhaustive = model.Inferred, false, true
+		b.IndexCertainty, b.Incomplete, b.Exhaustive = model.Exact, true, false
+		ca, cb := c, c
+		ca.Assertion, ca.Ref, cb.Assertion, cb.Ref = a, "", b, ""
+		out = append(out, ca, cb)
+	}
+	return out
 }
 
 // chosenRow is the route row text of a route --select known chose.
