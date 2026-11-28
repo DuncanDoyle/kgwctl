@@ -723,7 +723,7 @@ Live, `gateway`, `pod` and `capturedAt` are set. With `--file`, `file` is set, a
 | `incomplete` | boolean | The route name is outside the expected format, so the readings may miss its source. |
 | `notInCluster` | boolean | The HTTPRoute is not in the cluster, so the reading was set aside. |
 
-The text output marks an incomplete reading with `(incomplete)`, after any certainty.
+The text output marks an incomplete reading with `(incomplete)`, after any certainty: on a route row with one reading and in the lists of routes not matched. A route row with several readings, or one chosen by `--select known`, does not show it; JSON always does.
 
 ### Filter
 
