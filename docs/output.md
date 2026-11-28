@@ -723,6 +723,8 @@ Live, `gateway`, `pod` and `capturedAt` are set. With `--file`, `file` is set, a
 | `incomplete` | boolean | The route name is outside the expected format, so the readings may miss its source. |
 | `notInCluster` | boolean | The HTTPRoute is not in the cluster, so the reading was set aside. |
 
+The text output marks an incomplete reading with `(incomplete)`, after any certainty.
+
 ### Filter
 
 One entry per HCM filter, in HCM order. Request order is the entries whose `runs` and `request` are not `no`; response order is the reverse of those whose `runs` and `response` are not `no`.

@@ -85,7 +85,15 @@ func (v View) routeLabel(id model.ID) []string {
 	if res.Certainty != model.Exact {
 		s += " (" + res.Certainty.String() + ")"
 	}
-	return []string{s}
+	return []string{s + incompleteText(r)}
+}
+
+// incompleteText is the suffix that marks an incomplete reading, after any certainty.
+func incompleteText(r provenance.RouteSource) string {
+	if r.Incomplete {
+		return " (incomplete)"
+	}
+	return ""
 }
 
 // readingText formats a reading's HTTPRoute and indices, e.g.
@@ -254,8 +262,8 @@ func (v View) selectionText(b *bytes.Buffer) {
 }
 
 // ambiguousText is an ambiguous route's outcome: its readings' HTTPRoutes,
-// with their indices and a certainty below exact if indices is set, and
-// OneCandidateNote when Known narrowed it to one.
+// with their indices and a certainty below exact if indices is set, each
+// marked if incomplete, and OneCandidateNote when Known narrowed it to one.
 func (v View) ambiguousText(route model.ID, indices bool) string {
 	var refs []string
 	res := provenance.Resolve[provenance.RouteSource](v.Index, route)
@@ -267,6 +275,7 @@ func (v View) ambiguousText(route model.ID, indices bool) string {
 				s += " (" + c.String() + ")"
 			}
 		}
+		s += incompleteText(r)
 		if len(refs) == 0 || refs[len(refs)-1] != s {
 			refs = append(refs, s)
 		}

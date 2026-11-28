@@ -1180,6 +1180,15 @@ func TestProxyRoutesSharedSourceIncomplete(t *testing.T) {
 	if n := strings.Count(r.stdout, name); r.code != 0 || r.stderr != "" || n != 2 {
 		t.Errorf("exit %d, stderr %q, text lists the route %d times:\n%s\nwant twice", r.code, r.stderr, n, r.stdout)
 	}
+	marked := 0
+	for _, l := range strings.Split(r.stdout, "\n") {
+		if strings.Contains(l, name) && strings.Contains(l, "(incomplete)") {
+			marked++
+		}
+	}
+	if marked != 1 {
+		t.Errorf("%d lines carry (incomplete):\n%s\nwant exactly one", marked, r.stdout)
+	}
 }
 
 // TestProxyRoutesSharedSourceExplicitIndex: an unset index certainty and an
