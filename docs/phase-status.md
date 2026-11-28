@@ -46,4 +46,5 @@ n/a
 - 2026-11-21 Phase 3 closed: docs/phases/phase-3/phase-3-complete.md.
 - 2026-11-27 Phase 4 closed: docs/phases/phase-4/phase-4-complete.md.
 - 2026-11-28 Phase 4b closed: docs/phases/phase-4b/phase-4b-complete.md. Gates at d5ffd66: `make test` (race, envtest) exit 0 on 18 packages; `make lint`, `go mod tidy -diff` and `goldens-check` clean; `routes` live check passed. Released as `v0.1.0`.
+- 2026-11-28 `v0.1.1`: xdsview v0.7.2 keeps an explicit index certainty on a tie, so kgwctl dropped its own normalisation (D-036, kgwctl#18). Review: docs/phases/phase-4b/reviews/v0.1.1-codex.md (release; P2 and P3 fixed, P4 deferred to xdsview).
 - Live cluster: kind `kgwctl-live` (kgateway v2.5.1), admin kubeconfig `hack/live/out/admin.kubeconfig`, context `kind-kgwctl-live`. Stop the other kind clusters on colima before a live check.
