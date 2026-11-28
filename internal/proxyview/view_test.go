@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -627,9 +628,9 @@ func TestBuildDuplicateModules(t *testing.T) {
 	}
 }
 
-// TestNormaliseMergesReading: kept claims that differ only in IndexCertainty,
-// Incomplete and Exhaustive merge into one reading, which Labels marks as chosen.
-func TestNormaliseMergesReading(t *testing.T) {
+// TestLabelsMergesKeptReading: Labels merges kept claims that differ only in
+// IndexCertainty, Incomplete and Exhaustive into one reading marked as chosen.
+func TestLabelsMergesKeptReading(t *testing.T) {
 	v := build(t, golden(t, "policies.json"), proxyview.Options{})
 	route := v.Index.About(v.Full.Listeners[0].FilterChains[0].HCM.RouteConfig.VirtualHosts[1].Routes[0].ID)[0]
 	base := route.Assertion.(provenance.RouteSource)
@@ -639,14 +640,7 @@ func TestNormaliseMergesReading(t *testing.T) {
 	ca, cb := route, route
 	ca.Assertion, cb.Assertion = a, b
 
-	n := proxyview.Normalise(provenance.Narrowing{Route: route.Subject, Kept: []provenance.Claim{ca, cb}})
-	if len(n.Kept) != 1 {
-		t.Fatalf("kept %+v, want one claim", n.Kept)
-	}
-	got := n.Kept[0].Assertion.(provenance.RouteSource)
-	if got.IndexCertainty != model.Exact || !got.Incomplete || got.Exhaustive {
-		t.Errorf("merged %+v, want exact, incomplete, not exhaustive", got)
-	}
+	n := provenance.Narrowing{Route: route.Subject, Kept: []provenance.Claim{ca, cb}}
 	labels := provenance.Labels(v.Index, []provenance.Narrowing{n})(render.Row{Subject: route.Subject, Route: route.Subject})
 	if len(labels) != 1 || !strings.Contains(labels[0], "(chosen from known HTTPRoutes)") || strings.Contains(labels[0], "ambiguous:") {
 		t.Errorf("labels %q, want one reading chosen from known HTTPRoutes", labels)
@@ -672,7 +666,7 @@ func TestParseStrategy(t *testing.T) {
 }
 
 // TestChooseKnownRule: a narrowed route is chosen only when its kept claims
-// name one reading that matches the query; the result is normalised.
+// name one reading that matches the query; its kept claims pass through unchanged.
 func TestChooseKnownRule(t *testing.T) {
 	v := build(t, golden(t, "policies.json"), proxyview.Options{Known: refs(orders), Selection: proxyview.Selection{Route: orders}})
 	n := v.Narrowed[0]
@@ -685,33 +679,27 @@ func TestChooseKnownRule(t *testing.T) {
 	a.Assertion, b.Assertion = ra, rb
 	q := kgateway.Query{Route: proxyview.HTTPRouteRef(orders)}
 	rule1 := 1
-	// merged is a and b merged: exact (the higher), incomplete (b is), not exhaustive (b is not).
-	one, merged := keep.Assertion.(provenance.RouteSource), ra
-	merged.IndexCertainty, merged.Incomplete, merged.Exhaustive = model.Exact, true, false
 	for _, tc := range []struct {
-		name string
-		q    kgateway.Query
-		kept []provenance.Claim
-		want *provenance.RouteSource // nil: not chosen
+		name   string
+		q      kgateway.Query
+		kept   []provenance.Claim
+		chosen bool
 	}{
-		{name: "one-reading", q: q, kept: []provenance.Claim{keep}, want: &one},
+		{name: "one-reading", q: q, kept: []provenance.Claim{keep}, chosen: true},
 		{name: "two-readings", q: q, kept: []provenance.Claim{keep, drop}},
 		{name: "other-rule", q: kgateway.Query{Route: q.Route, RuleIndex: &rule1}, kept: []provenance.Claim{keep}},
-		{name: "differ-only-in-flags", q: q, kept: []provenance.Claim{a, b}, want: &merged},
+		{name: "differ-only-in-flags", q: q, kept: []provenance.Claim{a, b}, chosen: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := proxyview.ChooseKnown(tc.q, kgateway.Selection{Narrowed: []provenance.Narrowing{{Route: n.Route, Kept: tc.kept}}})
-			if tc.want == nil {
+			if !tc.chosen {
 				if len(got) != 0 {
 					t.Fatalf("chosen %+v, want none", got)
 				}
 				return
 			}
-			if len(got) != 1 || got[0].Route != n.Route || len(got[0].Kept) != 1 {
-				t.Fatalf("chosen %+v, want %s with one kept claim", got, n.Route)
-			}
-			if got[0].Kept[0].Assertion != *tc.want {
-				t.Errorf("kept %+v, want %+v", got[0].Kept[0].Assertion, *tc.want)
+			if len(got) != 1 || got[0].Route != n.Route || !reflect.DeepEqual(got[0].Kept, tc.kept) {
+				t.Fatalf("chosen %+v, want %s with its kept claims unchanged", got, n.Route)
 			}
 		})
 	}

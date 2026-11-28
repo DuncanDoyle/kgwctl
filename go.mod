@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/DuncanDoyle/snellius v0.9.0
-	github.com/DuncanDoyle/xdsview v0.7.1
+	github.com/DuncanDoyle/xdsview v0.7.2
 	github.com/go-logr/logr v1.4.3
 	github.com/prometheus/common v0.72.1
 	github.com/spf13/cobra v1.10.2
