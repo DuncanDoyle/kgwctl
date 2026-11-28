@@ -146,6 +146,7 @@ func (v View) selectionText(b *bytes.Buffer) {
 		id         model.ID
 		rc, name   string
 		unres, inf bool
+		marked     bool   // a reading's effective index certainty is inferred
 		detail     string // the outcome's text after the name
 	}
 	// outcome is what one use of a source shows; equal outcomes print once.
@@ -157,7 +158,7 @@ func (v View) selectionText(b *bytes.Buffer) {
 		readings         string // readingsKey
 	}
 	var list []entry
-	seen := map[outcome]bool{}
+	seen := map[outcome]int{}               // outcome to its entry in list
 	names := map[string]map[model.ID]bool{} // route name to its source keys
 	walk(v.Full, func(hcm model.HCMConfig, _ model.VirtualHost, r model.Route) {
 		if !ambiguous[r.ID] && !unresolved[r.ID] && !inferred[r.ID] {
@@ -182,11 +183,16 @@ func (v View) selectionText(b *bytes.Buffer) {
 			res := provenance.Resolve[provenance.RouteSource](v.Index, r.ID)
 			o.certainty, o.readings = res.Certainty, readingsKey(res)
 			o.note = !e.inf && v.oneCandidate(r.ID)
+			e.marked = e.inf && slices.ContainsFunc(effective(res), func(r provenance.RouteSource) bool { return r.IndexCertainty == model.Inferred })
 		}
-		if seen[o] {
+		// A merged inferred line keeps the marker if any use has it (DD-4).
+		if j, ok := seen[o]; ok {
+			if e.marked && !list[j].marked {
+				list[j].marked, list[j].detail = true, e.detail
+			}
 			return
 		}
-		seen[o] = true
+		seen[o] = len(list)
 		if names[r.Name] == nil {
 			names[r.Name] = map[model.ID]bool{}
 		}

@@ -1152,6 +1152,61 @@ func TestProxyRoutesSharedSourceClaimOrder(t *testing.T) {
 	}
 }
 
+// markedOnOneUse wraps a module: it keeps only the kgwctl-proxy/orders reading
+// of the shared route config and marks its indices inferred on one use.
+type markedOnOneUse struct {
+	provenance.Module
+	use int // listener of the marked use
+}
+
+func (markedOnOneUse) Name() string { return "example" }
+
+func (m markedOnOneUse) Claims(snap *model.Snapshot) []provenance.Claim {
+	marked := snap.Listeners[m.use].FilterChains[0].HCM.RouteConfig.VirtualHosts[0].Routes[0].ID
+	other := proxyview.HTTPRouteRef(types.NamespacedName{Namespace: "proxy", Name: "orders-kgwctl"})
+	var out []provenance.Claim
+	for _, c := range m.Module.Claims(snap) {
+		if r, ok := c.Assertion.(provenance.RouteSource); ok {
+			if r.Route == other {
+				continue
+			}
+			if c.Subject == marked {
+				r.IndexCertainty = model.Inferred
+				c.Assertion = r
+			}
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+// TestProxyRoutesSharedSourceMergedMarker: two inferred uses that differ only
+// by an explicit inferred index marker print once, with the marker (DD-4, DD-5).
+func TestProxyRoutesSharedSourceMergedMarker(t *testing.T) {
+	kc := unreachableKubeconfig(t, "default")
+	args := []string{"proxy", "routes", "--file", "../proxyview/testdata/shared-source.json", "--route", "kgwctl-proxy/orders", "--rule", "0", "--select", "exact"}
+	const name = "orders_example-route-0-httproute-orders-kgwctl-proxy-0-0-matcher-0"
+	for _, use := range []int{0, 1} {
+		r := runRoutesModules(t, kc, app.ProxyTestHooks{}, []provenance.Module{markedOnOneUse{kgateway.New(), use}}, args...)
+		_, section, ok := strings.Cut(r.stdout, "inferred routes, not matched:\n")
+		if r.code != 0 || r.stderr != "" || !ok {
+			t.Fatalf("marker on use %d: exit %d, stderr %q, stdout:\n%s\nwant an inferred section", use, r.code, r.stderr, r.stdout)
+		}
+		var lines, marked int
+		for _, l := range strings.Split(section, "\n") {
+			if strings.Contains(l, name) {
+				lines++
+				if strings.Contains(l, "(partly from name)") {
+					marked++
+				}
+			}
+		}
+		if lines != 1 || marked != 1 {
+			t.Errorf("marker on use %d: %d lines, %d marked:\n%s\nwant one marked line", use, lines, marked, r.stdout)
+		}
+	}
+}
+
 // copiesOnSecondUse returns a wrapper's extra that adds, on the second use of
 // the shared route config, a copy of each RouteSource claim edited by f.
 func copiesOnSecondUse(f func(i int, r *provenance.RouteSource, c provenance.Claim)) func(*model.Snapshot, []provenance.Claim) []provenance.Claim {
