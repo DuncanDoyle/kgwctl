@@ -1,0 +1,6 @@
+row: 21
+title: a downstream collector writing an undeclared type
+cases: []
+deferred:
+  - part: the writer refuses a Sink write of a type with no redactor; payload.bin is the planted body
+    task: "4.1.4"

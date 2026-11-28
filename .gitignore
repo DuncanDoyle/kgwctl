@@ -4,3 +4,4 @@
 go.work
 go.work.sum
 hack/live/out/
+hack/release/out/

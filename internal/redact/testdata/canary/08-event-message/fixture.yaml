@@ -1,0 +1,11 @@
+row: 8
+title: a Bearer token in an Event message
+cases:
+  - name: event
+    type: object
+    input: event.yaml
+    canaries:
+      - value: kgwctl-canary-08-msg
+        rule: pattern
+        location: message
+    keep: ["upstream rejected Authorization: Bearer [redacted]", route-a, route-a.17f3]

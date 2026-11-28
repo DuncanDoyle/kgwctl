@@ -19,6 +19,7 @@ Append-only. Newest at the bottom. Supersede, don't edit.
 **Decision:** Effective policy, findings and Envoy → Gateway API mapping come from the shared libraries (program P-001). The CLI formats; it does not decide.
 **Alternatives:** CLI-local logic for speed — rejected.
 **Consequences:** Some CLI phases wait on library deliveries (edges E1–E3, E7).
+**Superseded in part by D-024 (2026-11-22):** effective policy no longer comes from the shared libraries; they provide relations and naming only.
 
 ## D-004 — Vendor-neutral core (2026-11-04, phase 0)
 **Context:** The CLI is headed for kgateway OSS.
@@ -151,3 +152,139 @@ Append-only. Newest at the bottom. Supersede, don't edit.
 **Decision:** kgwctl does not ship `mcp` or debug commands. A downstream build adds them through `pkg/cli` (`WithCommands`, `WithRegistry`; D-009), as `examples/downstream` shows. `-o agent` stays here: it is output, not a server.
 **Alternatives:** An MCP command in kgwctl over a shared tool set — ties kgwctl to that tool set's license and roadmap.
 **Consequences:** `pkg/cli` is a contract for downstream builds: breaking changes need a version bump and the downstream example as the test. E10's consumer is a downstream build, not kgwctl.
+
+## D-024 — The controller owns policy semantics; Phase 6 shows evidence, not an effective-policy model (2026-11-22, phase 4)
+**Context:** kgateway's controller owns policy resolution, precedence, inheritance, merging and translation. Phase 6 assumed a library (E7) would give `describe` the attached and effective policies. A library outside the controller can only approximate those rules, and an approximation that disagrees with the controller misleads more than no answer.
+**Decision:** kgwctl does not compute or promise effective policy. Phase 6 shows four kinds of evidence and links them:
+1. declared policies and their `targetRefs`/selectors, as written;
+2. the controller's status conditions on those policies and targets;
+3. what Envoy runs for a route or listener, from xdsview;
+4. links between them, each marked verified, inferred or unknown.
+
+Each source verifies only its own claim:
+
+| Source | Verifies | Does not verify |
+|---|---|---|
+| `route_source` route metadata | the originating route, rule and match of an Envoy route | which policy won, merged or produced a filter |
+| A route's `merge.*` metadata | the policy IDs merged at that route's level | which level (listener, virtual host, route) governs a request |
+| A policy's status condition | the controller's result for the target, controller and generation the condition names | targets, controllers or generations it does not name |
+| Envoy config dump | what one replica ran at capture time | other replicas, or later times |
+
+A link is `verified` only when one of these sources states it for the objects shown. It is `inferred` when it comes from names or selectors. It is `unknown` when evidence is absent, stale (another generation) or ambiguous. Per-target policy status is attachment evidence with at most a lossy hint of effect, not resolution (P-008). No effective-policy view is planned.
+**Alternatives:** Snellius's policy model as the effective view (E7 as written): rejected as authoritative, because it re-derives controller rules. It is still usable as an inferred link if marked so.
+**Consequences:** Supersedes D-003's "effective policy from the shared libraries": libraries may provide relations and naming, never semantics. E7 is redefined in the program file (P-008): declared policies, controller-reported attachment, and a route's `merge.*` policy IDs, from the Snellius Phase 8 declared-policy model and xdsview `origin.Policies` (E5, E13). Listener, RouteConfiguration and virtual-host metadata have no provider yet. Anything beyond controller-reported evidence stays out of scope. The deferred `proxy diff` (generic intended-versus-accepted) is dropped from the roadmap. A data-plane convergence candidate takes its place: it reads the raw per-replica evidence the support bundle keeps, and gives a stale-config verdict only with comparable controller evidence.
+
+## D-025 — Envoy admin reads are an allowlist of operations (2026-11-22, phase 4) — accepted by the owner 2026-11-22
+**Context:** D-021 limits port-forward to one `GET /config_dump`. The support bundle also needs the config dump with endpoints, `/stats` (text readouts such as `version_text`), `/server_info`, `/certs` and `/clusters`.
+**Decision:** `proxydump` sends only fixed operations. Each binds port, method, path and exact query; callers pick one by constant, and no API takes a path:
+
+| Operation | Request |
+|---|---|
+| `config-dump` | `GET :19000 /config_dump` |
+| `config-dump-eds` | `GET :19000 /config_dump?include_eds` |
+| `stats` | `GET :19000 /stats` |
+| `server-info` | `GET :19000 /server_info` |
+| `certs` | `GET :19000 /certs` |
+| `clusters` | `GET :19000 /clusters` |
+
+An unknown operation fails before a stream opens, and redirects are refused. `proxy dump` and `proxy routes` keep `config-dump`. The bundle uses `config-dump-eds` by default; `--no-endpoints` uses `config-dump` and skips `clusters`. No controller admin path is on the list: `/snapshots/xds` holds TLS keys and inline credentials in clear, and `/snapshots/krt` can return raw snapshots and ConfigMaps (kgateway v2.5.1, read from source).
+**Alternatives:** One path per command, as D-021 has it — the bundle would need its own transport. A path allowlist without the query — cannot express `include_eds`. Any GET — opens admin endpoints whose output nobody reviewed.
+**Consequences:** The `pods/portforward` grant and its warning are unchanged. A new operation needs a decision entry.
+
+## D-026 — Redaction is a mandatory stage of the bundle writer (2026-11-22, phase 4) — accepted by the owner 2026-11-22
+**Context:** A bundle leaves the customer's trust boundary. Envoy redacts only fields it marks sensitive. Header values (including values kgateway resolves from a Secret), ext-auth `headers_to_add`, `initial_metadata`, inline JWKS, Lua code, transformation templates and `last-applied-configuration` carry secrets past it.
+**Decision:** Collectors hand typed content to the writer, which runs the redactor for that type and refuses undeclared types.
+- Every header value in header-mutation structures, header modifiers, ext-auth `headersToAdd`, tunnel headers and `initialMetadata` is redacted, whatever the header's name. Names are kept.
+- Envoy debug header lines keep values only for an allowlist of non-secret names (`:authority`, `:method`, `:scheme`, `:status`, `content-type`, `content-length`, `user-agent`, `x-request-id`, `x-envoy-*`).
+- Inline JWKS are rebuilt as `{"keys":[...]}` from a typed public projection per `kty` (RSA `n`, `e`; EC `crv`, `x`, `y`; OKP `crv`, `x`; plus `kid`, `alg`, `use`, `key_ops`, `x5c`, `x5t`, `x5t#S256`). Any other shape or type is redacted whole.
+- Prometheus content must parse as text exposition, or it is dropped with an error. Label values and comments get the pattern pass.
+- Remote errors are recorded as HTTP status and Kubernetes reason/code only, never bodies. The bundle's client transport replaces non-2xx bodies with a code-and-reason status before any error string is built, which covers the reused `check` path. It first reads at most 4 KiB of a pods/proxy 502/503 body to mark "connection refused"; the body is never stored. `proxydump`'s port-forward status errors carry code and reason only, in every command. Other error text, including panic values, is redacted and cut at 512 bytes.
+- No context name in file or member names; path components only from validated Kubernetes names or constants; operation codes, not text; flag values only for enum, numeric, duration and boolean flags; map keys shown as `[key]` in redaction locations.
+- Structured rules for objects and JSON, a pattern pass for text, the marker `[redacted]`, and a `redactions.json` report without values.
+- kgwctl makes no API request for Secrets or ConfigMaps in Phase 4. A guard on every bundle-owned client refuses such requests before they are sent, and the object Sink refuses both kinds. Derived artifacts can still carry values the controller resolved from Secrets; the redaction above covers known structures and patterns.
+
+Downstream collectors are trusted in-process code. The Sink and the guard protect against their mistakes, not against malice.
+**Alternatives:** Redaction per collector — a downstream collector could skip it. Header redaction by name — misses a Secret-backed custom header. Hashing values — low-entropy secrets can be guessed offline.
+**Consequences:** Redaction is tested on the extracted archive with a canary corpus per artifact class. Its limits are documented in docs/bundle-threat-model.md and the README.
+
+## D-027 — The Sink re-reads Pods and records intentional omissions (2026-11-23, phase 4) — accepted by the owner 2026-11-23
+**Context:** Review item P4-2 (4.2). A collector sets `Source.Identity` before it writes, so a streamed capture (logs, metrics) cannot report the re-read that §8.2 requires after the read ends. A capture skipped on purpose (Pod not running, no install, no metrics port) has no way to be recorded except as an error.
+**Decision:**
+- Every Sink write method takes a leading `context.Context`, e.g. `Text(ctx, Path, io.Reader, Source) error`.
+- When `Source.Pod` is set, `Namespace` and the expected `UID` are required. After the content is read, also when it was cut, the Sink re-reads the Pod with the guarded client, bounded by `--request-timeout` and the capture context, and publishes the outcome with the item under the writer lock. A write that already failed is not re-read. `Source.Identity` is output only; a value passed in is rejected.
+- `Omit(Path, Source, OmitReason) error` records an item that was not captured on purpose. The reasons are fixed: `not running` and `no install` give `skipped`, `no metrics port` gives `disabled`. An omission has no archive member, size, redactions entry or `errors.txt` line, claims no path and does not degrade its collector. After the seal it returns `ErrSealed`.
+- At the seal a pending re-read result is discarded. Pod text kept by the seal gets `reread-failed`.
+- `verified`, `changed`, `gone` and `reread-failed` are metadata. None makes an item or collector fail.
+**Alternatives:** An item handle with a one-shot `SetIdentity`: collectors can forget it, and a failed write has no handle. A path-based `Identity` amendment plus `Outcome`: a wrong path can amend another item, and the writer needs an amendment index.
+**Consequences:** `pkg/bundle.Sink` changes before any release; the 4.2 collectors and `examples/downstream` move to it in the same task. One GET per Pod capture, on the collector's own worker. Design §5 and §8.1–§8.4 updated.
+
+## D-028 — The reader role lists resources explicitly, guarded by a test (2026-11-24, phase 4) — decided by the owner 2026-11-24
+**Context:** The bundle lists every served Gateway API kind. Gateway API v1.7.0 serves UDPRoute and three experimental kinds the `kgwctl-reader` ClusterRole did not grant, so a reader-only bundle recorded them as `denied`.
+**Decision:** `docs/rbac.yaml` names every resource; no `*` in `resources` or `apiGroups`. `TestReaderRoleCoversServedKinds` fails when a test CRD in a group the bundle lists has a kind the role lacks. Each bump of the test CRDs follows the checklist in `internal/testenv/testdata/crds/README.md`: diff the CRDs, review new kinds (RBAC, support) and changed kinds (served versions, credential fields for redaction).
+**Alternatives:** `resources: ["*"]` per group: covers new kinds without a change, but admission policies and security reviews often reject a wildcard Role. Listing only registry kinds: drops new kinds from the bundle without a trace.
+**Consequences:** Each new kind needs a one-line RBAC change, which the test enforces on the next CRD bump. On a cluster running a newer Gateway API than the test CRDs, a reader-only bundle shows the new kind as `denied` with a reader grant line only when the resources collector discovers and lists it. The collector finds a kind on one of two paths. The first is the preferred-version scan, which takes a resource in its group's preferred version when the group is listed whole or the resource has the `kgateway` category. The second is registry resolution, which takes a `collect.Registry` descriptor in any of its served versions, in any group or category. Both paths leave out subresources, resources without the `list` verb, and cluster-scoped kinds other than GatewayClass. On a live cluster, a served kind outside `collect.Registry` is collected without the ownership filter, or is missed when it is served only in a non-preferred version, until it is added to that list. An unregistered route can be archived without its backend Service namespaces being added to workload collection, because that expansion walks only registry kinds.
+
+## D-029 — The public Sink has no generic JSON or config-dump method (2026-11-25, phase 4) — decided under the owner's delegation 2026-11-25
+**Context:** Phase 4 review finding 10. `Sink.JSON` accepts any JSON document and applies only generic rules. `Sink.ConfigDump` does the same with the Envoy rules, at any path. A collector that passes a serialized Kubernetes object through either skips kind redaction and the Secret and ConfigMap refusal. Detection by shape cannot be complete: nested objects, stripped type metadata and objects serialized into strings all escape it. kgwctl's own report envelopes would also match it falsely. The owner asked for the best design, verified with Codex, since no downstream collector outside our control exists (reviews: `.agents-tmp/sink-json-design-codex.md`).
+**Decision:**
+- `pkg/bundle.Sink` drops `JSON` and `ConfigDump`. Downstream collectors write Kubernetes resources and lists through `Object`, plain text through `Text` and metrics through `Prometheus`.
+- Built-in JSON artifacts (check report, `version.json`, Envoy `server_info`, `certs` and `config_dump`) use internal writers that only built-in collectors can reach. Each owns its redaction, as D-026 requires; the config dump keeps the config-dump rules.
+- `Object` refuses an object or List item without a kind, since both the refusal and the kind rules need it.
+- A new structured format needs a reviewed schema and its own writer.
+**Alternatives:**
+- Route objects in `JSON` to the Object rules: a heuristic with false negatives, and it misreads kgwctl's own envelopes.
+- Refuse objects in `JSON`: the same false negatives, and a false positive loses a whole artifact.
+**Consequences:** A downstream call to `Sink.JSON` or `Sink.ConfigDump` fails to compile. A kind-less object, such as one from a typed clientset list, is a failed item with reason `missing kind`. `examples/downstream` and the README extension-point text change. The downstream build is told the new contract. Check findings carry opaque `json.RawMessage` evidence. Projecting it to known fields is a separate item for the owner.
+
+## D-030 — The bundle seals an archive once its output exists (2026-11-25, phase 4) — decided by the owner 2026-11-25
+**Context:** Phase 4.5 reviews (4.5-codex.md #2, -r2, -r3). Whether a troubled install detection gave a partial archive (exit 0) or no archive (exit 2) depended on classifying the error. Each review round found another case on the wrong side: a TLS handshake timeout, an HTTP 504, an `--install` pin that a partial model could not confirm. A support engineer gets nothing from a run that removes its own output.
+**Decision:**
+- Once the output file or stream is created, `kgwctl bundle` always seals an archive. This includes no reachable cluster, a detection error of any kind, and `--install` naming no detected install. The manifest records `inventory/detection` with its outcome (`failed`, `timeout` or `denied`) and a fixed reason. The collectors that never ran are recorded the same way they are after a detection timeout.
+- Exit codes (design §3.1):
+  - 0: the archive holds cluster data.
+  - 2: no archive was written, or the archive holds no cluster data. The archive holds cluster data when a collector other than `version` finished `ok` or `partial`, or any item other than `cluster/version.json` was written `ok`. `version.json` is excluded because it carries kgwctl's build data even when the cluster never answers. Causes of no archive: a usage error, an output that exists or cannot be created, a fatal write failure, or an interrupt.
+  - stderr says which case applies.
+- An interrupt (Ctrl-C, or the caller cancelling the command context) keeps today's behaviour.
+- Errors before the output is created keep exit 2 with no archive. Examples: no kubeconfig, an unknown context, invalid flags.
+**Alternatives:** Classify detection errors as timeout or fast failure (4.5 S3/S8). Every new transport or server failure mode needs its own rule, and the reviews kept finding more.
+**Consequences:**
+- The error classifier (`timeoutClass`, the `reached` logic) goes away.
+- A run against a dead cluster leaves a small archive and exits 2, so scripts that test for the file must also check the exit code.
+- Design §3.1 and §3.2 and docs/output.md change.
+
+## D-031 — Migrate to xdsview v0.7.0 before the first release (2026-11-27, phase 4 close) — decided by the owner 2026-11-27
+**Context:** Phase 4 closed with xdsview v0.7.0 (E15, kgwctl#15) and Snellius v0.9.0 (E7, `install.Scope.Excluded`, kgwctl#16) both released. kgwctl has no release yet. The E15 migration moves every command's JSON and YAML to `kgwctl.kgateway.dev/v1alpha2`, including the bundle's `manifest.json`.
+**Decision:**
+- The next phase is Phase 4b: migrate `proxy routes` to xdsview v0.7.0, bump Snellius to v0.9.0, move the envelope to `v1alpha2`, then tag `v0.1.0`. Phase 5 (full analysis) keeps its number.
+- `v0.1.0` is tagged when Phase 4b closes. It depends on final Snellius and xdsview releases only.
+**Alternatives:** Tag `v0.1.0` now on `v1alpha1`. Rejected: the first format people script against would change in the next release, and no one waits on a release.
+**Consequences:** Phase 4b is a planned phase with its own design, Codex review and live check. Downstream builds (D-023 in xdsview) replace the kgateway module, so the module set kgwctl composes is a `pkg/cli` seam, and downstream goldens differ from kgwctl's.
+
+## D-032 — `proxy routes` takes a route selection strategy (2026-11-27, phase 4b) — decided by the owner 2026-11-27
+**Context:** Under xdsview v0.7.0, `kgateway.Select` leaves a route ambiguous when only the cluster's HTTPRoutes (Known) narrowed its readings to one. kgwctl's selection has been strict so far (D-022). krp also selects such a route (xdsview D-022). The owner wants both behaviours available in kgwctl.
+**Decision:**
+- `proxy routes --select exact|strict|known`, default `strict`. Each value adds one kind of evidence to the one before it.
+- `exact` (added by the owner 2026-11-27): only a route whose one reading has certainty `exact` is selected; with `--rule`, its rule index must be exact too. With kgateway, exact readings come from route metadata. A route `strict` would select on an inferred reading is listed as inferred, not matched. Works with `--file`.
+- `strict`: a route Known narrowed to one reading stays ambiguous and is listed, never selected.
+- `known`: such a route is also selected when the one reading Known kept matches the query. Text and JSON mark it as chosen from known HTTPRoutes, and JSON records the strategy used.
+- `--select known` needs the cluster's HTTPRoutes, so with `--file` it is a usage error.
+**Alternatives:** Strict only (the previous rule); `known` as the default (rejected: Envoy can still serve a deleted HTTPRoute's route, so the default never guesses).
+**Consequences:** `--select known` uses krp's rule. krp narrows with `--route` alone and kgwctl with the cluster's HTTPRoutes, so the two can differ. Scripts can tell how each route was chosen.
+
+## D-033 — Downstream builds set the provenance modules through `pkg/cli` (2026-11-27, phase 4b) — decided by the owner 2026-11-27 (design approval)
+**Context:** xdsview v0.7.0 composes claims from modules (xdsview D-023). A downstream build replaces the kgateway module with its own module that wraps it, under its own name. Claim IDs embed the module name and mean something only within one `Compose` result.
+**Decision:** `cli.WithProvenanceModules(m ...provenance.Module)` replaces the module set `proxy routes` composes. The default is `kgateway.New()`, and an empty call keeps it. Repeated calls add to one set, as `WithBundleCollectors` does. kgwctl reads claims only through `Resolve`, `ResolveMirror`, `Records`, `Select`, `Narrow` and the assertion types. It never reads `Claim.Module` or `kgateway.ModuleName`, and a test enforces this. The `proxy routes` output carries no claim ID and no module name. `Compose` puts the claim ID, and so the module name, into the message of `claim-dropped` and `link-dropped` warnings; kgwctl never copies that message, it keeps the code and subject and writes its own message. Duplicate module names make `proxy routes` exit 2.
+**Alternatives:** Append downstream modules to the default (rejected: a wrapper would duplicate the kgateway claims). Expose claim IDs (rejected: not stable, and they change with the module name).
+**Consequences:** A wrapper that adds no claim gives byte-equal output. A wrapper that adds claims gives its own goldens. `pkg/cli` exposes an xdsview type, so a downstream build uses kgwctl's xdsview minor.
+
+## D-034 — `proxy routes` JSON is kgwctl's own payload (2026-11-27, phase 4b) — decided by the owner 2026-11-27 (design approval)
+**Context:** v1alpha1 embedded xdsview's model, so every xdsview model change was a kgwctl schema change. xdsview v0.7.0 splits execution (snapshot, chains) from provenance (claims).
+**Decision:** `ProxyRoutes` is a tree of kgwctl types: listener, filter chain, virtual host, route. Each route carries its readings, runtime filter chain with attribution, policies, backend and actions. Policy records stay on their own level, labelled with it, and are never merged. Raw `typedConfig`, `typedPerFilterConfig` and `metadata` are left out; `proxy dump` has the raw dump. Occurrence IDs are exposed as `id` and are valid only within one document. Warnings are one deduplicated list of every parser and index warning of the whole dump: JSON carries it as `warnings`, and the text prints it once at the end, with none inline. A network or HTTP filter carries a typed `configSource`: `ecds` or `ecdsDefault` when xdsview resolved the ECDS config, `unresolved` when it could not establish the config for that occurrence (missing, ambiguous, or any network filter with discovery). Execution state (`runs`, `state`) is copied from xdsview and is independent of `configSource`; an unresolved filter can still be `runs: no`. Each HCM's `routeConfig` names its source ID. The payload is a presentation projection: Phase 6 joins runtime policy evidence on `RouteConfigUse.Source` with the full snapshot and claim index, never on this JSON. A test fails when an xdsview model field is neither mapped nor listed as left out.
+**Alternatives:** Embed xdsview's v0.7.0 model and claims, as krp does (rejected: it ties kgwctl's schema to xdsview and exposes module claim IDs). Keep the raw config (rejected: it is the main place for credentials Envoy does not redact).
+**Consequences:** kgwctl maps new xdsview fields by hand, and the coverage test flags them on each bump.
+
+## D-035 — Release `v0.1.0` with a script; the version comes from build info (2026-11-27, phase 4b) — decided by the owner 2026-11-27 (design approval)
+**Context:** `go install …@v0.1.0` passes no ldflags, so the client printed `dev`. kgwctl has no release tooling.
+**Decision:** `cmd/kgwctl` takes the version from ldflags, else `debug.ReadBuildInfo` (the module version and `vcs.revision`), else `dev` and `unknown`. `hack/release.sh <tag>` builds linux and darwin for amd64 and arm64 with ldflags. It packs each binary with LICENSE and README, writes SHA-256 checksums, checks `version --client`, and prints the next steps. Each tag builds into its own empty directory, and a dry run writes only to a separate directory. A dry run never writes a publish manifest or prints publish steps. A real build refuses a dirty tree and a HEAD that is not the tag commit. Checksums and the publish file list name exactly the four archives of that build. The controller pushes the exact tag, checks the remote tag against `commit.txt`, checks a clean `go install …@<tag>`, then runs `gh release create --verify-tag` with the listed files. The script never pushes or publishes.
+**Alternatives:** goreleaser or a CI release job (rejected for now: more machinery than one release needs).
+**Consequences:** Releases are manual. A CI job can call the same script later.

@@ -1,0 +1,15 @@
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: GatewayExtension
+metadata:
+  name: ext-auth
+  namespace: kgateway-system
+spec:
+  type: ExtAuth
+  extAuth:
+    httpService:
+      backendRef:
+        name: ext-auth
+        port: 8080
+      authorizationRequest:
+        headersToAdd:
+          x-tenant: kgwctl-canary-11-gwe

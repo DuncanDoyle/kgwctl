@@ -1,0 +1,105 @@
+{
+  "configs": [
+    {
+      "@type": "type.googleapis.com/envoy.admin.v3.ListenersConfigDump",
+      "version_info": "1",
+      "dynamic_listeners": [
+        {
+          "name": "listener~80",
+          "active_state": {
+            "version_info": "1",
+            "listener": {
+              "@type": "type.googleapis.com/envoy.config.listener.v3.Listener",
+              "name": "listener~80",
+              "address": {"socket_address": {"address": "0.0.0.0", "port_value": 8080}},
+              "filter_chains": [
+                {
+                  "filters": [
+                    {
+                      "name": "envoy.filters.network.http_connection_manager",
+                      "typed_config": {
+                        "@type": "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
+                        "stat_prefix": "http",
+                        "http_filters": [
+                          {
+                            "name": "envoy.filters.http.ext_authz",
+                            "typed_config": {
+                              "@type": "type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz",
+                              "grpc_service": {
+                                "envoy_grpc": {"cluster_name": "kube_kgateway-system_ext-auth_8083"},
+                                "initial_metadata": [
+                                  {"key": "x-ext-authz-key", "value": "kgwctl-canary-09-im"}
+                                ]
+                              }
+                            }
+                          },
+                          {
+                            "name": "transformation",
+                            "typed_config": {
+                              "@type": "type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter",
+                              "dynamic_module_config": {"name": "rust_module"},
+                              "filter_name": "transformation",
+                              "filter_config": {
+                                "@type": "type.googleapis.com/google.protobuf.StringValue",
+                                "value": "{\"request\":{\"set\":[{\"name\":\"x-jwt\",\"value\":\"eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJjYW5hcnkifQ.kgwctl-canary-09-dm\"}]}}"
+                              }
+                            }
+                          },
+                          {
+                            "name": "envoy.filters.http.lua",
+                            "typed_config": {
+                              "@type": "type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua",
+                              "inline_code": "function envoy_on_request(h)\n  h:headers():add(\"x-api-key\", \"sk-kgwctl-canary-09-lua0000\")\nend\n",
+                              "source_codes": {
+                                "hello.lua": {"inline_string": "local k = \"kgwctl-canary-09-src\""}
+                              }
+                            }
+                          },
+                          {
+                            "name": "envoy.filters.http.router",
+                            "typed_config": {"@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router"}
+                          }
+                        ],
+                        "rds": {"route_config_name": "listener~80", "config_source": {"ads": {}}}
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "@type": "type.googleapis.com/envoy.admin.v3.RoutesConfigDump",
+      "dynamic_route_configs": [
+        {
+          "version_info": "1",
+          "route_config": {
+            "@type": "type.googleapis.com/envoy.config.route.v3.RouteConfiguration",
+            "name": "listener~80",
+            "virtual_hosts": [
+              {
+                "name": "listener~80~api_example_com",
+                "domains": ["api.example.com"],
+                "request_headers_to_add": [
+                  {"header": {"key": "authorization", "value": "Bearer kgwctl-canary-09-rh"}, "append_action": "OVERWRITE_IF_EXISTS_OR_ADD"}
+                ],
+                "response_headers_to_add": [
+                  {"header": {"key": "x-upstream-auth", "raw_value": "QmVhcmVyIGtnd2N0bC1jYW5hcnktMDktcmF3"}}
+                ],
+                "routes": [
+                  {
+                    "match": {"prefix": "/"},
+                    "route": {"cluster": "kube_team-a_svc-a_8080"}
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

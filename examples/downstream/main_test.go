@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/DuncanDoyle/snellius/pkg/kinds"
 	"k8s.io/client-go/tools/clientcmd"
 
+	"github.com/DuncanDoyle/kgwctl/internal/bundle/bundletest"
 	"github.com/DuncanDoyle/kgwctl/internal/load"
 	"github.com/DuncanDoyle/kgwctl/internal/testenv"
 	"github.com/DuncanDoyle/kgwctl/pkg/cli"
@@ -119,6 +121,95 @@ func TestDownstreamCommand(t *testing.T) {
 	code, stdout, stderr := runRoot(t, env, "hello")
 	if code != 0 || stdout != "hello\n" {
 		t.Errorf("exit %d, stdout %q, stderr %q; want 0 and \"hello\\n\"", code, stdout, stderr)
+	}
+}
+
+// TestDownstreamProxyRoutes: proxy routes runs with the wrapping module and
+// matches the route as the default build does; --file needs no cluster.
+func TestDownstreamProxyRoutes(t *testing.T) {
+	var out, errb bytes.Buffer
+	root := newRoot()
+	root.SetOut(&out)
+	root.SetErr(&errb)
+	root.SetArgs([]string{"proxy", "routes", "--file", "../../testdata/dumps/collide-meta.json", "--route", "kgwctl-proxy/orders"})
+	const want = "└─ route / (prefix) · HTTPRoute kgwctl-proxy/orders · rule 0 · match 0\n"
+	if code := cli.Execute(root); code != 0 || errb.Len() != 0 || !strings.Contains(out.String(), want) || strings.Contains(out.String(), "no route matches") {
+		t.Errorf("exit %d, stderr %q, stdout:\n%s\nwant the matched route %q", code, errb.String(), out.String(), want)
+	}
+}
+
+// bundleArchive runs `bundle` against env and returns the extracted archive.
+func bundleArchive(t *testing.T, env *testenv.Env, args ...string) bundletest.Archive {
+	t.Helper()
+	code, stdout, stderr := runRoot(t, env, append([]string{"bundle", "-o", "-", "--skip", "version,check"}, args...)...)
+	if code != 0 {
+		t.Fatalf("exit %d, stderr: %s", code, stderr)
+	}
+	return bundletest.Extract(t, strings.NewReader(stdout))
+}
+
+func TestWithBundleCollectors(t *testing.T) {
+	env := newEnv(t)
+	code, stdout, stderr := runRoot(t, env, "bundle", "--list-collectors")
+	if code != 0 || !slices.Contains(strings.Fields(stdout), evidenceName) {
+		t.Fatalf("exit %d, stdout %q, stderr %q; want 0 and %s listed", code, stdout, stderr, evidenceName)
+	}
+	a := bundleArchive(t, env)
+	if _, ok := a.File("example/pod.yaml"); !ok {
+		t.Error("archive lacks example/pod.yaml")
+	}
+	if skipped := bundleArchive(t, env, "--skip", evidenceName); func() bool { _, ok := skipped.File("example/pod.yaml"); return ok }() {
+		t.Error("--skip did not leave the example collector out")
+	}
+}
+
+// TestDownstreamCanaries checks the Sink contract at the downstream boundary:
+// Pods come out as YAML with env values redacted; Secrets, ConfigMaps and
+// kind-less objects are refused.
+func TestDownstreamCanaries(t *testing.T) {
+	env := newEnv(t)
+	a := bundleArchive(t, env)
+	bundletest.AssertNoCanary(t, a, []string{evidenceCanary})
+	for _, name := range []string{"example/pod.yaml", "example/pods.yaml"} {
+		b, ok := a.File(name)
+		if !ok || !strings.Contains(string(b), "kind: Pod") || !strings.Contains(string(b), "value: '[redacted]'") {
+			t.Errorf("%s = %q (found %v); want Pod YAML with the env value redacted", name, b, ok)
+		}
+	}
+	if b, _ := a.File("example/pods.yaml"); !strings.Contains(string(b), "kind: List") {
+		t.Errorf("example/pods.yaml = %q; want the List", b)
+	}
+	if _, ok := a.File("example/evidence.txt"); !ok {
+		t.Error("archive lacks example/evidence.txt")
+	}
+	refused := map[string]string{
+		"example/secret.yaml": "forbidden kind", "example/configmap.yaml": "forbidden kind",
+		"example/secrets.yaml": "forbidden kind", "example/configmaps.yaml": "forbidden kind",
+		"example/list-secret.yaml": "forbidden kind", "example/list-configmap.yaml": "forbidden kind",
+		"example/kindless.yaml": "missing kind", "example/list-kindless.yaml": "missing kind",
+	}
+	for name := range refused {
+		if _, ok := a.File(name); ok {
+			t.Errorf("archive holds the refused item %s", name)
+		}
+	}
+	var m struct {
+		Item struct {
+			Items []struct{ Path, Status, Reason string }
+		}
+	}
+	mf, _ := a.File("manifest.json")
+	if err := json.Unmarshal(mf, &m); err != nil {
+		t.Fatal(err)
+	}
+	status := map[string]string{}
+	for _, it := range m.Item.Items {
+		status[it.Path] = it.Status + ": " + it.Reason
+	}
+	for p, reason := range refused {
+		if status[p] != "failed: "+reason {
+			t.Errorf("%s = %q, want failed: %s (items: %v)", p, status[p], reason, status)
+		}
 	}
 }
 

@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -19,7 +18,6 @@ import (
 	"golang.org/x/net/proxy"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/httpstream"
@@ -29,9 +27,6 @@ import (
 	"k8s.io/client-go/tools/portforward"
 	"k8s.io/client-go/transport/spdy"
 )
-
-// maxStatusBody caps how much of a rejected upgrade's body is read.
-const maxStatusBody = 64 << 10
 
 // NewPortForwarder returns a Dialer that port-forwards through the API server
 // in cfg and speaks to the port over the forward's data stream, in process. The
@@ -242,15 +237,11 @@ func (d *upgradeDialer) Dial(protocols ...string) (httpstream.Connection, string
 	return conn, resp.Header.Get(httpstream.HeaderProtocolVersion), nil
 }
 
-// statusError turns a rejected upgrade into the API server's typed error.
+// statusError turns a rejected upgrade into a typed error with the status
+// code and its reason only. The body is never read (design §7.1).
 func statusError(resp *http.Response) error {
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxStatusBody))
-	var st metav1.Status
-	if json.Unmarshal(body, &st) == nil && st.Kind == "Status" && st.Code != 0 {
-		return &apierrors.StatusError{ErrStatus: st}
-	}
 	return apierrors.NewGenericServerResponse(resp.StatusCode, http.MethodPost,
-		schema.GroupResource{Resource: "pods/portforward"}, "", string(body), 0, false)
+		schema.GroupResource{Resource: "pods/portforward"}, "", statusText(resp.StatusCode), 0, false)
 }
 
 // connSet holds the raw sockets of one tunnel, so they can all be closed.

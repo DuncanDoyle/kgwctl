@@ -1,0 +1,25 @@
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: tp-a
+  namespace: team-a
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: route-a
+  headerModifiers:
+    request:
+      set:
+        - name: x-foo
+          value: kgwctl-canary-04-hm
+  basicAuth:
+    users:
+      - "alice:{SHA}kgwctl-canary-04-hash="
+  transformation:
+    request:
+      set:
+        - name: x-jwt
+          value: "Token eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJjYW5hcnkifQ.kgwctl-canary-04-jwt"
+        - name: x-in
+          value: '{{ request_header("x-in") }}'

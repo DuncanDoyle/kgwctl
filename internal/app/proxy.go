@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/DuncanDoyle/xdsview/pkg/envoy/provenance"
 	"github.com/spf13/cobra"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
@@ -29,8 +30,9 @@ const redactionNote = "Envoy redacts only the fields it knows are sensitive, and
 	"The dump can still contain credentials, tokens or keys in other config. " +
 	"Check it before you attach it to a ticket."
 
-// newProxyCmd builds the proxy command group (phase 3 design §3).
-func newProxyCmd(now func() time.Time, hooks proxyTestHooks) *cobra.Command {
+// newProxyCmd builds the proxy command group (phase 3 design §3). proxy routes composes modules;
+// nil means proxyview.DefaultModules().
+func newProxyCmd(now func() time.Time, modules []provenance.Module, hooks proxyTestHooks) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "proxy",
 		Short: "Read what a Gateway's Envoy proxy holds",
@@ -49,7 +51,7 @@ func newProxyCmd(now func() time.Time, hooks proxyTestHooks) *cobra.Command {
 	cmd.SetFlagErrorFunc(func(c *cobra.Command, err error) error {
 		return &ExitError{Code: 2, Err: fmt.Errorf("%w\nUsage: %s", err, c.UseLine())}
 	})
-	cmd.AddCommand(newProxyDumpCmd(hooks), newProxyRoutesCmd(now, hooks))
+	cmd.AddCommand(newProxyDumpCmd(hooks), newProxyRoutesCmd(now, modules, hooks))
 	return cmd
 }
 

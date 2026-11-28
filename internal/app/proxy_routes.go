@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/DuncanDoyle/xdsview/pkg/envoy/model"
-	"github.com/DuncanDoyle/xdsview/pkg/envoy/render"
+	"github.com/DuncanDoyle/xdsview/pkg/envoy/provenance"
 	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -31,10 +31,12 @@ type routesOptions struct {
 	rule                               int
 	response                           bool
 	output                             string
+	selectStrategy                     string
 }
 
-// newProxyRoutesCmd builds proxy routes (phase 3 design §3.1).
-func newProxyRoutesCmd(now func() time.Time, hooks proxyTestHooks) *cobra.Command {
+// newProxyRoutesCmd builds proxy routes (phase 3 design §3.1). It composes modules;
+// nil means proxyview.DefaultModules().
+func newProxyRoutesCmd(now func() time.Time, modules []provenance.Module, hooks proxyTestHooks) *cobra.Command {
 	var o routesOptions
 	cmd := &cobra.Command{
 		Use:   "routes [<gateway>]",
@@ -42,8 +44,13 @@ func newProxyRoutesCmd(now func() time.Time, hooks proxyTestHooks) *cobra.Comman
 		Long: "Show one Gateway's Envoy listeners, virtual hosts and routes, with the HTTP filters each route runs\n" +
 			"in request order and the Gateway API and kgateway objects they come from.\n\n" +
 			"Live, it reads the config dump of one replica, the oldest Ready one unless --pod names another,\n" +
-			"and the cluster's HTTPRoutes. With --file it reads a saved dump and calls no Kubernetes API.\n" +
-			"A route whose name reads as two HTTPRoutes is listed as ambiguous, never matched.",
+			"and the cluster's HTTPRoutes. With --file it reads a saved dump and calls no Kubernetes API.\n\n" +
+			"--select sets how sure kgwctl must be that a route comes from the --route HTTPRoute.\n" +
+			"exact: only routes with route metadata. strict (the default): also a route whose name has one reading.\n" +
+			"known: also a route whose name has several readings when only one of those HTTPRoutes is in the cluster;\n" +
+			"the output marks it \"chosen from known HTTPRoutes\". known does not work with --file.\n" +
+			"A route that may come from that HTTPRoute but is not accepted is listed after the tree, never matched.\n" +
+			"See \"How --route picks routes\" in the README.",
 		Example: "  kgwctl proxy routes http -n kgateway-system\n" +
 			"  kgwctl proxy routes http -n kgateway-system --route team-a/orders --rule 0\n" +
 			"  kgwctl proxy routes --file dump.json --gateway kgateway-system/http",
@@ -58,7 +65,7 @@ func newProxyRoutesCmd(now func() time.Time, hooks proxyTestHooks) *cobra.Comman
 			if err != nil {
 				return &ExitError{Code: 2, Err: err}
 			}
-			return proxyRoutes(cmd, f, now, hooks, args, o)
+			return proxyRoutes(cmd, f, now, modules, hooks, args, o)
 		},
 	}
 	fs := cmd.Flags()
@@ -67,6 +74,9 @@ func newProxyRoutesCmd(now func() time.Time, hooks proxyTestHooks) *cobra.Comman
 	fs.StringVar(&o.pod, "pod", "", "Read this replica of the Gateway, Ready or not")
 	fs.StringVar(&o.route, "route", "", "Show only the routes of HTTPRoute `<ns>/<name>`; <name> alone uses -n or the context's namespace")
 	fs.IntVar(&o.rule, "rule", 0, "With --route, show only this rule `index`")
+	fs.StringVar(&o.selectStrategy, "select", string(proxyview.StrategyStrict),
+		"How --route picks routes; each value adds evidence. exact: only routes whose origin is certain (route metadata); "+
+			"strict: also a route name with one reading; known: also a route name where only one possible HTTPRoute is in the cluster")
 	fs.BoolVar(&o.response, "response", false, "Also show each route's response order")
 	fs.StringVarP(&o.output, "output", "o", print.FormatText, "Output format: text, json or yaml")
 	fs.StringVar(&o.maxSize, "max-size", defaultMaxSize, "Largest config dump to parse, as a `quantity` such as 64Mi")
@@ -87,6 +97,10 @@ type routesRequest struct {
 	routeNS  bool // --route named its namespace
 	response bool
 	output   string
+	strategy proxyview.Strategy
+	modules  []provenance.Module // nil: proxyview.DefaultModules()
+	// knownFailed: live, the HTTPRoute list failed and the command went on without it.
+	knownFailed bool
 }
 
 // parseRoutes checks the flag combinations before any I/O.
@@ -104,6 +118,14 @@ func parseRoutes(cmd *cobra.Command, args []string, o routesOptions) (routesRequ
 	case !req.live && o.pod != "":
 		return req, usageError(cmd, "--pod works only live, not with --file")
 	}
+	s, err := proxyview.ParseStrategy(o.selectStrategy)
+	switch {
+	case err != nil:
+		return req, usageError(cmd, "invalid --select %q: want exact, strict or known", o.selectStrategy)
+	case s == proxyview.StrategyKnown && !req.live:
+		return req, usageError(cmd, "--select known needs the cluster's HTTPRoutes; it does not work with --file")
+	}
+	req.strategy = s
 	if o.gateway != "" {
 		gw, ok := splitRef(o.gateway)
 		if !ok || gw.Namespace == "" {
@@ -147,11 +169,12 @@ func splitRef(s string) (types.NamespacedName, bool) {
 	return types.NamespacedName{}, false
 }
 
-func proxyRoutes(cmd *cobra.Command, f *Flags, now func() time.Time, hooks proxyTestHooks, args []string, o routesOptions) error {
+func proxyRoutes(cmd *cobra.Command, f *Flags, now func() time.Time, modules []provenance.Module, hooks proxyTestHooks, args []string, o routesOptions) error {
 	req, err := parseRoutes(cmd, args, o)
 	if err != nil {
 		return err
 	}
+	req.modules = modules
 	if !req.live {
 		return routesFromFile(cmd, f, req, o.file)
 	}
@@ -202,7 +225,7 @@ func routesFromFile(cmd *cobra.Command, f *Flags, req routesRequest, path string
 	if req.gateway != nil {
 		src.Gateway = gatewayRef(*req.gateway)
 	}
-	return printRoutes(cmd, body, path, req.gateway, nil, req, header, src)
+	return printRoutes(cmd, body, path, routesInput{gateway: req.gateway, knownInput: proxyview.KnownNotRead}, req, header, src)
 }
 
 func routesLive(cmd *cobra.Command, f *Flags, now func() time.Time, hooks proxyTestHooks, req routesRequest, name, pod string) error {
@@ -248,6 +271,7 @@ func routesLive(cmd *cobra.Command, f *Flags, now func() time.Time, hooks proxyT
 	}
 
 	known, err := knownHTTPRoutesByCtx(ctx, c)
+	knownInput := proxyview.KnownListed
 	switch {
 	case err != nil && errors.Is(context.Cause(ctx), context.DeadlineExceeded):
 		return &ExitError{Code: 2, Err: fmt.Errorf("could not finish loading the HTTPRoutes of the cluster within --%s %v (the config dump of Pod %s was read)", flagRequestTimeout, f.RequestTimeout, r.target)}
@@ -256,11 +280,13 @@ func routesLive(cmd *cobra.Command, f *Flags, now func() time.Time, hooks proxyT
 	case err != nil:
 		// Without the list, origins come from the dump alone; nothing ambiguous becomes a match.
 		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not list HTTPRoutes: %v\n", err)
+		req.knownFailed = true
+		knownInput = proxyview.KnownUnavailable
 	}
 	header := fmt.Sprintf("Gateway %s · pod %s · %s", gw, r.target, r.capture.CapturedAt.UTC().Format(time.RFC3339))
 	at := r.capture.CapturedAt.UTC()
-	src := proxyview.Source{Gateway: gatewayRef(gw), Pod: &model.Ref{Kind: "Pod", Namespace: r.target.Namespace, Name: r.target.Name}, CapturedAt: &at}
-	return printRoutes(cmd, r.body, "Pod "+r.target.String(), &gw, known, req, header, src)
+	src := proxyview.Source{Gateway: gatewayRef(gw), Pod: &proxyview.Ref{Kind: "Pod", Namespace: r.target.Namespace, Name: r.target.Name}, CapturedAt: &at}
+	return printRoutes(cmd, r.body, "Pod "+r.target.String(), routesInput{gateway: &gw, known: known, knownInput: knownInput, capture: model.CaptureComplete}, req, header, src)
 }
 
 // tooLarge reports a dump over --max-size (design §4.1). A live dump can also
@@ -304,27 +330,50 @@ func knownHTTPRoutes(ctx context.Context, c load.Clients) ([]model.Ref, error) {
 }
 
 // gatewayRef is the envelope's reference to a Gateway.
-func gatewayRef(n types.NamespacedName) *model.Ref {
-	return &model.Ref{Group: "gateway.networking.k8s.io", Kind: "Gateway", Namespace: n.Namespace, Name: n.Name}
+func gatewayRef(n types.NamespacedName) *proxyview.Ref {
+	return &proxyview.Ref{Group: "gateway.networking.k8s.io", Kind: "Gateway", Namespace: n.Namespace, Name: n.Name}
+}
+
+// routesInput is what proxy routes knows beyond the dump.
+type routesInput struct {
+	gateway *types.NamespacedName // live, or --gateway with --file
+	known   []model.Ref           // the cluster's HTTPRoutes; empty with --file
+	capture model.Capture         // complete live; empty with --file (design DD-2)
+	// knownInput says whether known was listed, could not be, or was not read (--file).
+	knownInput proxyview.KnownInput
 }
 
 // printRoutes builds the view from body and prints the tree, or the envelope
-// for -o json|yaml, with src as its source.
-func printRoutes(cmd *cobra.Command, body []byte, source string, gw *types.NamespacedName, known []model.Ref, req routesRequest, header string, src proxyview.Source) error {
-	v, err := proxyview.Build(body, gw, known, req.sel)
-	if errors.Is(err, proxyview.ErrNotConfigDump) {
-		return &ExitError{Code: 2, Err: fmt.Errorf("%s: %w", source, err)}
+// for -o json|yaml, with src as its source. Under --route --select known
+// without the HTTPRoute list, a warning follows a successful write (DD-4).
+func printRoutes(cmd *cobra.Command, body []byte, source string, in routesInput, req routesRequest, header string, src proxyview.Source) error {
+	if err := writeRoutes(cmd, body, source, in, req, header, src); err != nil {
+		return err
 	}
-	if err != nil {
+	if req.knownFailed && req.strategy == proxyview.StrategyKnown && req.sel.Route.Name != "" {
+		fmt.Fprintln(cmd.ErrOrStderr(), "Warning: --select known: no route can be chosen from known HTTPRoutes")
+	}
+	return nil
+}
+
+// writeRoutes builds the view and writes it to stdout.
+func writeRoutes(cmd *cobra.Command, body []byte, source string, in routesInput, req routesRequest, header string, src proxyview.Source) error {
+	v, err := proxyview.Build(body, proxyview.Options{Gateway: in.gateway, Known: in.known, KnownInput: in.knownInput, Capture: in.capture, Selection: req.sel, Strategy: req.strategy, Modules: req.modules})
+	switch {
+	case errors.Is(err, proxyview.ErrNotConfigDump):
+		return &ExitError{Code: 2, Err: fmt.Errorf("%s: %w", source, err)}
+	case errors.Is(err, proxyview.ErrCompose):
+		return &ExitError{Code: 2, Err: err}
+	case err != nil:
 		return &ExitError{Code: 2, Err: fmt.Errorf("parse config dump of %s: %w", source, err)}
 	}
 	if req.output != print.FormatText {
-		if err := print.Envelope(cmd.OutOrStdout(), req.output, "ProxyRoutes", proxyview.Item{Source: src, View: v}); err != nil {
+		if err := print.Envelope(cmd.OutOrStdout(), req.output, "ProxyRoutes", v.Payload(src)); err != nil {
 			return &ExitError{Code: 2, Err: fmt.Errorf("write routes: %w", err)}
 		}
 		return nil
 	}
-	if err := proxyview.Text(cmd.OutOrStdout(), v, render.Options{Header: header, ResponseOrder: req.response}); err != nil {
+	if err := proxyview.Text(cmd.OutOrStdout(), v, proxyview.TextOptions{Header: header, ResponseOrder: req.response}); err != nil {
 		return &ExitError{Code: 2, Err: fmt.Errorf("write routes: %w", err)}
 	}
 	return nil

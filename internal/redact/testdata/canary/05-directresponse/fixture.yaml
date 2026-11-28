@@ -1,0 +1,22 @@
+row: 5
+title: an AWS key in a DirectResponse body; pattern-free values in List members' kind rules
+cases:
+  - name: list
+    type: object
+    input: list.yaml
+    canaries:
+      - value: kgwctl-canary-05-list
+        rule: field
+        location: items[].spec.body
+      - value: kgwctl-canary-05-listhdr
+        rule: header-value
+        location: items[].spec.default.httpSettings.headers[].value
+    keep: [dr-list, lp-list, x-list-tenant]
+  - name: directresponse
+    type: object
+    input: directresponse.yaml
+    canaries:
+      - value: AKIAKGWCTLCANARY0005
+        rule: field
+        location: spec.body
+    keep: [dr-a, team-a]

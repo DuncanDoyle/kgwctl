@@ -1,0 +1,1 @@
+panic in collector logs: unexpected header value eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.kgwctl-canary-17-panic

@@ -1,0 +1,26 @@
+row: 9
+title: config dump request_headers_to_add Authorization, ext_authz initial_metadata, a JWT in the dynamic-module JSON, an API key in Lua
+cases:
+  - name: config-dump
+    type: config-dump
+    input: config_dump.json
+    canaries:
+      - value: kgwctl-canary-09-rh
+        rule: header-value
+        location: configs[].dynamic_route_configs[].route_config.virtual_hosts[].request_headers_to_add[].header.value
+      - value: kgwctl-canary-09-im
+        rule: header-value
+        location: configs[].dynamic_listeners[].active_state.listener.filter_chains[].filters[].typed_config.http_filters[].typed_config.grpc_service.initial_metadata[].value
+      - value: kgwctl-canary-09-dm
+        rule: pattern
+        location: configs[].dynamic_listeners[].active_state.listener.filter_chains[].filters[].typed_config.http_filters[].typed_config.filter_config.value.request.set[].value
+      - value: kgwctl-canary-09-lua0000
+        rule: lua
+        location: configs[].dynamic_listeners[].active_state.listener.filter_chains[].filters[].typed_config.http_filters[].typed_config.inline_code
+      - value: kgwctl-canary-09-src
+        rule: lua
+        location: configs[].dynamic_listeners[].active_state.listener.filter_chains[].filters[].typed_config.http_filters[].typed_config.source_codes[key].inline_string
+      - value: kgwctl-canary-09-raw
+        rule: header-value
+        location: configs[].dynamic_route_configs[].route_config.virtual_hosts[].response_headers_to_add[].header.raw_value
+    keep: [authorization, x-ext-authz-key, api.example.com, kube_team-a_svc-a_8080, listener~80, x-jwt]

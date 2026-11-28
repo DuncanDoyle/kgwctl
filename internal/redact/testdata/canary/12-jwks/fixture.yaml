@@ -1,0 +1,26 @@
+row: 12
+title: "JWKS: symmetric k, private d, a nested d inside n, an extra member, valid JSON of the wrong shape and invalid JSON, in both locations"
+cases:
+  - name: gatewayextension
+    type: object
+    input: gatewayextension.yaml
+    canaries:
+      - {value: kgwctl-canary-12-k, rule: jwks, location: "spec.jwt.providers[].jwks.local.inline.keys[].k"}
+      - {value: kgwctl-canary-12-d, rule: jwks, location: "spec.jwt.providers[].jwks.local.inline.keys[].d"}
+      - {value: kgwctl-canary-12-nested, rule: jwks, location: "spec.jwt.providers[].jwks.local.inline"}
+      - {value: kgwctl-canary-12-extra, rule: jwks, location: "spec.jwt.providers[].jwks.local.inline[key]"}
+      - {value: kgwctl-canary-12-shape, rule: jwks, location: "spec.jwt.providers[].jwks.local.inline"}
+      - {value: kgwctl-canary-12-invalid, rule: jwks, location: "spec.jwt.providers[].jwks.local.inline"}
+    keep: [jwt, rsa-1, ec-1, ed-1, AQAB, P-256, Ed25519, f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU, 11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo, https://issuer.example.com]
+  - name: config-dump
+    type: config-dump
+    input: config_dump.json
+    canaries:
+      - {value: kgwctl-canary-12-cd-k, rule: jwks, location: "configs[].dynamic_listeners[].active_state.listener.filter_chains[].filters[].typed_config.http_filters[].typed_config.providers[key].local_jwks.inline_string.keys[].k"}
+      - {value: kgwctl-canary-12-cd-d, rule: jwks, location: "configs[].dynamic_listeners[].active_state.listener.filter_chains[].filters[].typed_config.http_filters[].typed_config.providers[key].local_jwks.inline_string.keys[].d"}
+      - {value: kgwctl-canary-12-cd-nested, rule: jwks, location: "configs[].dynamic_listeners[].active_state.listener.filter_chains[].filters[].typed_config.http_filters[].typed_config.providers[key].local_jwks.inline_string"}
+      - {value: kgwctl-canary-12-cd-extra, rule: jwks, location: "configs[].dynamic_listeners[].active_state.listener.filter_chains[].filters[].typed_config.http_filters[].typed_config.providers[key].local_jwks.inline_string[key]"}
+      - {value: kgwctl-canary-12-cd-shape, rule: jwks, location: "configs[].dynamic_listeners[].active_state.listener.filter_chains[].filters[].typed_config.http_filters[].typed_config.providers[key].local_jwks.inline_string"}
+      - {value: kgwctl-canary-12-cd-invalid, rule: jwks, location: "configs[].dynamic_listeners[].active_state.listener.filter_chains[].filters[].typed_config.http_filters[].typed_config.providers[key].local_jwks.inline_string"}
+      - {value: kgwctl-canary-12-cd-bytes, rule: jwks, location: "configs[].dynamic_listeners[].active_state.listener.filter_chains[].filters[].typed_config.http_filters[].typed_config.providers[key].local_jwks.inline_bytes.keys[].d"}
+    keep: [rsa-1, ec-1, ed-1, AQAB, P-256, Ed25519, https://issuer.example.com]

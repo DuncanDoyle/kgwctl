@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -32,6 +33,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/DuncanDoyle/kgwctl/internal/app"
+	"github.com/DuncanDoyle/kgwctl/internal/print"
 	"github.com/DuncanDoyle/kgwctl/internal/testenv"
 )
 
@@ -40,6 +42,7 @@ const (
 	checkController     = "testdata/check/controller.yaml"
 	checkControllerDown = "testdata/check/controller-down.yaml"
 	checkRouteBroken    = "testdata/check/route-broken.yaml"
+	checkPolicyRejected = "testdata/check/policy-rejected.yaml"
 )
 
 // managed is the resources_managed series every owned Gateway needs, else the xDS check cannot judge.
@@ -425,8 +428,8 @@ func oneEnvelope(t *testing.T, s []byte, installs int) {
 	if err := dec.Decode(&doc); err != nil {
 		t.Fatalf("decode: %v\n%s", err, s)
 	}
-	if doc.Kind != "Check" || doc.SchemaVersion != "kgwctl.kgateway.dev/v1alpha1" || len(doc.Item.Installs) != installs {
-		t.Errorf("envelope = %s %s with %d installs, want Check kgwctl.kgateway.dev/v1alpha1 with %d", doc.Kind, doc.SchemaVersion, len(doc.Item.Installs), installs)
+	if doc.Kind != "Check" || doc.SchemaVersion != print.SchemaVersion || len(doc.Item.Installs) != installs {
+		t.Errorf("envelope = %s %s with %d installs, want Check %s with %d", doc.Kind, doc.SchemaVersion, len(doc.Item.Installs), print.SchemaVersion, installs)
 	}
 	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		t.Errorf("a second document follows the envelope: %v", err)
@@ -652,5 +655,16 @@ func TestCheckRedactsURLs(t *testing.T) {
 				t.Errorf("%s: report lacks %q:\n%s", out, tc.want, r.stdout)
 			}
 		}
+	}
+}
+
+// TestCheckRejectedPolicyIsKGWUI002: a rejected policy raises KGWUI-002, not
+// the "not yet processed" KGWUI-003 (Snellius D-135).
+func TestCheckRejectedPolicyIsKGWUI002(t *testing.T) {
+	env := checkEnv(t, checkInstall, checkController, checkPolicyRejected)
+	r := runCheck(t, env, statsRegistry(fakeStats{}), fastHooks(metricsScraper{}), "check", "-o", "json")
+	codes := findingCodes(t, r.stdout)
+	if !slices.Contains(codes, "KGWUI-002") || slices.Contains(codes, "KGWUI-003") {
+		t.Errorf("codes %v, want KGWUI-002 and no KGWUI-003\n%s", codes, r.stdout)
 	}
 }

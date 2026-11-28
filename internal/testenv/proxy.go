@@ -60,9 +60,15 @@ type Action struct {
 	Until      <-chan struct{}
 	Status     int
 	RetryAfter int // seconds, sent with Status
+	// Body, if set, is sent verbatim with Status in place of a metav1.Status.
+	Body []byte
+	// Header, if set, is added to a response that sends Body.
+	Header http.Header
 	// HoldWatchThenStatus keeps a plain watch open until the matching LIST has
 	// completed plus 200ms, then answers with this status.
 	HoldWatchThenStatus int
+	// Skip lets the first Skip matching requests through untouched; they do not count as hits.
+	Skip int
 }
 
 // RuleHits counts the requests a rule applied to.
@@ -85,6 +91,7 @@ type rule struct {
 	selector string // canonical form of m.LabelSelector
 	a        Action
 	hits     *RuleHits
+	skipped  int // matching requests let through by a.Skip; guarded by Proxy.mu
 }
 
 // request is the classified form of one incoming request.
@@ -214,6 +221,10 @@ func (p *Proxy) serve(w http.ResponseWriter, r *http.Request) {
 	var match *rule
 	for _, ru := range p.rules {
 		if ru.matches(req) {
+			if ru.skipped < ru.a.Skip {
+				ru.skipped++
+				break
+			}
 			match = ru
 			break
 		}
@@ -264,6 +275,15 @@ func (p *Proxy) apply(w http.ResponseWriter, r *http.Request, req request, a Act
 			return false
 		}
 		writeStatus(w, req, a.HoldWatchThenStatus, 0)
+		return false
+	}
+	if a.Status != 0 && a.Body != nil {
+		for k, v := range a.Header {
+			w.Header()[k] = v
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(a.Status)
+		_, _ = w.Write(a.Body)
 		return false
 	}
 	if a.Status != 0 {

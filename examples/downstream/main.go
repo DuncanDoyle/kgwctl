@@ -1,6 +1,6 @@
 // Command vendorctl is a downstream CLI built only on pkg/cli. It registers a
 // pack with a policy kind, an install detector, a collector and a check, and
-// a command, to show the extension seam.
+// a command, and wraps the kgateway provenance module, to show the extension seam.
 package main
 
 import (
@@ -18,13 +18,18 @@ import (
 	"github.com/DuncanDoyle/snellius/pkg/health"
 	"github.com/DuncanDoyle/snellius/pkg/install"
 	"github.com/DuncanDoyle/snellius/pkg/kinds"
+	"github.com/DuncanDoyle/xdsview/pkg/adapter/kgateway"
+	"github.com/DuncanDoyle/xdsview/pkg/envoy/model"
+	"github.com/DuncanDoyle/xdsview/pkg/envoy/provenance"
 	"github.com/spf13/cobra"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/utils/clock"
 
+	"github.com/DuncanDoyle/kgwctl/pkg/bundle"
 	"github.com/DuncanDoyle/kgwctl/pkg/cli"
 )
 
@@ -43,6 +48,12 @@ const (
 	serverHoldReason = "Waiting to see if the example server becomes ready"
 )
 
+// The example bundle collector's name and the secret-shaped value it plants to show the Sink's guarantees.
+const (
+	evidenceName   = "example-evidence"
+	evidenceCanary = "kgwctl-canary-example"
+)
+
 // serverHold is how long an unready server is held before it is a finding; tests shorten it.
 var serverHold = 30 * time.Second
 
@@ -58,6 +69,8 @@ func newRoot() *cobra.Command {
 	return cli.NewRootCommand(
 		cli.WithName("vendorctl"),
 		cli.WithRegistry(newRegistry()),
+		cli.WithBundleCollectors(evidence{}),
+		cli.WithProvenanceModules(exampleModule{inner: kgateway.New()}),
 		cli.WithCommands(&cobra.Command{
 			Use:   "hello",
 			Short: "Print hello",
@@ -65,6 +78,74 @@ func newRoot() *cobra.Command {
 			Run:   func(cmd *cobra.Command, _ []string) { fmt.Fprintln(cmd.OutOrStdout(), "hello") },
 		}),
 	)
+}
+
+// exampleModule is the provenance module of proxy routes: the kgateway module under
+// the distribution's own name. A distribution would add its own claims here.
+type exampleModule struct{ inner provenance.Module }
+
+// Name is the module's own name; reusing "kgateway" would collide.
+func (exampleModule) Name() string { return packName }
+
+// Claims returns the kgateway module's claims unchanged.
+func (m exampleModule) Claims(snap *model.Snapshot) []provenance.Claim { return m.inner.Claims(snap) }
+
+// evidence is the example bundle collector. It writes a secret-shaped value through
+// Object and Text, which the Sink redacts, then tries writes the Sink refuses.
+type evidence struct{}
+
+func (evidence) Name() string { return evidenceName }
+
+// Collect writes a Pod, a List of Pods and a log line, then Secrets,
+// ConfigMaps and kind-less objects. The Sink records each refusal as a failed
+// item, so Collect ignores those errors.
+func (evidence) Collect(ctx context.Context, _ bundle.Env, s bundle.Sink) error {
+	if err := s.Object(ctx, bundle.Path{"example", "pod.yaml"}, examplePod(), bundle.Source{}); err != nil {
+		return err
+	}
+	if err := s.Object(ctx, bundle.Path{"example", "pods.yaml"}, list("List", examplePod()), bundle.Source{}); err != nil {
+		return err
+	}
+	if err := s.Text(ctx, bundle.Path{"example", "evidence.txt"},
+		strings.NewReader("GET /callback?access_token="+evidenceCanary+"&state=abc\n"), bundle.Source{}); err != nil {
+		return err
+	}
+	secret := object("Secret", map[string]any{"data": map[string]any{"token": evidenceCanary}})
+	cm := object("ConfigMap", map[string]any{"data": map[string]any{"setting": evidenceCanary}})
+	// A typed clientset returns objects with no kind; the Sink refuses those too.
+	kindless := object("", map[string]any{"data": map[string]any{"setting": evidenceCanary}})
+	for file, u := range map[string]*unstructured.Unstructured{
+		"secret.yaml": secret, "configmap.yaml": cm,
+		"secrets.yaml": list("SecretList", secret), "configmaps.yaml": list("ConfigMapList", cm),
+		"list-secret.yaml": list("List", examplePod(), secret), "list-configmap.yaml": list("List", cm),
+		"kindless.yaml": kindless, "list-kindless.yaml": list("List", examplePod(), kindless),
+	} {
+		_ = s.Object(ctx, bundle.Path{"example", file}, u, bundle.Source{})
+	}
+	return nil
+}
+
+// object returns a core v1 object of kind named "example", with fields merged in.
+func object(kind string, fields map[string]any) *unstructured.Unstructured {
+	obj := map[string]any{"apiVersion": "v1", "kind": kind, "metadata": map[string]any{"name": "example", "namespace": "default"}}
+	maps.Copy(obj, fields)
+	return &unstructured.Unstructured{Object: obj}
+}
+
+// examplePod returns a Pod whose env value holds the canary; no pattern marks it secret.
+func examplePod() *unstructured.Unstructured {
+	return object("Pod", map[string]any{"spec": map[string]any{"containers": []any{map[string]any{
+		"name": "app", "image": "example:1", "env": []any{map[string]any{"name": "EXAMPLE_SETTING", "value": evidenceCanary}},
+	}}}})
+}
+
+// list returns a v1 list of kind with items, each keeping its kind metadata.
+func list(kind string, items ...*unstructured.Unstructured) *unstructured.Unstructured {
+	var out []any
+	for _, it := range items {
+		out = append(out, it.DeepCopy().Object)
+	}
+	return &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": kind, "items": out}}
 }
 
 // newRegistry adds the example pack to the defaults: the ExamplePolicy kind,

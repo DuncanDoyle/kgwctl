@@ -1,30 +1,56 @@
 File ../../testdata/dumps/policies.json · Gateway kgwctl-proxy/proxy
-listener~8080 [::]:8080 · active · Gateway kgwctl-proxy/proxy port 8080
-├─ vhost listener~8080~orders-kgwctl_proxy_example [orders-kgwctl.proxy.example] · port 8080
+listener~8080 [::]:8080 · active · port 8080 (inferred) · Gateway kgwctl-proxy/proxy (from the command line)
+├─ vhost listener~8080~orders-kgwctl_proxy_example [orders-kgwctl.proxy.example] · port 8080 (inferred)
 │  └─ route / (prefix) · ambiguous: HTTPRoute kgwctl-proxy/orders, HTTPRoute proxy/orders-kgwctl
 │     filters (request order):
 │       1 envoy.filters.http.router  on
 │     not run: global_disable/ext_auth (off), ext_auth/kgwctl-proxy/authz (off), ratelimit/local (off), dynamic_modules/simple_mutations (off)
 │     backend: kube_proxy_backend_8080
-├─ vhost listener~8080~orders_kgwctl_example [orders.kgwctl.example] · port 8080
+├─ vhost listener~8080~orders_kgwctl_example [orders.kgwctl.example] · port 8080 (inferred)
 │  └─ route / (prefix) · ambiguous: HTTPRoute kgwctl-proxy/orders, HTTPRoute proxy/orders-kgwctl
 │     filters (request order):
-│       1 ext_auth/kgwctl-proxy/authz       enabled by route · GatewayExtension kgwctl-proxy/authz · TrafficPolicy kgwctl-proxy/orders-extauth (extAuth)
-│       2 ratelimit/local                   enabled by route · TrafficPolicy kgwctl-proxy/orders-ratelimit (rateLimit.local)
-│       3 dynamic_modules/simple_mutations  enabled by route · TrafficPolicy kgwctl-proxy/orders-transformation (transformation)
+│       1 ext_auth/kgwctl-proxy/authz       enabled by route · GatewayExtension kgwctl-proxy/authz (inferred) · TrafficPolicy kgwctl-proxy/orders-extauth (extAuth, inferred)
+│       2 ratelimit/local                   enabled by route · TrafficPolicy kgwctl-proxy/orders-ratelimit (rateLimit.local, inferred)
+│       3 dynamic_modules/simple_mutations  enabled by route · TrafficPolicy kgwctl-proxy/orders-transformation (transformation, inferred)
 │       4 envoy.filters.http.router         on
 │     not run: global_disable/ext_auth (off)
 │     filters (response order):
-│       1 dynamic_modules/simple_mutations  enabled by route · TrafficPolicy kgwctl-proxy/orders-transformation (transformation)
-│       2 ratelimit/local                   enabled by route · TrafficPolicy kgwctl-proxy/orders-ratelimit (rateLimit.local)
-│       3 ext_auth/kgwctl-proxy/authz       enabled by route · GatewayExtension kgwctl-proxy/authz · TrafficPolicy kgwctl-proxy/orders-extauth (extAuth)
+│       1 dynamic_modules/simple_mutations  enabled by route · TrafficPolicy kgwctl-proxy/orders-transformation (transformation, inferred)
+│       2 ratelimit/local                   enabled by route · TrafficPolicy kgwctl-proxy/orders-ratelimit (rateLimit.local, inferred)
+│       3 ext_auth/kgwctl-proxy/authz       enabled by route · GatewayExtension kgwctl-proxy/authz (inferred) · TrafficPolicy kgwctl-proxy/orders-extauth (extAuth, inferred)
 │     policies: TrafficPolicy kgwctl-proxy/orders-extauth (extAuth), TrafficPolicy kgwctl-proxy/orders-ratelimit (rateLimit.local), TrafficPolicy kgwctl-proxy/orders-transformation (transformation)
 │     backend: kube_kgwctl-proxy_backend_8080
-└─ vhost listener~8080~public_kgwctl_example [public.kgwctl.example] · port 8080
+└─ vhost listener~8080~public_kgwctl_example [public.kgwctl.example] · port 8080 (inferred)
    └─ route / (prefix) · ambiguous: HTTPRoute kgwctl-proxy/public, HTTPRoute proxy/public-kgwctl
       filters (request order):
-        1 global_disable/ext_auth    enabled by route · TrafficPolicy kgwctl-proxy/public-no-extauth (extAuth)
+        1 global_disable/ext_auth    enabled by route · TrafficPolicy kgwctl-proxy/public-no-extauth (extAuth, inferred)
         2 envoy.filters.http.router  on
       not run: ext_auth/kgwctl-proxy/authz (off), ratelimit/local (off), dynamic_modules/simple_mutations (off)
       policies: TrafficPolicy kgwctl-proxy/public-no-extauth (extAuth)
       backend: kube_kgwctl-proxy_backend_8080
+readiness_listener [::]:8082 · active · static
+└─ vhost local_service [*]
+   └─ route /ready (exact) + header(:method=GET)
+      filters (request order):
+        1 envoy.filters.http.health_check  on
+        2 envoy.filters.http.router        on
+      filters (response order):
+        1 envoy.filters.http.health_check  on
+      backend: admin_port_cluster
+prometheus_listener [::]:9091 · active · static
+└─ vhost prometheus_host [*]
+   ├─ route /ready (exact) + header(:method=GET)
+   │  filters (request order):
+   │    1 envoy.filters.http.router  on
+   │  backend: admin_port_cluster
+   ├─ route /metrics (prefix) + header(:method=GET)
+   │  filters (request order):
+   │    1 envoy.filters.http.router  on
+   │  rewrite prefix: /stats/prometheus?usedonly
+   │  backend: admin_port_cluster
+   └─ route /stats (prefix) + header(:method=GET)
+      filters (request order):
+        1 envoy.filters.http.router  on
+      rewrite prefix: /stats
+      backend: admin_port_cluster
+ignored dump sections: BootstrapConfigDump, ClustersConfigDump, ScopedRoutesConfigDump, SecretsConfigDump

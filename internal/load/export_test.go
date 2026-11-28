@@ -13,6 +13,3 @@ func SetDeadlineHook(f func(cache.Snapshotter)) func() {
 	onDeadline = f
 	return func() { onDeadline = nil }
 }
-
-// ThrottleDefaults exposes withThrottleDefaults.
-var ThrottleDefaults = withThrottleDefaults

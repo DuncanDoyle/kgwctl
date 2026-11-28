@@ -1,0 +1,66 @@
+row: 17
+title: a token in error text, a panic message and a malformed JSON body; a pattern-free body on a non-200 log stream and a port-forward denial
+cases:
+  - name: error-text
+    type: error-text
+    input: error.txt
+    server: https://kgwctl-canary-17-host.example.com:6443
+    canaries:
+      - {value: kgwctl-canary-17-host}
+      - {value: kgwctl-canary-17-url}
+      - {value: kgwctl-canary-17-tok}
+    keep: ["<apiserver>", "Bearer [redacted]"]
+  - name: panic
+    type: error-text
+    input: panic.txt
+    canaries:
+      - {value: kgwctl-canary-17-panic}
+    keep: ["panic in collector logs"]
+  - name: quoted-and-basic
+    type: error-text
+    input: quoted.txt
+    canaries:
+      - {value: kgwctl-canary-17-q1}
+      - {value: kgwctl-canary-17-q2}
+      - {value: two words}
+      - {value: a2d3Y3RsLWNhbmFyeS0xNy1iYXNpYw}
+    keep: ["login failed: password=\"[redacted]\" secret='[redacted]' authorization: basic [redacted]"]
+  - name: malformed-json
+    type: json
+    input: malformed.json
+    expectError: invalid-json
+    canaries:
+      - {value: kgwctl-canary-17-json}
+  - name: log-stream
+    type: remote-error
+    error:
+      kind: log-stream
+      code: 500
+      message: "kgwctl-canary-17-body upstream log backend failed"
+    canaries:
+      - {value: kgwctl-canary-17-body}
+    keep: ["500 Internal Server Error"]
+  - name: port-forward-denied
+    type: remote-error
+    error:
+      kind: status
+      code: 403
+      reason: Forbidden
+      message: 'pods "gw-7d9f" is forbidden: User "kgwctl-canary-17-pf" cannot create resource "pods/portforward"'
+    canaries:
+      - {value: kgwctl-canary-17-pf}
+    keep: ["403 Forbidden (Forbidden)"]
+  - name: status-without-code
+    type: remote-error
+    error:
+      kind: status
+      code: 0
+      message: 'upstream said kgwctl-canary-17-nocode and nothing else'
+    canaries:
+      - {value: kgwctl-canary-17-nocode}
+    keep: ["request failed"]
+deferred:
+  - part: a denied list seen by the bundle check path
+    task: "4.2.5"
+  - part: a port-forward denial through the SPDY transport
+    task: "4.3.x"

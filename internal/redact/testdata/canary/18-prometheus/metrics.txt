@@ -1,0 +1,4 @@
+# HELP kgateway_translations_total Translations run. Debug token Bearer kgwctl-canary-18-help
+# TYPE kgateway_translations_total counter
+kgateway_translations_total{gateway="gw",namespace="team-a",token_source="eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.kgwctl-canary-18-label"} 3
+kgateway_translations_total{gateway="gw",namespace="team-a"} 12

@@ -1,16 +1,16 @@
 File ../../testdata/dumps/demo.json · Gateway team-a/team-a
-listener~80 [::]:80 · active · Gateway team-a/team-a port 80
-├─ vhost listener~80~admin_team-a_example [admin.team-a.example] · port 80
+listener~80 [::]:80 · active · port 80 (inferred) · Gateway team-a/team-a (from the command line)
+├─ vhost listener~80~admin_team-a_example [admin.team-a.example] · port 80 (inferred)
 │  └─ route / (prefix) · ambiguous: HTTPRoute admin-team-c/internal, HTTPRoute team-c/internal-admin, HTTPRoute c/internal-admin-team
 │     filters (request order):
 │       1 envoy.filters.http.router  on
 │     backend: blackhole-cluster
-├─ vhost listener~80~broken_team-a_example [broken.team-a.example] · port 80
+├─ vhost listener~80~broken_team-a_example [broken.team-a.example] · port 80 (inferred)
 │  └─ route / (prefix) · ambiguous: HTTPRoute team-a/broken, HTTPRoute a/broken-team
 │     filters (request order):
 │       1 envoy.filters.http.router  on
 │     backend: blackhole-cluster
-├─ vhost listener~80~orders_team-a_example [orders.team-a.example] · port 80
+├─ vhost listener~80~orders_team-a_example [orders.team-a.example] · port 80 (inferred)
 │  ├─ route /pay (path-prefix) · ambiguous: HTTPRoute team-a/orders, HTTPRoute a/orders-team
 │  │  filters (request order):
 │  │    1 envoy.filters.http.router  on
@@ -19,13 +19,37 @@ listener~80 [::]:80 · active · Gateway team-a/team-a port 80
 │     filters (request order):
 │       1 envoy.filters.http.router  on
 │     backend: kube_team-a_web_80
-├─ vhost listener~80~partner_team-a_example [partner.team-a.example] · port 80
+├─ vhost listener~80~partner_team-a_example [partner.team-a.example] · port 80 (inferred)
 │  └─ route / (prefix) · ambiguous: HTTPRoute team-b/partner, HTTPRoute b/partner-team
 │     filters (request order):
 │       1 envoy.filters.http.router  on
 │     backend: backend_team-b_partner-api_0
-└─ vhost listener~80~shop_team-a_example [shop.team-a.example] · port 80
+└─ vhost listener~80~shop_team-a_example [shop.team-a.example] · port 80 (inferred)
    └─ route /shop/items (path-prefix) · ambiguous: HTTPRoute items-team-b/shop, HTTPRoute team-b/shop-items, HTTPRoute b/shop-items-team
       filters (request order):
         1 envoy.filters.http.router  on
       backend: kube_team-b_catalog_80
+readiness_listener [::]:8082 · active · static
+└─ vhost local_service [*]
+   └─ route /ready (exact) + header(:method=GET)
+      filters (request order):
+        1 envoy.filters.http.health_check  on
+        2 envoy.filters.http.router        on
+      backend: admin_port_cluster
+prometheus_listener [::]:9091 · active · static
+└─ vhost prometheus_host [*]
+   ├─ route /ready (exact) + header(:method=GET)
+   │  filters (request order):
+   │    1 envoy.filters.http.router  on
+   │  backend: admin_port_cluster
+   ├─ route /metrics (prefix) + header(:method=GET)
+   │  filters (request order):
+   │    1 envoy.filters.http.router  on
+   │  rewrite prefix: /stats/prometheus?usedonly
+   │  backend: admin_port_cluster
+   └─ route /stats (prefix) + header(:method=GET)
+      filters (request order):
+        1 envoy.filters.http.router  on
+      rewrite prefix: /stats
+      backend: admin_port_cluster
+ignored dump sections: BootstrapConfigDump, ClustersConfigDump, ScopedRoutesConfigDump, SecretsConfigDump

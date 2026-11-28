@@ -29,4 +29,4 @@ item:
           type: PathPrefix
           value: /team-b
 kind: Describe
-schemaVersion: kgwctl.kgateway.dev/v1alpha1
+schemaVersion: kgwctl.kgateway.dev/v1alpha2

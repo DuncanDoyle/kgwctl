@@ -1,0 +1,1 @@
+arn:aws:eks:eu-west-1:000000000000:cluster/prod?token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.kgwctl-canary-19-ctx

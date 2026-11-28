@@ -1,0 +1,2 @@
+[2026-11-22T10:00:00.000Z] "GET /callback?access_token=kgwctl-canary-15-at&state=abc HTTP/1.1" 200 - 0 12 3 2 "-" "curl/8.5.0" "6b1d3c2e" "api.example.com" "10.0.0.7:8080"
+[2026-11-22T10:00:01.000Z] "GET /bucket/report.csv?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Date=20261122T100000Z&X-Amz-Signature=kgwctl-canary-15-sig HTTP/1.1" 200 - 0 512 8 7 "-" "aws-sdk" "7c2e4d3f" "s3.example.com" "10.0.0.8:443"

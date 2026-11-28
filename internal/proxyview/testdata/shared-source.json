@@ -1,0 +1,51 @@
+{
+  "configs": [
+    {
+      "@type": "type.googleapis.com/envoy.admin.v3.ListenersConfigDump",
+      "dynamic_listeners": [
+        {
+          "name": "listener~8080",
+          "active_state": {"listener": {"name": "listener~8080", "address": {"socket_address": {"address": "::", "port_value": 8080}},
+            "filter_chains": [{"name": "listener~8080", "filters": [{"name": "envoy.filters.network.http_connection_manager",
+              "typed_config": {"@type": "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
+                "rds": {"route_config_name": "shared"},
+                "http_filters": [{"name": "envoy.filters.http.router", "typed_config": {"@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router"}}]}}]}]}}
+        },
+        {
+          "name": "listener~8081",
+          "active_state": {"listener": {"name": "listener~8081", "address": {"socket_address": {"address": "::", "port_value": 8081}},
+            "filter_chains": [{"name": "listener~8081", "filters": [{"name": "envoy.filters.network.http_connection_manager",
+              "typed_config": {"@type": "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
+                "rds": {"route_config_name": "shared"},
+                "http_filters": [{"name": "envoy.filters.http.router", "typed_config": {"@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router"}}]}}]}]}}
+        },
+        {
+          "name": "listener~8082",
+          "active_state": {"listener": {"name": "listener~8082", "address": {"socket_address": {"address": "::", "port_value": 8082}},
+            "filter_chains": [{"name": "listener~8082", "filters": [{"name": "envoy.filters.network.http_connection_manager",
+              "typed_config": {"@type": "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
+                "route_config": {"name": "other", "virtual_hosts": [{"name": "listener~8082~a_example", "domains": ["a.example"],
+                  "routes": [{"name": "listener~8082~a_example-route-0-httproute-a-shop-0-0-matcher-0", "match": {"prefix": "/"}, "route": {"cluster": "kube_shop_a_8080"}}]}]},
+                "http_filters": [{"name": "envoy.filters.http.router", "typed_config": {"@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router"}}]}}]}]}}
+        },
+        {
+          "name": "listener~8083",
+          "active_state": {"listener": {"name": "listener~8083", "address": {"socket_address": {"address": "::", "port_value": 8083}},
+            "filter_chains": [{"name": "listener~8083", "filters": [{"name": "envoy.filters.network.http_connection_manager",
+              "typed_config": {"@type": "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
+                "rds": {"route_config_name": "other"},
+                "http_filters": [{"name": "envoy.filters.http.router", "typed_config": {"@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router"}}]}}]}]}}
+        }
+      ]
+    },
+    {
+      "@type": "type.googleapis.com/envoy.admin.v3.RoutesConfigDump",
+      "dynamic_route_configs": [
+        {"route_config": {"name": "shared", "virtual_hosts": [{"name": "listener~8080~orders_example", "domains": ["orders.example"],
+          "routes": [{"name": "listener~8080~orders_example-route-0-httproute-orders-kgwctl-proxy-0-0-matcher-0", "match": {"prefix": "/"}, "route": {"cluster": "kube_kgwctl-proxy_backend_8080"}}]}]}},
+        {"route_config": {"name": "other", "virtual_hosts": [{"name": "listener~8083~b_example", "domains": ["b.example"],
+          "routes": [{"name": "listener~8083~b_example-route-0-httproute-b-shop-0-0-matcher-0", "match": {"prefix": "/"}, "route": {"cluster": "kube_shop_b_8080"}}]}]}}
+      ]
+    }
+  ]
+}

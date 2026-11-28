@@ -1,0 +1,38 @@
+row: 11
+title: pattern-free values in ext-auth headersToAdd, Envoy authorization_request.headers_to_add, tunnel.headers and initialMetadata
+cases:
+  - name: gatewayextension
+    type: object
+    input: gatewayextension.yaml
+    canaries:
+      - value: kgwctl-canary-11-gwe
+        rule: header-value
+        location: spec.extAuth.httpService.authorizationRequest.headersToAdd[key]
+    keep: [x-tenant, ext-auth]
+  - name: config-dump
+    type: config-dump
+    input: config_dump.json
+    canaries:
+      - value: kgwctl-canary-11-envoy
+        rule: header-value
+        location: configs[].dynamic_listeners[].active_state.listener.filter_chains[].filters[].typed_config.http_filters[].typed_config.http_service.authorization_request.headers_to_add[].value
+    keep: [x-tenant]
+  - name: backendconfigpolicy
+    type: object
+    input: backendconfigpolicy.yaml
+    canaries:
+      - value: kgwctl-canary-11-tunnel
+        rule: header-value
+        location: spec.tunnel.headers[].value
+    keep: [egress, x-proxy-tenant]
+  - name: listenerpolicy
+    type: object
+    input: listenerpolicy.yaml
+    canaries:
+      - value: kgwctl-canary-11-meta
+        rule: header-value
+        location: spec.default.accessLog[].grpcService.initialMetadata[].value
+      - value: kgwctl-canary-11-early
+        rule: header-value
+        location: spec.default.httpSettings.earlyRequestHeaderModifier.set[].value
+    keep: [access-logs, x-collector-tenant, x-tenant-key]

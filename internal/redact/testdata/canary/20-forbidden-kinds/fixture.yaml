@@ -1,0 +1,20 @@
+row: 20
+title: a Secret and a ConfigMap handed to Object
+cases:
+  - name: secret
+    type: object
+    input: secret.yaml
+    expectError: forbidden-kind
+    canaries:
+      - {value: kgwctl-canary-20-secret}
+  - name: configmap
+    type: object
+    input: configmap.yaml
+    expectError: forbidden-kind
+    canaries:
+      - {value: kgwctl-canary-20-cm}
+deferred:
+  - part: a downstream collector kind resolving to secrets at the request guard
+    task: "4.1.4"
+  - part: the guard refusing secrets and configmaps at the HTTP transport
+    task: "4.3.x"

@@ -1,42 +1,75 @@
 item:
-  ambiguous:
-  - candidates:
-    - matchIndex: 0
+  capture: unverified
+  listeners: []
+  sections:
+  - status: ignored
+    type: type.googleapis.com/envoy.admin.v3.BootstrapConfigDump
+  - status: ignored
+    type: type.googleapis.com/envoy.admin.v3.ClustersConfigDump
+  - status: parsed
+    type: type.googleapis.com/envoy.admin.v3.ListenersConfigDump
+  - status: ignored
+    type: type.googleapis.com/envoy.admin.v3.ScopedRoutesConfigDump
+  - status: parsed
+    type: type.googleapis.com/envoy.admin.v3.RoutesConfigDump
+  - status: ignored
+    type: type.googleapis.com/envoy.admin.v3.SecretsConfigDump
+  selection:
+    ambiguous:
+    - id: L0/C0/N0/RC/V0/R0
+      name: listener~8080~orders-kgwctl_proxy_example-route-0-httproute-orders-kgwctl-proxy-0-0-matcher-0
+      readings:
+      - certainty: inferred
+        matchIndex: 0
+        route:
+          group: gateway.networking.k8s.io
+          kind: HTTPRoute
+          name: orders
+          namespace: kgwctl-proxy
+        ruleIndex: 0
+      - certainty: inferred
+        matchIndex: 0
+        route:
+          group: gateway.networking.k8s.io
+          kind: HTTPRoute
+          name: orders-kgwctl
+          namespace: proxy
+        ruleIndex: 0
+      routeConfig: listener~8080
+      virtualHost: listener~8080~orders-kgwctl_proxy_example
+    - id: L0/C0/N0/RC/V1/R0
+      name: listener~8080~orders_kgwctl_example-route-0-httproute-orders-kgwctl-proxy-0-0-matcher-0
+      readings:
+      - certainty: inferred
+        matchIndex: 0
+        route:
+          group: gateway.networking.k8s.io
+          kind: HTTPRoute
+          name: orders
+          namespace: kgwctl-proxy
+        ruleIndex: 0
+      - certainty: inferred
+        matchIndex: 0
+        route:
+          group: gateway.networking.k8s.io
+          kind: HTTPRoute
+          name: orders-kgwctl
+          namespace: proxy
+        ruleIndex: 0
+      routeConfig: listener~8080
+      virtualHost: listener~8080~orders_kgwctl_example
+    inferred: []
+    knownHTTPRoutes: notRead
+    query:
       route:
         group: gateway.networking.k8s.io
         kind: HTTPRoute
         name: orders
         namespace: kgwctl-proxy
-      ruleIndex: 0
-    - matchIndex: 0
-      route:
-        group: gateway.networking.k8s.io
-        kind: HTTPRoute
-        name: orders-kgwctl
-        namespace: proxy
-      ruleIndex: 0
-    name: listener~8080~orders-kgwctl_proxy_example-route-0-httproute-orders-kgwctl-proxy-0-0-matcher-0
-    routeConfig: listener~8080
-  - candidates:
-    - matchIndex: 0
-      route:
-        group: gateway.networking.k8s.io
-        kind: HTTPRoute
-        name: orders
-        namespace: kgwctl-proxy
-      ruleIndex: 0
-    - matchIndex: 0
-      route:
-        group: gateway.networking.k8s.io
-        kind: HTTPRoute
-        name: orders-kgwctl
-        namespace: proxy
-      ruleIndex: 0
-    name: listener~8080~orders_kgwctl_example-route-0-httproute-orders-kgwctl-proxy-0-0-matcher-0
-    routeConfig: listener~8080
-  snapshot:
-    listeners: []
+    routes: []
+    strategy: strict
+    unresolved: []
   source:
     file: ../../testdata/dumps/policies.json
 kind: ProxyRoutes
-schemaVersion: kgwctl.kgateway.dev/v1alpha1
+schemaVersion: kgwctl.kgateway.dev/v1alpha2

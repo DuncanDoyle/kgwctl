@@ -202,6 +202,10 @@ func TestFilterNoInstall(t *testing.T) {
 	if !slices.ContainsFunc(ws, func(w string) bool { return strings.Contains(w, "no kgateway install detected") }) {
 		t.Errorf("warnings = %q, want one containing %q", ws, "no kgateway install detected")
 	}
+	// After an incomplete detection, no install found is unknown, not absent.
+	if _, ws := view.NewFilter(r, view.Scope{AllNamespaces: true, DetectionIncomplete: true}); len(ws) != 0 {
+		t.Errorf("incomplete detection: warnings = %q, want none", ws)
+	}
 	checkVisible(t, r, f, map[obj]bool{
 		{"GatewayClass", "", "other"}:             true,
 		{"Gateway", "other", "edge"}:              true,

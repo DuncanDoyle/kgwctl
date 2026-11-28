@@ -179,6 +179,27 @@ func TestProxyDumpPortForwardForbidden(t *testing.T) {
 	}
 }
 
+// TestProxyDumpForbiddenHint: a refused upgrade prints the RBAC hint, and the
+// denial's body reaches no output.
+func TestProxyDumpForbiddenHint(t *testing.T) {
+	env := newEnv(t, testenv.Options{Fixtures: []string{checkInstall}})
+	hits := env.Proxies[0].Rule(testenv.Match{Resource: "pods", Subresource: "portforward"}, testenv.Action{Status: http.StatusForbidden})
+	r := runProxy(t, env.Kubeconfig, app.ProxyTestHooks{}, dumpArgs...)
+	if r.code != 2 || r.stdout != "" {
+		t.Fatalf("exit %d, stdout %q; want 2 and empty; stderr %q", r.code, r.stdout, r.stderr)
+	}
+	if hits.N() == 0 {
+		t.Fatal("no port-forward request reached the denial rule")
+	}
+	const hint = "needs create pods/portforward in namespace kgateway-system: see the kgwctl-proxy-portforward Role in docs/rbac.yaml"
+	if !strings.Contains(r.stderr, "\nport-forward to Pod kgateway-system/") || !strings.Contains(r.stderr, hint) {
+		t.Errorf("stderr = %q, want the RBAC hint", r.stderr)
+	}
+	if strings.Contains(r.stderr, "injected by testenv") {
+		t.Errorf("stderr = %q, carries the denial's body", r.stderr)
+	}
+}
+
 func TestProxyDumpDeadline(t *testing.T) {
 	env := newEnv(t, testenv.Options{Fixtures: []string{checkInstall}})
 	d := newFakeDialer(t, func(_ http.ResponseWriter, r *http.Request) { <-r.Context().Done() })

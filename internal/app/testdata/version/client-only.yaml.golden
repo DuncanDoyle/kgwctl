@@ -5,4 +5,4 @@ item:
     name: kgwctl
     version: v0.1.0
 kind: Version
-schemaVersion: kgwctl.kgateway.dev/v1alpha1
+schemaVersion: kgwctl.kgateway.dev/v1alpha2

@@ -42,10 +42,15 @@ The dumps must hold no credential material. `hack/live-check.sh goldens-check` r
   | getpath($p) | select(. != "[redacted]")] | length
 ```
 
-Result on 2026-11-21:
+`goldens-check` also runs `kgwctl proxy routes --file <dump> -o json` on each dump: a `kgwctl.kgateway.dev/v1alpha2` document with listeners and a route with filters.
+
+Result on 2026-11-27:
 
 ```
 content demo.json: secret-leaves=0 unredacted-sensitive=0
+routes json demo.json: ok
 content policies.json: secret-leaves=0 unredacted-sensitive=0
+routes json policies.json: ok
 content collide-meta.json: secret-leaves=0 unredacted-sensitive=0
+routes json collide-meta.json: ok
 ```

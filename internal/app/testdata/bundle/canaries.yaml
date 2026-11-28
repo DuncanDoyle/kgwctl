@@ -1,0 +1,52 @@
+# Applied after healthy.yaml: objects carrying canary values the bundle must
+# redact (design §7). Every value containing "kgwctl-canary-" must not reach
+# the archive.
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: TrafficPolicy
+metadata:
+  name: tenant-headers
+  namespace: default
+  annotations:
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"v1","kind":"Secret","metadata":{"name":"db"},"stringData":{"token":"kgwctl-canary-last-applied"}}
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: example
+  headerModifiers:
+    request:
+      set:
+        - name: x-tenant-key
+          value: kgwctl-canary-tenant-key
+---
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: GatewayExtension
+metadata:
+  name: ext-auth
+  namespace: kgateway-system
+spec:
+  type: ExtAuth
+  extAuth:
+    httpService:
+      backendRef:
+        name: ext-auth
+        port: 8080
+      authorizationRequest:
+        headersToAdd:
+          x-tenant: kgwctl-canary-headers-to-add
+---
+apiVersion: v1
+kind: Event
+metadata:
+  name: kgateway.canary
+  namespace: kgateway-system
+involvedObject:
+  apiVersion: apps/v1
+  kind: Deployment
+  name: kgateway
+  namespace: kgateway-system
+reason: Rejected
+type: Warning
+message: "upstream rejected Authorization: Bearer kgwctl-canary-event-message"
+lastTimestamp: "2026-01-02T00:00:00Z"

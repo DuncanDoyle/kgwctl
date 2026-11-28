@@ -1,0 +1,34 @@
+{
+  "configs": [
+    {
+      "@type": "type.googleapis.com/envoy.admin.v3.ListenersConfigDump",
+      "dynamic_listeners": [
+        {
+          "name": "listener~8080",
+          "active_state": {"listener": {"name": "listener~8080", "address": {"socket_address": {"address": "::", "port_value": 8080}},
+            "filter_chains": [{"name": "listener~8080", "filters": [{"name": "envoy.filters.network.http_connection_manager",
+              "typed_config": {"@type": "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
+                "rds": {"route_config_name": "routes"},
+                "http_filters": [
+                  {"name": "ecds/x", "config_discovery": {"config_source": {"ads": {}}, "type_urls": ["type.googleapis.com/envoy.extensions.filters.http.buffer.v3.Buffer"]}},
+                  {"name": "ecds/x", "disabled": true, "config_discovery": {"config_source": {"ads": {}}, "type_urls": ["type.googleapis.com/envoy.extensions.filters.http.buffer.v3.Buffer"]}},
+                  {"name": "envoy.filters.http.router", "typed_config": {"@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router"}}]}}]}]}}
+        }
+      ]
+    },
+    {
+      "@type": "type.googleapis.com/envoy.admin.v3.RoutesConfigDump",
+      "dynamic_route_configs": [
+        {"route_config": {"name": "routes", "virtual_hosts": [{"name": "listener~8080~a_example", "domains": ["a.example"],
+          "routes": [{"name": "listener~8080~a_example-route-0-httproute-orders-shop-0-0-matcher-0", "match": {"prefix": "/"}, "route": {"cluster": "kube_shop_orders_8080"}}]}]}}
+      ]
+    },
+    {
+      "@type": "type.googleapis.com/envoy.admin.v3.EcdsConfigDump",
+      "ecds_filters": [
+        {"ecds_filter": {"name": "ecds/x", "typed_config": {"@type": "type.googleapis.com/envoy.extensions.filters.http.buffer.v3.Buffer", "max_request_bytes": 1024}}},
+        {"ecds_filter": {"name": "ecds/x", "typed_config": {"@type": "type.googleapis.com/envoy.extensions.filters.http.buffer.v3.Buffer", "max_request_bytes": 2048}}}
+      ]
+    }
+  ]
+}

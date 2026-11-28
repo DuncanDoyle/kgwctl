@@ -1,0 +1,51 @@
+{
+  "configs": [
+    {
+      "@type": "type.googleapis.com/envoy.admin.v3.ListenersConfigDump",
+      "dynamic_listeners": [
+        {
+          "name": "listener~8080",
+          "active_state": {"listener": {"name": "listener~8080", "address": {"socket_address": {"address": "::", "port_value": 8080}},
+            "filter_chains": [{"name": "listener~8080", "filters": [{"name": "envoy.filters.network.http_connection_manager",
+              "typed_config": {"@type": "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
+                "rds": {"route_config_name": "listener~8080"},
+                "http_filters": [
+                  {"name": "envoy.filters.http.router", "typed_config": {"@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router"}}]}}]}]}}
+        }
+      ]
+    },
+    {
+      "@type": "type.googleapis.com/envoy.admin.v3.RoutesConfigDump",
+      "dynamic_route_configs": [
+        {"route_config": {"name": "listener~8080",
+          "virtual_hosts": [{"name": "listener~8080~values_example", "domains": ["values.example"],
+            "routes": [
+              {"name": "rewrite", "match": {"prefix": "/a", "case_sensitive": false, "grpc": {},
+                  "headers": [{"name": "x-h", "string_match": {"exact": "hv", "ignore_case": true}, "invert_match": true, "treat_missing_header_as_empty": true}],
+                  "query_parameters": [{"name": "q", "string_match": {"exact": "qv", "ignore_case": true}}]},
+                "route": {"cluster_header": "x-cluster", "regex_rewrite": {"pattern": {"regex": "^/a/(.*)"}, "substitution": "/b/\\1"}, "prefix_rewrite": "/p",
+                  "request_mirror_policies": [{"cluster": "mirror-c"}]},
+                "request_headers_to_add": [{"header": {"key": "x-req", "value": "req-v"}}],
+                "response_headers_to_add": [{"header": {"key": "x-resp", "value": "resp-v"}}],
+                "response_headers_to_remove": ["x-rm"]},
+              {"name": "split", "match": {"prefix": "/split"},
+                "route": {"weighted_clusters": {"clusters": [{"name": "wc-a", "weight": 70,
+                  "typed_per_filter_config": {"envoy.filters.http.cors": {"@type": "type.googleapis.com/envoy.extensions.filters.http.cors.v3.CorsPolicy"}}}]}}},
+              {"name": "redirect-prefix", "match": {"path": "/r1"},
+                "redirect": {"scheme_redirect": "https", "host_redirect": "h.example", "port_redirect": 8443, "prefix_rewrite": "/new", "response_code": "FOUND", "strip_query": true}},
+              {"name": "redirect-regex", "match": {"path": "/r2"},
+                "redirect": {"path_redirect": "/abs", "regex_rewrite": {"pattern": {"regex": "^/r2"}, "substitution": "/rx"}}},
+              {"name": "redirect-path-rewrite", "match": {"path": "/r3"},
+                "redirect": {"path_rewrite": "/templated"}},
+              {"name": "direct", "match": {"path": "/d"},
+                "direct_response": {"status": 503, "body": {"inline_string": "down"}, "body_format": {"text_format": "x"}}},
+              {"name": "plugin", "match": {"path": "/csp"}, "route": {"cluster_specifier_plugin": "csp-name"}},
+              {"name": "inline-plugin", "match": {"path": "/icsp"},
+                "route": {"inline_cluster_specifier_plugin": {"extension": {"name": "icsp-name", "typed_config": {"@type": "type.googleapis.com/google.protobuf.Struct"}}}}},
+              {"name": "filter-action", "match": {"path": "/fa"}, "filter_action": {"action": {"@type": "type.googleapis.com/google.protobuf.Struct"}}},
+              {"name": "connect", "match": {"connect_matcher": {}}, "route": {"cluster": "c"}}
+            ]}]}}
+      ]
+    }
+  ]
+}

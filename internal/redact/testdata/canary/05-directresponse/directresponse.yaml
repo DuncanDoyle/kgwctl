@@ -1,0 +1,8 @@
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: DirectResponse
+metadata:
+  name: dr-a
+  namespace: team-a
+spec:
+  status: 200
+  body: '{"aws_access_key_id":"AKIAKGWCTLCANARY0005","region":"eu-west-1"}'

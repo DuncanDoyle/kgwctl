@@ -1,0 +1,1 @@
+Get "https://kgwctl-canary-17-host.example.com:6443/api/v1/namespaces/team-a/pods?token=kgwctl-canary-17-url": request failed with Authorization: Bearer kgwctl-canary-17-tok, host kgwctl-canary-17-host.example.com

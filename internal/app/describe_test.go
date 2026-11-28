@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/DuncanDoyle/kgwctl/internal/print"
 	"github.com/DuncanDoyle/kgwctl/internal/testenv"
 )
 
@@ -13,7 +14,7 @@ const (
 	describeFixture     = "../testenv/testdata/describe.yaml"
 	delegationModes     = "../testenv/testdata/delegation-modes.yaml"
 	sameNameLSFixture   = "../testenv/testdata/listenersets-same-name.yaml"
-	describeEnvelopeTag = "kgwctl.kgateway.dev/v1alpha1"
+	describeEnvelopeTag = print.SchemaVersion
 )
 
 var describeFormats = []string{"text", "json", "yaml"}

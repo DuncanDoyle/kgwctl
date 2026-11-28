@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: settings
+  namespace: team-a
+data:
+  api: kgwctl-canary-20-cm

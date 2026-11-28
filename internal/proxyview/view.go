@@ -1,6 +1,6 @@
 // Package proxyview turns an Envoy config dump into the view `proxy routes`
-// prints: the snapshot annotated with origins and effective filter chains,
-// narrowed to one HTTPRoute, with the routes that could not be attributed.
+// prints: xdsview's snapshot, effective chains and claim index, the routes
+// selected for one HTTPRoute, and one list of warnings.
 package proxyview
 
 import (
@@ -8,27 +8,128 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"strings"
-	"time"
+	"slices"
 
+	"github.com/DuncanDoyle/xdsview/pkg/adapter/kgateway"
 	"github.com/DuncanDoyle/xdsview/pkg/envoy/chain"
-	"github.com/DuncanDoyle/xdsview/pkg/envoy/filter"
 	"github.com/DuncanDoyle/xdsview/pkg/envoy/model"
-	"github.com/DuncanDoyle/xdsview/pkg/envoy/origin"
 	"github.com/DuncanDoyle/xdsview/pkg/envoy/parser"
-	"github.com/DuncanDoyle/xdsview/pkg/envoy/render"
+	"github.com/DuncanDoyle/xdsview/pkg/envoy/provenance"
 	"k8s.io/apimachinery/pkg/types"
 )
 
 const gatewayGroup = "gateway.networking.k8s.io"
 
 // OneCandidateNote is printed next to an ambiguous route that only the
-// HTTPRoutes in the cluster narrowed to one candidate.
+// HTTPRoutes in the cluster narrowed to one reading.
 const OneCandidateNote = "one candidate exists in the cluster"
+
+// GatewayContextNote marks the Gateway kgwctl was given, as opposed to one a claim names.
+const GatewayContextNote = "(from the command line)"
 
 // ErrNotConfigDump is Build's error for valid JSON without a configs array.
 var ErrNotConfigDump = errors.New("not an Envoy config dump (no configs array)")
+
+// ErrCompose wraps the error of provenance.Compose, such as two modules with one name.
+var ErrCompose = errors.New("compose provenance modules")
+
+// Strategy is the route selection rule of --select (design DD-4).
+type Strategy string
+
+// Selection strategies.
+const (
+	StrategyExact  Strategy = "exact"  // a route kgateway.Select selects whose reading is exact
+	StrategyStrict Strategy = "strict" // a match is a route kgateway.Select selects, nothing else
+	StrategyKnown  Strategy = "known"  // also a route Known narrowed to one matching reading
+)
+
+// ParseStrategy parses a --select value: empty is StrategyStrict, and any
+// value other than "exact", "strict" or "known" is an error.
+func ParseStrategy(s string) (Strategy, error) {
+	switch st := Strategy(s); st {
+	case "":
+		return StrategyStrict, nil
+	case StrategyExact, StrategyStrict, StrategyKnown:
+		return st, nil
+	}
+	return "", fmt.Errorf("unknown selection strategy %q: want exact, strict or known", s)
+}
+
+// notExact returns the routes whose one reading is not exact; with rule, also
+// those whose rule or match index is unknown or not exact (DD-4). It reads certainty only.
+func notExact(ix *provenance.Index, routes []model.ID, rule bool) []model.ID {
+	var out []model.ID
+	for _, id := range routes {
+		res := provenance.Resolve[provenance.RouteSource](ix, id)
+		ok := res.Certainty == model.Exact && len(res.Candidates) == 1
+		if ok && rule {
+			// Unset means equal to the reading's certainty: exact.
+			r := effective(res)[0]
+			ok = (r.IndexCertainty == model.Unknown || r.IndexCertainty == model.Exact) && r.RuleIndex >= 0 && r.MatchIndex >= 0
+		}
+		if !ok {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// effective returns res's readings, each with its IndexCertainty replaced by
+// indexCertainty. Selection, text and JSON all read these (DD-4).
+func effective(res provenance.Resolution[provenance.RouteSource]) []provenance.RouteSource {
+	top := topCertainty(res)
+	out := slices.Clone(res.Candidates)
+	for i, r := range out {
+		out[i].IndexCertainty = indexCertainty(res.Claims, r, top)
+	}
+	return out
+}
+
+// indexCertainty is the index certainty of reading r over the claims at
+// certainty c: the highest, where unset means the claim's own certainty. It
+// stays unset only when that highest value comes from unset claims alone, so
+// an explicit marker survives; Resolve's merge prefers unset on a tie (DD-4).
+func indexCertainty(claims []provenance.Claim, r provenance.RouteSource, c model.Certainty) model.Certainty {
+	ic, explicit := model.Unknown, false
+	for _, cl := range claims {
+		a, ok := cl.Assertion.(provenance.RouteSource)
+		if !ok || cl.Certainty != c || !sameReading(a, r) {
+			continue
+		}
+		e, set := a.IndexCertainty, a.IndexCertainty != model.Unknown
+		if !set {
+			e = cl.Certainty
+		}
+		switch {
+		case e > ic:
+			ic, explicit = e, set
+		case e == ic:
+			explicit = explicit || set
+		}
+	}
+	if ic == c && !explicit {
+		return model.Unknown
+	}
+	return ic
+}
+
+// chooseKnown returns the narrowings of sel whose kept claims name one
+// reading, compared as provenance.Resolve merges them, that matches q, each
+// normalised (DD-4, DD-6). It is krp's rule over kgateway.Select's result.
+func chooseKnown(q kgateway.Query, sel kgateway.Selection) []provenance.Narrowing {
+	var out []provenance.Narrowing
+	for _, n := range sel.Narrowed {
+		if rs := readings(n.Kept); len(rs) == 1 && matches(q, rs[0]) {
+			out = append(out, normalise(n))
+		}
+	}
+	return out
+}
+
+// matches reports whether reading r names the HTTPRoute and rule of q.
+func matches(q kgateway.Query, r provenance.RouteSource) bool {
+	return r.Route == q.Route && (q.RuleIndex == nil || r.RuleIndex == *q.RuleIndex) && (q.RuleName == "" || r.RuleName == q.RuleName)
+}
 
 // Selection narrows a view to one HTTPRoute.
 type Selection struct {
@@ -36,118 +137,138 @@ type Selection struct {
 	Rule  *int                 // one rule index; nil: every rule
 }
 
-// AmbiguousRoute is an Envoy route listed rather than matched: its name reads
-// as the selected HTTPRoute and at least one other, or it has no reading but
-// names the selected HTTPRoute (Unresolved).
-type AmbiguousRoute struct {
-	RouteConfig string              `json:"routeConfig"`
-	Name        string              `json:"name"`
-	Candidates  []model.RouteOrigin `json:"candidates"`
-	// NarrowedByKnown is set when one candidate exists in the cluster.
-	NarrowedByKnown bool `json:"narrowedByKnown,omitempty"`
-	// Unresolved is set for a route whose name has no reading; it has no candidates.
-	Unresolved bool `json:"unresolved,omitempty"`
+// KnownInput says whether the cluster's HTTPRoutes were an input (R24).
+type KnownInput string
+
+// Known inputs.
+const (
+	KnownListed      KnownInput = "listed"      // live: the HTTPRoute list succeeded
+	KnownUnavailable KnownInput = "unavailable" // live: the list failed and the command went on without it
+	KnownNotRead     KnownInput = "notRead"     // --file: kgwctl calls no Kubernetes API
+)
+
+// Options are Build's inputs besides the dump.
+type Options struct {
+	Gateway *types.NamespacedName // the Gateway kgwctl was given; labels listener rows
+	Known   []model.Ref           // the cluster's HTTPRoutes (see HTTPRouteRef); empty with --file
+	// KnownInput says how Known was obtained; empty is KnownListed with Known, else KnownNotRead.
+	KnownInput KnownInput
+	Capture    model.Capture // model.CaptureComplete live; empty with --file
+	Selection  Selection
+	Strategy   Strategy            // empty is StrategyStrict
+	Modules    []provenance.Module // nil is DefaultModules()
 }
 
-// View is a parsed, annotated and narrowed config dump. Snapshot shares data
-// with the parsed dump; treat it as read-only.
+// DefaultModules returns the provenance modules of a kgwctl build: the kgateway module.
+func DefaultModules() []provenance.Module { return []provenance.Module{kgateway.New()} }
+
+// View is a parsed dump with its chains, claim index and selection, all
+// computed on the full snapshot; Snapshot is pruned to the selection under
+// --route. Snapshots share data with each other; treat them as read-only.
 type View struct {
-	Snapshot  *model.EnvoySnapshot `json:"snapshot"`
-	Warnings  []string             `json:"warnings,omitempty"`  // sections the parser skipped
-	Ambiguous []AmbiguousRoute     `json:"ambiguous,omitempty"` // set only with a Selection
-	Selection Selection            `json:"-"`
+	Full, Snapshot *model.Snapshot
+	Chains         map[model.ID]model.EffectiveChain
+	Index          *provenance.Index
+	Narrowed       []provenance.Narrowing // what Known narrowed: Select's under --route, else Narrow's
+	Selected       *kgateway.Selection    // nil without --route
+	Chosen         []provenance.Narrowing // normalised narrowings of the routes --select known chose (DD-6)
+	Inferred       []model.ID             // Select's routes --select exact left unmatched: a reading below exact
+	Strategy       Strategy
+	Selection      Selection
+	KnownInput     KnownInput // never empty after Build
+	Gateway        *types.NamespacedName
+	Warnings       []Warning // DD-12: parser, then index warnings, once each
 }
 
-// Source says where a config dump came from: a live replica (Gateway, Pod and
-// CapturedAt) or a file (File, and Gateway when --gateway named it).
-type Source struct {
-	Gateway    *model.Ref `json:"gateway,omitempty"`
-	Pod        *model.Ref `json:"pod,omitempty"`
-	CapturedAt *time.Time `json:"capturedAt,omitempty"`
-	File       string     `json:"file,omitempty"`
-}
-
-// Item is the `item` of the ProxyRoutes envelope: the source and the view.
-type Item struct {
-	Source Source `json:"source"`
-	View
-}
-
-// HTTPRouteRef returns the ref xdsview uses for an HTTPRoute, for Build's known list.
+// HTTPRouteRef returns the ref xdsview uses for an HTTPRoute, for Options.Known.
 func HTTPRouteRef(n types.NamespacedName) model.Ref {
 	return model.Ref{Group: gatewayGroup, Kind: "HTTPRoute", Namespace: n.Namespace, Name: n.Name}
 }
 
-// Build parses body, annotates origins and filter chains, and narrows to sel;
-// gw labels origins and known lists existing HTTPRoutes (see HTTPRouteRef).
-// An origin that only known narrowed to one candidate stays ambiguous, since
-// Envoy may still serve a deleted HTTPRoute's route.
-// Valid JSON without a configs array is ErrNotConfigDump.
-func Build(body []byte, gw *types.NamespacedName, known []model.Ref, sel Selection) (View, error) {
+// Build parses body and runs xdsview's pipeline (design §4.1): chain.Effective,
+// provenance.Compose, kgateway.Select under --route or kgateway.Narrow with
+// Known, then model.Prune under --route to the matched routes (see Routes).
+// Valid JSON without a configs array is ErrNotConfigDump; a Compose error
+// wraps ErrCompose.
+func Build(body []byte, o Options) (View, error) {
+	sel := o.Selection
 	if sel.Rule != nil && *sel.Rule < 0 {
 		return View{}, errors.New("rule index must not be negative")
+	}
+	strategy, err := ParseStrategy(string(o.Strategy))
+	if err != nil {
+		return View{}, err
 	}
 	if err := checkShape(body); err != nil {
 		return View{}, err
 	}
-	res, err := parser.Parse(bytes.NewReader(body))
+	full, err := parser.Parse(bytes.NewReader(body), parser.Options{Capture: o.Capture})
 	if err != nil {
 		return View{}, err
 	}
-	var gwRef *model.Ref
-	if gw != nil {
-		gwRef = &model.Ref{Group: gatewayGroup, Kind: "Gateway", Namespace: gw.Namespace, Name: gw.Name}
+	modules := o.Modules
+	if modules == nil {
+		modules = DefaultModules()
 	}
-	m := origin.Kgateway(origin.KgatewayOptions{Gateway: gwRef, Known: known})
-	nameOnly := origin.Kgateway(origin.KgatewayOptions{Gateway: gwRef})
-	snap := demote(origin.Annotate(res.Snapshot, m), nameOnly)
-	snap = chain.Annotate(snap, m)
-
-	v := View{Snapshot: emptyListeners(snap), Warnings: res.Warnings, Selection: sel}
+	ix, err := provenance.Compose(full, modules...)
+	if err != nil {
+		return View{}, fmt.Errorf("%w: %w", ErrCompose, err)
+	}
+	v := View{Full: full, Snapshot: full, Chains: chain.Effective(full), Index: ix, Strategy: strategy,
+		Selection: sel, KnownInput: o.KnownInput, Gateway: o.Gateway, Warnings: warningList(full, ix)}
+	switch {
+	case v.KnownInput != "":
+	case len(o.Known) > 0:
+		v.KnownInput = KnownListed
+	default:
+		v.KnownInput = KnownNotRead
+	}
 	if sel.Route.Name == "" {
+		if len(o.Known) > 0 {
+			v.Narrowed = kgateway.Narrow(ix, o.Known)
+		}
 		return v, nil
 	}
-	opts := filter.Options{HTTPRouteName: sel.Route.Name, HTTPRouteNamespace: sel.Route.Namespace, RuleIndex: filter.AllRules}
-	if sel.Rule != nil {
-		opts.RuleIndex = *sel.Rule
+	q := kgateway.Query{Route: HTTPRouteRef(sel.Route), RuleIndex: sel.Rule, Known: o.Known}
+	s := kgateway.Select(ix, full, q)
+	v.Selected, v.Narrowed = &s, s.Narrowed
+	switch strategy {
+	case StrategyKnown:
+		v.Chosen = chooseKnown(q, s)
+	case StrategyExact:
+		v.Inferred = notExact(ix, s.Routes, sel.Rule != nil)
 	}
-	// filter.Filter matches a route without an origin by its name; guard keeps
-	// those out, and named lists them as unresolved. xdsview skips the vhost
-	// part only when the route name starts with the vhost's name.
-	unresolved := map[[2]string]bool{}
-	walk(filter.Filter(snap, opts), func(rc *model.RouteConfig, r *model.Route) {
-		if !resolved(r.Origin) && sel.named(r.Name) {
-			unresolved[[2]string{rc.Name, r.Name}] = true
-		}
-	})
-	v.Snapshot = emptyListeners(filter.Filter(guard(snap), opts))
-
-	// filter.Ambiguous keys by route name alone; two route configs can share
-	// one, so each config's routes are listed unless their origin is Exact.
-	ambiguous := map[string]bool{}
-	for _, n := range filter.Ambiguous(snap, opts) {
-		ambiguous[n] = true
+	keep := map[model.ID]bool{}
+	for _, id := range v.Routes() {
+		keep[id] = true
 	}
-	seen := map[[2]string]bool{}
-	walk(snap, func(rc *model.RouteConfig, r *model.Route) {
-		key := [2]string{rc.Name, r.Name}
-		if seen[key] {
-			return
-		}
-		if unresolved[key] {
-			seen[key] = true
-			v.Ambiguous = append(v.Ambiguous, AmbiguousRoute{RouteConfig: rc.Name, Name: r.Name, Candidates: []model.RouteOrigin{}, Unresolved: true})
-			return
-		}
-		if !ambiguous[r.Name] || r.Origin == nil || r.Origin.Certainty == model.Exact {
-			return
-		}
-		seen[key] = true
-		// The name-only readings, including any that Known set aside.
-		cands := nameOnly.Route(*r).Candidates
-		v.Ambiguous = append(v.Ambiguous, AmbiguousRoute{RouteConfig: rc.Name, Name: r.Name, Candidates: cands, NarrowedByKnown: r.Origin.NarrowedByKnown})
-	})
+	v.Snapshot = model.Prune(full, func(id model.ID) bool { return keep[id] })
 	return v, nil
+}
+
+// Routes returns the matched routes: Select's routes but the inferred ones,
+// then the chosen ones. It is empty without --route.
+func (v View) Routes() []model.ID {
+	if v.Selected == nil {
+		return nil
+	}
+	var out []model.ID
+	for _, id := range v.Selected.Routes {
+		if !slices.Contains(v.Inferred, id) {
+			out = append(out, id)
+		}
+	}
+	for _, n := range v.Chosen {
+		out = append(out, n.Route)
+	}
+	return out
+}
+
+// Matched returns the number of routes in Snapshot, counted once per filter chain.
+func (v View) Matched() int {
+	n := 0
+	walk(v.Snapshot, func(model.HCMConfig, model.VirtualHost, model.Route) { n++ })
+	return n
 }
 
 // checkShape rejects valid JSON that is not an object with a configs array.
@@ -166,261 +287,91 @@ func checkShape(body []byte) error {
 	return nil
 }
 
-// resolved reports whether a can drive a match (design §4.2): Exact, or
-// Inferred from the route name alone.
-func resolved(a *model.RouteAnnotation) bool {
-	return a != nil && (a.Certainty == model.Exact || a.Certainty == model.Inferred && !a.NarrowedByKnown)
-}
-
-// guard gives every route whose origin is not resolved an empty Unknown
-// origin, which filter.Filter never selects. It copies snap.
-func guard(snap *model.EnvoySnapshot) *model.EnvoySnapshot {
-	return rewriteRoutes(snap, func(r *model.Route) {
-		if !resolved(r.Origin) {
-			r.Origin = &model.RouteAnnotation{}
-		}
-	})
-}
-
-// emptyListeners gives a snapshot without listeners an empty slice, so JSON
-// prints [] and not null. It copies a snapshot it changes.
-func emptyListeners(s *model.EnvoySnapshot) *model.EnvoySnapshot {
-	if s.Listeners != nil {
-		return s
+// normalise returns n with its kept claims merged into one, as
+// provenance.Resolve merges agreeing readings: Incomplete if any is,
+// Exhaustive only if all are, and the index certainty of effective (DD-4, DD-6).
+func normalise(n provenance.Narrowing) provenance.Narrowing {
+	if len(n.Kept) == 0 {
+		return n
 	}
-	out := *s
-	out.Listeners = []model.Listener{}
-	return &out
-}
-
-// named reports whether a route name carries the selected HTTPRoute's marker
-// after a `-route-<i>-` segment; a full `-route-<i>-` marker inside the vhost isn't excluded.
-func (s Selection) named(name string) bool {
-	marker := "-httproute-" + s.Route.Name + "-" + s.Route.Namespace + "-"
-	for off := 0; ; {
-		k := strings.Index(name[off:], marker)
-		if k < 0 {
-			return false
-		}
-		i := off + k
-		j := strings.LastIndex(name[:i], "-route-")
-		ruleOK := s.Rule == nil || strings.HasPrefix(name[i+len(marker):], fmt.Sprintf("%d-", *s.Rule))
-		if j >= 0 && isDigits(name[j+len("-route-"):i]) && ruleOK {
-			return true
-		}
-		off = i + 1
+	c := n.Kept[0]
+	merged, ok := c.Assertion.(provenance.RouteSource)
+	if !ok {
+		return provenance.Narrowing{Route: n.Route, Kept: []provenance.Claim{c}}
 	}
-}
-
-func isDigits(s string) bool {
-	if s == "" {
-		return false
+	top := model.Unknown
+	for _, k := range n.Kept {
+		top = max(top, k.Certainty)
 	}
-	for _, c := range s {
-		if c < '0' || c > '9' {
-			return false
+	for _, k := range n.Kept[1:] {
+		if r, ok := k.Assertion.(provenance.RouteSource); ok {
+			merged.Incomplete = merged.Incomplete || r.Incomplete
+			merged.Exhaustive = merged.Exhaustive && r.Exhaustive
 		}
 	}
-	return true
+	merged.IndexCertainty = indexCertainty(n.Kept, merged, top)
+	c.Assertion = merged
+	return provenance.Narrowing{Route: n.Route, Kept: []provenance.Claim{c}}
 }
 
-// demote replaces each origin narrowed by known with its name-only reading,
-// keeping NarrowedByKnown. It copies what it changes; snap stays unchanged.
-func demote(snap *model.EnvoySnapshot, nameOnly origin.Mapper) *model.EnvoySnapshot {
-	narrowed := false
-	walk(snap, func(_ *model.RouteConfig, r *model.Route) {
-		narrowed = narrowed || (r.Origin != nil && r.Origin.NarrowedByKnown)
-	})
-	if !narrowed {
-		return snap
-	}
-	return rewriteRoutes(snap, func(r *model.Route) {
-		if r.Origin == nil || !r.Origin.NarrowedByKnown {
-			return
+// readings returns the distinct readings of claims, compared as
+// provenance.Resolve compares them: HTTPRoute, rule index, rule name and match index.
+func readings(claims []provenance.Claim) []provenance.RouteSource {
+	var out []provenance.RouteSource
+	for _, c := range claims {
+		r, ok := c.Assertion.(provenance.RouteSource)
+		if ok && !containsReading(out, r) {
+			out = append(out, r)
 		}
-		a := nameOnly.Route(*r)
-		a.NarrowedByKnown = true
-		r.Origin = &a
-	})
-}
-
-// rewriteRoutes returns a copy of snap down to its routes, with fn applied to
-// each route; snap stays unchanged.
-func rewriteRoutes(snap *model.EnvoySnapshot, fn func(*model.Route)) *model.EnvoySnapshot {
-	out := &model.EnvoySnapshot{Listeners: make([]model.Listener, len(snap.Listeners))}
-	for i, l := range snap.Listeners {
-		l.FilterChains = append([]model.NetworkFilterChain(nil), l.FilterChains...)
-		for j, fc := range l.FilterChains {
-			if fc.HCM == nil || fc.HCM.RouteConfig == nil {
-				continue
-			}
-			hcm, rc := *fc.HCM, *fc.HCM.RouteConfig
-			rc.VirtualHosts = append([]model.VirtualHost(nil), rc.VirtualHosts...)
-			for k := range rc.VirtualHosts {
-				vh := &rc.VirtualHosts[k]
-				vh.Routes = append([]model.Route(nil), vh.Routes...)
-				for n := range vh.Routes {
-					fn(&vh.Routes[n])
-				}
-			}
-			hcm.RouteConfig = &rc
-			l.FilterChains[j].HCM = &hcm
-		}
-		out.Listeners[i] = l
 	}
 	return out
 }
 
+func containsReading(list []provenance.RouteSource, r provenance.RouteSource) bool {
+	for _, o := range list {
+		if sameReading(o, r) {
+			return true
+		}
+	}
+	return false
+}
+
+func sameReading(a, b provenance.RouteSource) bool {
+	return a.Route == b.Route && a.RuleIndex == b.RuleIndex && a.RuleName == b.RuleName && a.MatchIndex == b.MatchIndex
+}
+
+// narrowing returns the narrowing of route, if Known narrowed it.
+func (v View) narrowing(route model.ID) (provenance.Narrowing, bool) {
+	for _, n := range v.Narrowed {
+		if n.Route == route {
+			return n, true
+		}
+	}
+	return provenance.Narrowing{}, false
+}
+
+// chosen reports whether --select known chose route.
+func (v View) chosen(route model.ID) bool {
+	for _, n := range v.Chosen {
+		if n.Route == route {
+			return true
+		}
+	}
+	return false
+}
+
 // walk calls fn for every route in snap, in snapshot order.
-func walk(snap *model.EnvoySnapshot, fn func(*model.RouteConfig, *model.Route)) {
+func walk(snap *model.Snapshot, fn func(model.HCMConfig, model.VirtualHost, model.Route)) {
 	for _, l := range snap.Listeners {
 		for _, fc := range l.FilterChains {
 			if fc.HCM == nil || fc.HCM.RouteConfig == nil {
 				continue
 			}
 			for _, vh := range fc.HCM.RouteConfig.VirtualHosts {
-				for i := range vh.Routes {
-					fn(fc.HCM.RouteConfig, &vh.Routes[i])
+				for _, r := range vh.Routes {
+					fn(*fc.HCM, vh, r)
 				}
 			}
 		}
 	}
-}
-
-// Matched returns the number of routes in the view, counted once per filter chain.
-func (v View) Matched() int {
-	n := 0
-	walk(v.Snapshot, func(*model.RouteConfig, *model.Route) { n++ })
-	return n
-}
-
-// Text writes v as xdsview's tree, then, under a Selection, a no-match line
-// and the ambiguous and unresolved routes, then the parser warnings. A route
-// only the known HTTPRoutes narrowed carries OneCandidateNote under its route line.
-func Text(w io.Writer, v View, opts render.Options) error {
-	var b bytes.Buffer
-	switch {
-	case v.Selection.Route.Name != "" && len(v.Snapshot.Listeners) == 0:
-		// Narrowing left nothing: the no-match line says so, not "no listeners".
-		if opts.Header != "" {
-			fmt.Fprintln(&b, clean(opts.Header))
-		}
-	default:
-		tree := opts
-		tree.RouteExtra = noteNarrowed(v.Snapshot, opts.RouteExtra)
-		if err := render.Text(&b, v.Snapshot, tree); err != nil {
-			return err
-		}
-	}
-	style := func(c render.Class, s string) string {
-		s = clean(s)
-		if opts.Style == nil {
-			return s
-		}
-		return opts.Style(c, nil, s)
-	}
-	if sel := v.Selection; sel.Route.Name != "" && v.Matched() == 0 {
-		target := "HTTPRoute " + sel.Route.String()
-		if sel.Rule != nil {
-			target += fmt.Sprintf(" rule %d", *sel.Rule)
-		}
-		fmt.Fprintln(&b, style(render.ClassWarning, "no route matches "+target))
-	}
-	if h := listHeading(v.Ambiguous); h != "" {
-		fmt.Fprintln(&b, h)
-	}
-	names := map[string]int{}
-	for _, a := range v.Ambiguous {
-		names[a.Name]++
-	}
-	for _, a := range v.Ambiguous {
-		label := clean(a.Name)
-		if names[a.Name] > 1 {
-			label += " · route config " + clean(a.RouteConfig)
-		}
-		if a.Unresolved {
-			fmt.Fprintln(&b, "  "+label+" · "+style(render.ClassOrigin, "origin unresolved"))
-			continue
-		}
-		var refs []string
-		for _, c := range a.Candidates {
-			if s := c.Route.String(); len(refs) == 0 || refs[len(refs)-1] != s {
-				refs = append(refs, s)
-			}
-		}
-		line := "  " + label + " · " + style(render.ClassOrigin, "ambiguous: "+strings.Join(refs, ", "))
-		if a.NarrowedByKnown {
-			line += " · " + OneCandidateNote
-		}
-		fmt.Fprintln(&b, line)
-	}
-	for _, warn := range v.Warnings {
-		fmt.Fprintln(&b, style(render.ClassWarning, "warning: "+warn))
-	}
-	_, err := w.Write(b.Bytes())
-	return err
-}
-
-// listHeading names the kinds of routes in list, or is empty for none.
-func listHeading(list []AmbiguousRoute) string {
-	var amb, unres bool
-	for _, a := range list {
-		amb, unres = amb || !a.Unresolved, unres || a.Unresolved
-	}
-	switch {
-	case amb && unres:
-		return "ambiguous or unresolved routes, not matched:"
-	case unres:
-		return "unresolved routes, not matched:"
-	case amb:
-		return "ambiguous routes, not matched:"
-	}
-	return ""
-}
-
-// noteNarrowed returns extra, extended to add OneCandidateNote under each route
-// whose origin only the known HTTPRoutes narrowed.
-func noteNarrowed(snap *model.EnvoySnapshot, extra func(render.RouteRef) []string) func(render.RouteRef) []string {
-	narrowed := map[render.RouteRef]bool{}
-	for li, l := range snap.Listeners {
-		for fi, fc := range l.FilterChains {
-			if fc.HCM == nil || fc.HCM.RouteConfig == nil {
-				continue
-			}
-			for vi, vh := range fc.HCM.RouteConfig.VirtualHosts {
-				for ri, r := range vh.Routes {
-					if r.Origin != nil && r.Origin.NarrowedByKnown {
-						narrowed[render.RouteRef{ListenerIdx: li, FilterChainIdx: fi, VirtualHostIdx: vi, RouteIdx: ri}] = true
-					}
-				}
-			}
-		}
-	}
-	if len(narrowed) == 0 {
-		return extra
-	}
-	return func(ref render.RouteRef) []string {
-		var out []string
-		if narrowed[ref] {
-			out = append(out, OneCandidateNote)
-		}
-		if extra != nil {
-			out = append(out, extra(ref)...)
-		}
-		return out
-	}
-}
-
-// clean escapes control characters in dump strings, as render does, so they
-// can't move the cursor or change colours.
-func clean(s string) string {
-	var b strings.Builder
-	for _, r := range s {
-		if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) {
-			fmt.Fprintf(&b, `\x%02x`, r)
-		} else {
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
 }

@@ -1,6 +1,6 @@
 # kgwctl — Roadmap
 
-**Last updated:** 2026-11-21
+**Last updated:** 2026-11-28
 **Program:** [kgateway-tooling `program.md`](https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md) (local checkout: `../kgateway-tooling-claude`)
 
 ## Goal
@@ -48,17 +48,32 @@ A support engineer's first command on a cluster they troubleshoot: what is wrong
 - `proxy dump`: one replica's raw config dump, for tickets and `--file`.
 
 ### Phase 4 — Support bundle
-**Status:** Not started
+**Status:** Complete 2026-11-27 — `docs/phases/phase-4/phase-4-complete.md`
 **Docs:** `docs/phases/phase-4/`
 **Waits on:** none — Phase 3 delivered proxy access (`internal/proxydump` `Fetch`/`FetchGateway`: pod identity, per-capture errors, deadline; D-021)
 
 One command that collects what support asks for, so nobody hand-collects it (D-010).
-- Gateway API and kgateway resources, Helm values, controller and proxy logs (including previous containers), proxy config dumps and stats, controller snapshots and metrics from every replica, `version` and `check` output.
-- One `tar.gz`; namespace, install and time-window filters.
-- Secrets redacted by default, with an explicit opt-in. Redaction is its own tested component.
-- Bundle collectors are a registry extension point for vendor builds (D-009).
+- Gateway API and kgateway resources, workloads, install metadata, controller and proxy logs (including previous containers), controller metrics, and per-replica proxy config dumps, stats and metrics; `version` and `check` output.
+- One `tar.gz`, cluster-wide by default; namespace, install and time-window filters.
+- No API request for Secrets or ConfigMaps, enforced on every client, so no Helm values. No controller admin snapshots: `/snapshots/xds` holds private keys, `/snapshots/krt` can return raw ConfigMaps (D-025).
+- Mandatory redaction in the archive writer, tested on the extracted archive (D-026).
+- Bundle collectors are an extension point for downstream builds (D-009).
 - Prior art: `agctl bug-report` ([agentgateway#3991](https://github.com/agentgateway/agentgateway/pull/3991)). Borrow kind discovery by CRD category (`kgateway`), partial results with an `errors.txt` under a global `--timeout`, and previous-container logs only after a restart (D-019).
-- Open design point: agctl captures ConfigMaps and redacted Secrets. kgwctl's RBAC reads neither, and the bundle needs `pods/log`.
+- Needs `pods/log` in a new optional Role.
+
+### Phase 4b — xdsview v0.7.0 migration and first release
+**Status:** Complete 2026-11-28 — `docs/phases/phase-4b/phase-4b-complete.md`; released as `v0.1.0` on xdsview v0.7.1 (D-031)
+**Docs:** `docs/phases/phase-4b/`
+**Waits on:** none — E15 delivered (xdsview `v0.7.0`, kgwctl#15); Snellius `v0.9.0` released (kgwctl#16)
+
+- `proxy routes` moves to the xdsview `v0.7.0` contract: parse, then `chain.Effective`, then `provenance.Compose` with the kgateway module, then explicit selection, then render.
+- The unresolved-route listing stays, as explicit selection over candidate readings. kgwctl never guesses a route's origin.
+- The module set passed to `provenance.Compose` is a seam that downstream builds change through `pkg/cli` (xdsview D-023). Claims are never selected by module name.
+- kgwctl builds its own `ProxyRoutes` payload instead of embedding xdsview's `model`.
+- The shared envelope moves to `kgwctl.kgateway.dev/v1alpha2`. That changes every command's JSON and YAML, including the bundle's `manifest.json`. Text, JSON and YAML goldens are reviewed together.
+- Snellius `v0.9.0`: `install.Scope.Excluded` replaces the local loop from Task 4.2.2.
+- The xdsview import allowlist follows the new package layout.
+- Close: tag `v0.1.0`, the first release.
 
 ### Phase 5 — Full analysis
 **Status:** Not started
@@ -70,9 +85,15 @@ One command that collects what support asks for, so nobody hand-collects it (D-0
 ### Phase 6 — Topology and policies
 **Status:** Not started
 **Docs:** `docs/phases/phase-6/`
-**Waits on:** kgateway-ui Phase 5 (direct, inherited and effective policy) — new program edge E7
+**Waits on:** E7 = Snellius Phase 8 declared-policy model, plus the scoped `merge.*` records from E15 for the xDS part. No effective-policy view (D-024, P-008).
 
-- `describe` shows attached and effective policies with provenance.
+The controller owns policy semantics; kgwctl shows evidence and never re-derives precedence, inheritance or merging (D-024).
+- `describe` lists policies, each labelled with its source (P-008):
+  - declared: `targetRefs`/selectors as written;
+  - controller-reported attached: ancestor conditions as the controller reports them, for the target, controller and generation each names;
+  - runtime: the `merge.*` records of the listener, RouteConfiguration, virtual host and route (E15), joined with Snellius `pkg/policy` by ref. Each shows the level it came from. They are level-local: they do not say which level governs a request.
+- What Envoy runs for the route or listener (xdsview): one replica at capture time, linked from `describe` and back.
+- Each link marked verified, inferred (names, selectors) or unknown (no, stale or ambiguous evidence). `route_source` verifies the originating route and rule, not which policy won or merged.
 - `get -o graph`: Gateway → route → backend topology as DOT or Mermaid text, written without a graphics library.
 - Envoy-side mapping back to Gateway API refs in `proxy routes` (program edge E5).
 
@@ -85,7 +106,7 @@ One command that collects what support asks for, so nobody hand-collects it (D-0
 
 ## Deferred / out of roadmap
 - `kgwctl mcp` and traffic debugging: downstream builds on `pkg/cli` (D-023), not this repo.
-- `proxy diff` (intended vs accepted config) — waits for krp Phase 6; add as a phase when it lands.
+- Data-plane convergence (D-024): a candidate phase after Phase 4; it waits on E14, which the program's xDS convergence investigation may or may not create. It replaces a generic intended-versus-accepted `proxy diff`, which has no provider (P-009) and is no longer planned. The support bundle keeps the raw evidence per replica: pod identity, restart count, capture time, `version_text`, listener states (warming, draining) and rejection details where Envoy reports them. These show what each replica held at capture time. They do not show when a NACK happened. A stale-config verdict needs comparable controller evidence per replica; kgateway v2.5.1's snapshot metrics are per Gateway, not per pod.
 - Thin-client mode against the kgateway-ui API — only useful once the UI has per-user auth (its Phase 10).
 - Interactive TUI — krp's TUI covers this for now.
 - Vendor policy plugins — the build-time hook is D-009 (Phase 1); the plugins live outside this repo (program P-002).

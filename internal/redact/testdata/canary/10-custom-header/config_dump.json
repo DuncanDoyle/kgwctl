@@ -1,0 +1,31 @@
+{
+  "configs": [
+    {
+      "@type": "type.googleapis.com/envoy.admin.v3.RoutesConfigDump",
+      "dynamic_route_configs": [
+        {
+          "route_config": {
+            "@type": "type.googleapis.com/envoy.config.route.v3.RouteConfiguration",
+            "name": "listener~80",
+            "virtual_hosts": [
+              {
+                "name": "listener~80~api_example_com",
+                "domains": ["api.example.com"],
+                "routes": [
+                  {
+                    "name": "route-a",
+                    "match": {"prefix": "/"},
+                    "route": {"cluster": "kube_team-a_svc-a_8080"},
+                    "request_headers_to_add": [
+                      {"header": {"key": "x-tenant-key", "value": "kgwctl-canary-10-cd"}, "append_action": "OVERWRITE_IF_EXISTS_OR_ADD"}
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

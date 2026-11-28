@@ -1,0 +1,37 @@
+row: 10
+title: a Secret-backed custom header (x-tenant-key) with a pattern-free value
+cases:
+  - name: config-dump
+    type: config-dump
+    input: config_dump.json
+    canaries:
+      - value: kgwctl-canary-10-cd
+        rule: header-value
+        location: configs[].dynamic_route_configs[].route_config.virtual_hosts[].routes[].request_headers_to_add[].header.value
+    keep: [x-tenant-key, route-a]
+  - name: trafficpolicy
+    type: object
+    input: trafficpolicy.yaml
+    canaries:
+      - value: kgwctl-canary-10-tp
+        rule: header-value
+        location: spec.headerModifiers.request.set[].value
+    keep: [tenant-header, x-tenant-key]
+  - name: debug-log
+    type: text
+    input: envoy.log
+    canaries:
+      - value: kgwctl-canary-10-dbg
+        rule: debug-header
+        location: line:3
+    keep: ["'x-tenant-key', '[redacted]'", "':method', 'GET'"]
+  - name: debug-log-timestamped
+    type: text
+    input: envoy-timestamped.log
+    canaries:
+      - {value: kgwctl-canary-10-dbgts, rule: debug-header, location: "line:3"}
+      - {value: kgwctl-canary-10-dbgoff, rule: debug-header, location: "line:4"}
+    keep:
+      - "2026-11-22T10:00:00.000000000Z 'x-tenant-key', '[redacted]'"
+      - "2026-11-22T11:00:00.5+01:00 'x-tenant-key', '[redacted]'"
+      - "2026-11-22T10:00:00.000000000Z ':method', 'GET'"

@@ -1,0 +1,31 @@
+row: 18
+title: a token in a Prometheus label value and comment; a non-Prometheus body on the metrics path
+cases:
+  - name: metrics
+    type: prometheus
+    input: metrics.txt
+    canaries:
+      - {value: kgwctl-canary-18-help, rule: pattern, location: "line:1"}
+      - {value: kgwctl-canary-18-label, rule: pattern, location: "line:3"}
+    keep:
+      - "# TYPE kgateway_translations_total counter"
+      - 'kgateway_translations_total{gateway="gw",namespace="team-a"} 12'
+      - 'token_source="[redacted]"'
+  - name: whitespace
+    type: prometheus
+    input: whitespace.txt
+    canaries:
+      - {value: kgwctl-canary-18-indent, rule: pattern, location: "line:1"}
+      - {value: kgwctl-canary-18-tab, rule: pattern, location: "line:3"}
+      - {value: a2d3Y3RsLWNhbmFyeS0xOC1iYXNpYw, rule: pattern, location: "line:4"}
+    keep:
+      - "   # HELP kgateway_xds_pushes_total Pushes. Debug Bearer [redacted]"
+      - "\t# TYPE kgateway_xds_pushes_total counter"
+      - 'kgateway_xds_pushes_total{gateway="gw",auth='
+      - '"Bearer [redacted]"} 4'
+  - name: html
+    type: prometheus
+    input: html.txt
+    expectError: not-prometheus
+    canaries:
+      - {value: kgwctl-canary-18-html}

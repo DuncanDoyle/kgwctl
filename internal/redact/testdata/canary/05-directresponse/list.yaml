@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: List
+metadata: {}
+items:
+  - apiVersion: gateway.kgateway.dev/v1alpha1
+    kind: DirectResponse
+    metadata:
+      name: dr-list
+      namespace: team-a
+    spec:
+      status: 200
+      body: kgwctl-canary-05-list
+  - apiVersion: gateway.kgateway.dev/v1alpha1
+    kind: ListenerPolicy
+    metadata:
+      name: lp-list
+      namespace: team-a
+    spec:
+      default:
+        httpSettings:
+          headers:
+            - name: x-list-tenant
+              value: kgwctl-canary-05-listhdr

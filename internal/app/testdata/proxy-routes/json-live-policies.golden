@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "kgwctl.kgateway.dev/v1alpha1",
+  "schemaVersion": "kgwctl.kgateway.dev/v1alpha2",
   "kind": "ProxyRoutes",
   "item": {
     "source": {
@@ -16,324 +16,396 @@
       },
       "capturedAt": "2026-11-21T10:00:00Z"
     },
-    "snapshot": {
-      "listeners": [
-        {
-          "name": "listener~8080",
-          "address": ":::8080",
-          "filterChains": [
+    "capture": "complete",
+    "listeners": [
+      {
+        "id": "L0",
+        "name": "listener~8080",
+        "address": ":::8080",
+        "state": {
+          "status": "active",
+          "lastUpdated": "2026-11-21T09:37:27.219Z"
+        },
+        "port": {
+          "certainty": "inferred",
+          "candidates": [
             {
-              "name": "listener~8080",
-              "hcm": {
-                "routeConfigName": "listener~8080",
-                "httpFilters": [
-                  {
-                    "name": "global_disable/ext_auth",
-                    "type": "type.googleapis.com/envoy.extensions.filters.http.set_metadata.v3.Config",
-                    "typedConfig": {
-                      "@type": "type.googleapis.com/envoy.extensions.filters.http.set_metadata.v3.Config",
-                      "metadata": [
-                        {
-                          "metadata_namespace": "dev.kgateway.disable_ext_auth",
-                          "value": {
-                            "disable": true
-                          }
-                        }
-                      ]
-                    },
-                    "disabled": true,
-                    "origin": {
-                      "certainty": "inferred",
-                      "kind": "set_metadata",
-                      "helper": true
-                    }
-                  },
-                  {
-                    "name": "ext_auth/kgwctl-proxy/authz",
-                    "type": "type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz",
-                    "typedConfig": {
-                      "@type": "type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz",
-                      "emit_filter_state_stats": true,
-                      "filter_enabled_metadata": {
-                        "filter": "dev.kgateway.disable_ext_auth",
-                        "invert": true,
-                        "path": [
-                          {
-                            "key": "disable"
-                          }
-                        ],
-                        "value": {
-                          "bool_match": true
-                        }
-                      },
-                      "grpc_service": {
-                        "envoy_grpc": {
-                          "cluster_name": "kube_kgwctl-proxy_authz_9000"
-                        }
-                      },
-                      "status_on_error": {
-                        "code": "Forbidden"
+              "port": 8080
+            }
+          ]
+        },
+        "filterChains": [
+          {
+            "id": "L0/C0",
+            "name": "listener~8080",
+            "networkFilters": [
+              {
+                "id": "L0/C0/N0",
+                "name": "envoy.filters.network.http_connection_manager",
+                "type": "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager"
+              }
+            ],
+            "hcm": {
+              "id": "L0/C0/N0",
+              "routeConfig": {
+                "name": "listener~8080",
+                "source": "RD0",
+                "state": "found",
+                "kind": "dynamic"
+              },
+              "httpFilters": [
+                {
+                  "slot": "L0/C0/N0/F0",
+                  "name": "global_disable/ext_auth",
+                  "type": "type.googleapis.com/envoy.extensions.filters.http.set_metadata.v3.Config",
+                  "disabled": true,
+                  "extension": {
+                    "certainty": "inferred",
+                    "candidates": [
+                      {
+                        "filterKind": "set_metadata",
+                        "helper": true
                       }
-                    },
-                    "disabled": true,
-                    "origin": {
-                      "certainty": "inferred",
-                      "kind": "ext_authz",
-                      "extension": {
-                        "group": "gateway.kgateway.dev",
-                        "kind": "GatewayExtension",
-                        "namespace": "kgwctl-proxy",
-                        "name": "authz"
-                      }
-                    }
-                  },
-                  {
-                    "name": "ratelimit/local",
-                    "type": "type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit",
-                    "typedConfig": {
-                      "@type": "type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit",
-                      "stat_prefix": "http_local_rate_limiter"
-                    },
-                    "disabled": true,
-                    "origin": {
-                      "certainty": "inferred",
-                      "kind": "local_ratelimit"
-                    }
-                  },
-                  {
-                    "name": "dynamic_modules/simple_mutations",
-                    "type": "type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter",
-                    "typedConfig": {
-                      "@type": "type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter",
-                      "dynamic_module_config": {
-                        "name": "rust_module"
-                      },
-                      "filter_config": {
-                        "@type": "type.googleapis.com/google.protobuf.StringValue",
-                        "value": "{}"
-                      },
-                      "filter_name": "rustformation"
-                    },
-                    "disabled": true,
-                    "origin": {
-                      "certainty": "inferred",
-                      "kind": "dynamic_modules"
-                    }
-                  },
-                  {
-                    "name": "envoy.filters.http.router",
-                    "type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router",
-                    "typedConfig": {
-                      "@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router"
-                    },
-                    "origin": {
-                      "certainty": "inferred",
-                      "kind": "router"
-                    }
+                    ]
                   }
-                ],
-                "routeConfig": {
-                  "name": "listener~8080",
-                  "virtualHosts": [
+                },
+                {
+                  "slot": "L0/C0/N0/F1",
+                  "name": "ext_auth/kgwctl-proxy/authz",
+                  "type": "type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz",
+                  "disabled": true,
+                  "extension": {
+                    "certainty": "inferred",
+                    "candidates": [
+                      {
+                        "ref": {
+                          "group": "gateway.kgateway.dev",
+                          "kind": "GatewayExtension",
+                          "namespace": "kgwctl-proxy",
+                          "name": "authz"
+                        },
+                        "filterKind": "ext_authz"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "slot": "L0/C0/N0/F2",
+                  "name": "ratelimit/local",
+                  "type": "type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit",
+                  "disabled": true,
+                  "extension": {
+                    "certainty": "inferred",
+                    "candidates": [
+                      {
+                        "filterKind": "local_ratelimit"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "slot": "L0/C0/N0/F3",
+                  "name": "dynamic_modules/simple_mutations",
+                  "type": "type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter",
+                  "disabled": true,
+                  "extension": {
+                    "certainty": "inferred",
+                    "candidates": [
+                      {
+                        "filterKind": "dynamic_modules"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "slot": "L0/C0/N0/F4",
+                  "name": "envoy.filters.http.router",
+                  "type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router",
+                  "extension": {
+                    "certainty": "inferred",
+                    "candidates": [
+                      {
+                        "filterKind": "router"
+                      }
+                    ]
+                  }
+                }
+              ],
+              "virtualHosts": [
+                {
+                  "id": "L0/C0/N0/RC/V0",
+                  "sourcePath": "RD0/V0",
+                  "name": "listener~8080~orders-kgwctl_proxy_example",
+                  "domains": [
+                    "orders-kgwctl.proxy.example"
+                  ],
+                  "host": {
+                    "certainty": "inferred",
+                    "candidates": [
+                      "orders-kgwctl.proxy.example"
+                    ]
+                  },
+                  "port": {
+                    "certainty": "inferred",
+                    "candidates": [
+                      {
+                        "port": 8080
+                      }
+                    ]
+                  },
+                  "routes": [
                     {
-                      "name": "listener~8080~orders-kgwctl_proxy_example",
-                      "domains": [
-                        "orders-kgwctl.proxy.example"
-                      ],
-                      "routes": [
-                        {
-                          "name": "listener~8080~orders-kgwctl_proxy_example-route-0-httproute-orders-kgwctl-proxy-0-0-matcher-0",
-                          "match": {
-                            "prefix": "/"
+                      "id": "L0/C0/N0/RC/V0/R0",
+                      "sourcePath": "RD0/V0/R0",
+                      "name": "listener~8080~orders-kgwctl_proxy_example-route-0-httproute-orders-kgwctl-proxy-0-0-matcher-0",
+                      "match": {
+                        "prefix": "/"
+                      },
+                      "origin": {
+                        "certainty": "ambiguous",
+                        "complete": true,
+                        "narrowed": true,
+                        "readings": [
+                          {
+                            "route": {
+                              "group": "gateway.networking.k8s.io",
+                              "kind": "HTTPRoute",
+                              "namespace": "kgwctl-proxy",
+                              "name": "orders"
+                            },
+                            "ruleIndex": 0,
+                            "matchIndex": 0,
+                            "certainty": "inferred"
                           },
-                          "cluster": "kube_proxy_backend_8080",
-                          "origin": {
-                            "certainty": "ambiguous",
+                          {
+                            "route": {
+                              "group": "gateway.networking.k8s.io",
+                              "kind": "HTTPRoute",
+                              "namespace": "proxy",
+                              "name": "orders-kgwctl"
+                            },
+                            "ruleIndex": 0,
+                            "matchIndex": 0,
+                            "certainty": "inferred",
+                            "notInCluster": true
+                          }
+                        ]
+                      },
+                      "filters": [
+                        {
+                          "slot": "L0/C0/N0/F0",
+                          "name": "global_disable/ext_auth",
+                          "type": "type.googleapis.com/envoy.extensions.filters.http.set_metadata.v3.Config",
+                          "runs": "no",
+                          "state": "off",
+                          "request": "yes",
+                          "response": "no",
+                          "extension": {
+                            "certainty": "inferred",
                             "candidates": [
                               {
-                                "route": {
-                                  "group": "gateway.networking.k8s.io",
-                                  "kind": "HTTPRoute",
-                                  "namespace": "kgwctl-proxy",
-                                  "name": "orders"
-                                },
-                                "ruleIndex": 0,
-                                "matchIndex": 0
-                              },
-                              {
-                                "route": {
-                                  "group": "gateway.networking.k8s.io",
-                                  "kind": "HTTPRoute",
-                                  "namespace": "proxy",
-                                  "name": "orders-kgwctl"
-                                },
-                                "ruleIndex": 0,
-                                "matchIndex": 0
+                                "filterKind": "set_metadata",
+                                "helper": true
                               }
-                            ],
-                            "narrowedByKnown": true
-                          },
-                          "effectiveChain": {
-                            "filters": [
+                            ]
+                          }
+                        },
+                        {
+                          "slot": "L0/C0/N0/F1",
+                          "name": "ext_auth/kgwctl-proxy/authz",
+                          "type": "type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz",
+                          "runs": "no",
+                          "state": "off",
+                          "request": "yes",
+                          "response": "yes",
+                          "extension": {
+                            "certainty": "inferred",
+                            "candidates": [
                               {
-                                "name": "global_disable/ext_auth",
-                                "type": "type.googleapis.com/envoy.extensions.filters.http.set_metadata.v3.Config",
-                                "runs": false,
-                                "state": "off",
-                                "request": "yes",
-                                "response": "no"
-                              },
+                                "ref": {
+                                  "group": "gateway.kgateway.dev",
+                                  "kind": "GatewayExtension",
+                                  "namespace": "kgwctl-proxy",
+                                  "name": "authz"
+                                },
+                                "filterKind": "ext_authz"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "slot": "L0/C0/N0/F2",
+                          "name": "ratelimit/local",
+                          "type": "type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit",
+                          "runs": "no",
+                          "state": "off",
+                          "request": "yes",
+                          "response": "yes",
+                          "extension": {
+                            "certainty": "inferred",
+                            "candidates": [
                               {
-                                "name": "ext_auth/kgwctl-proxy/authz",
-                                "type": "type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz",
-                                "runs": false,
-                                "state": "off",
-                                "request": "yes",
-                                "response": "yes",
-                                "contributions": [
-                                  {
-                                    "kind": "extension",
-                                    "ref": {
-                                      "group": "gateway.kgateway.dev",
-                                      "kind": "GatewayExtension",
-                                      "namespace": "kgwctl-proxy",
-                                      "name": "authz"
-                                    }
-                                  }
-                                ]
-                              },
+                                "filterKind": "local_ratelimit"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "slot": "L0/C0/N0/F3",
+                          "name": "dynamic_modules/simple_mutations",
+                          "type": "type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter",
+                          "runs": "no",
+                          "state": "off",
+                          "request": "yes",
+                          "response": "yes",
+                          "extension": {
+                            "certainty": "inferred",
+                            "candidates": [
                               {
-                                "name": "ratelimit/local",
-                                "type": "type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit",
-                                "runs": false,
-                                "state": "off",
-                                "request": "yes",
-                                "response": "yes"
-                              },
+                                "filterKind": "dynamic_modules"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "slot": "L0/C0/N0/F4",
+                          "name": "envoy.filters.http.router",
+                          "type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router",
+                          "runs": "yes",
+                          "state": "on",
+                          "request": "yes",
+                          "response": "no",
+                          "extension": {
+                            "certainty": "inferred",
+                            "candidates": [
                               {
-                                "name": "dynamic_modules/simple_mutations",
-                                "type": "type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter",
-                                "runs": false,
-                                "state": "off",
-                                "request": "yes",
-                                "response": "yes"
-                              },
-                              {
-                                "name": "envoy.filters.http.router",
-                                "type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router",
-                                "runs": true,
-                                "state": "on",
-                                "request": "yes",
-                                "response": "no"
+                                "filterKind": "router"
                               }
                             ]
                           }
                         }
                       ],
-                      "origin": {
+                      "action": {
+                        "kind": "route"
+                      },
+                      "backend": {
+                        "cluster": "kube_proxy_backend_8080",
                         "certainty": "inferred",
-                        "listener": {
-                          "certainty": "inferred",
-                          "gateway": {
-                            "group": "gateway.networking.k8s.io",
-                            "kind": "Gateway",
-                            "namespace": "kgwctl-proxy",
-                            "name": "proxy"
-                          },
-                          "port": 8080
-                        },
-                        "hostname": "orders-kgwctl.proxy.example"
+                        "candidates": [
+                          {
+                            "backend": {
+                              "kind": "Service",
+                              "namespace": "proxy",
+                              "name": "backend"
+                            },
+                            "port": 8080
+                          }
+                        ]
                       }
-                    },
+                    }
+                  ]
+                },
+                {
+                  "id": "L0/C0/N0/RC/V1",
+                  "sourcePath": "RD0/V1",
+                  "name": "listener~8080~orders_kgwctl_example",
+                  "domains": [
+                    "orders.kgwctl.example"
+                  ],
+                  "host": {
+                    "certainty": "inferred",
+                    "candidates": [
+                      "orders.kgwctl.example"
+                    ]
+                  },
+                  "port": {
+                    "certainty": "inferred",
+                    "candidates": [
+                      {
+                        "port": 8080
+                      }
+                    ]
+                  },
+                  "routes": [
                     {
-                      "name": "listener~8080~orders_kgwctl_example",
-                      "domains": [
-                        "orders.kgwctl.example"
-                      ],
-                      "routes": [
+                      "id": "L0/C0/N0/RC/V1/R0",
+                      "sourcePath": "RD0/V1/R0",
+                      "name": "listener~8080~orders_kgwctl_example-route-0-httproute-orders-kgwctl-proxy-0-0-matcher-0",
+                      "match": {
+                        "prefix": "/"
+                      },
+                      "origin": {
+                        "certainty": "ambiguous",
+                        "complete": true,
+                        "narrowed": true,
+                        "readings": [
+                          {
+                            "route": {
+                              "group": "gateway.networking.k8s.io",
+                              "kind": "HTTPRoute",
+                              "namespace": "kgwctl-proxy",
+                              "name": "orders"
+                            },
+                            "ruleIndex": 0,
+                            "matchIndex": 0,
+                            "certainty": "inferred"
+                          },
+                          {
+                            "route": {
+                              "group": "gateway.networking.k8s.io",
+                              "kind": "HTTPRoute",
+                              "namespace": "proxy",
+                              "name": "orders-kgwctl"
+                            },
+                            "ruleIndex": 0,
+                            "matchIndex": 0,
+                            "certainty": "inferred",
+                            "notInCluster": true
+                          }
+                        ]
+                      },
+                      "filters": [
                         {
-                          "name": "listener~8080~orders_kgwctl_example-route-0-httproute-orders-kgwctl-proxy-0-0-matcher-0",
-                          "match": {
-                            "prefix": "/"
-                          },
-                          "cluster": "kube_kgwctl-proxy_backend_8080",
-                          "typedPerFilterConfig": {
-                            "dynamic_modules/simple_mutations": {
-                              "@type": "type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilterPerRoute",
-                              "dynamic_module_config": {
-                                "name": "rust_module"
-                              },
-                              "filter_config": {
-                                "@type": "type.googleapis.com/google.protobuf.StringValue",
-                                "value": "{\"request\":{\"set\":[{\"name\":\"x-kgwctl-route\",\"value\":\"orders\"}]}}"
-                              },
-                              "filter_name": "rustformation",
-                              "per_route_config_name": "rustformation"
-                            },
-                            "ext_auth/kgwctl-proxy/authz": {
-                              "@type": "type.googleapis.com/envoy.config.route.v3.FilterConfig",
-                              "config": {}
-                            },
-                            "ratelimit/local": {
-                              "@type": "type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit",
-                              "filter_enabled": {
-                                "default_value": {
-                                  "numerator": 100
-                                },
-                                "runtime_key": "local_rate_limit_enabled"
-                              },
-                              "filter_enforced": {
-                                "default_value": {
-                                  "numerator": 100
-                                },
-                                "runtime_key": "local_rate_limit_enforced"
-                              },
-                              "stat_prefix": "http_local_rate_limiter",
-                              "token_bucket": {
-                                "fill_interval": "1s",
-                                "max_tokens": 10,
-                                "tokens_per_fill": 10
-                              }
-                            }
-                          },
-                          "metadata": {
-                            "merge.TrafficPolicy.gateway.kgateway.dev": {
-                              "extAuth": [
-                                "gateway.kgateway.dev/TrafficPolicy/kgwctl-proxy/orders-extauth"
-                              ],
-                              "rateLimit.local": [
-                                "gateway.kgateway.dev/TrafficPolicy/kgwctl-proxy/orders-ratelimit"
-                              ],
-                              "transformation": [
-                                "gateway.kgateway.dev/TrafficPolicy/kgwctl-proxy/orders-transformation"
-                              ]
-                            }
-                          },
-                          "origin": {
-                            "certainty": "ambiguous",
+                          "slot": "L0/C0/N0/F0",
+                          "name": "global_disable/ext_auth",
+                          "type": "type.googleapis.com/envoy.extensions.filters.http.set_metadata.v3.Config",
+                          "runs": "no",
+                          "state": "off",
+                          "request": "yes",
+                          "response": "no",
+                          "extension": {
+                            "certainty": "inferred",
                             "candidates": [
                               {
-                                "route": {
-                                  "group": "gateway.networking.k8s.io",
-                                  "kind": "HTTPRoute",
-                                  "namespace": "kgwctl-proxy",
-                                  "name": "orders"
-                                },
-                                "ruleIndex": 0,
-                                "matchIndex": 0
-                              },
-                              {
-                                "route": {
-                                  "group": "gateway.networking.k8s.io",
-                                  "kind": "HTTPRoute",
-                                  "namespace": "proxy",
-                                  "name": "orders-kgwctl"
-                                },
-                                "ruleIndex": 0,
-                                "matchIndex": 0
+                                "filterKind": "set_metadata",
+                                "helper": true
                               }
-                            ],
-                            "narrowedByKnown": true
+                            ]
+                          }
+                        },
+                        {
+                          "slot": "L0/C0/N0/F1",
+                          "name": "ext_auth/kgwctl-proxy/authz",
+                          "type": "type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz",
+                          "runs": "yes",
+                          "state": "enabled",
+                          "level": "route",
+                          "perFilterType": "type.googleapis.com/envoy.config.route.v3.FilterConfig",
+                          "request": "yes",
+                          "response": "yes",
+                          "extension": {
+                            "certainty": "inferred",
+                            "candidates": [
+                              {
+                                "ref": {
+                                  "group": "gateway.kgateway.dev",
+                                  "kind": "GatewayExtension",
+                                  "namespace": "kgwctl-proxy",
+                                  "name": "authz"
+                                },
+                                "filterKind": "ext_authz"
+                              }
+                            ]
                           },
                           "policies": [
                             {
@@ -343,8 +415,31 @@
                                 "namespace": "kgwctl-proxy",
                                 "name": "orders-extauth"
                               },
-                              "field": "extAuth"
-                            },
+                              "field": "extAuth",
+                              "level": "route",
+                              "certainty": "inferred"
+                            }
+                          ]
+                        },
+                        {
+                          "slot": "L0/C0/N0/F2",
+                          "name": "ratelimit/local",
+                          "type": "type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit",
+                          "runs": "yes",
+                          "state": "enabled",
+                          "level": "route",
+                          "perFilterType": "type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit",
+                          "request": "yes",
+                          "response": "yes",
+                          "extension": {
+                            "certainty": "inferred",
+                            "candidates": [
+                              {
+                                "filterKind": "local_ratelimit"
+                              }
+                            ]
+                          },
+                          "policies": [
                             {
                               "policy": {
                                 "group": "gateway.kgateway.dev",
@@ -352,8 +447,31 @@
                                 "namespace": "kgwctl-proxy",
                                 "name": "orders-ratelimit"
                               },
-                              "field": "rateLimit.local"
-                            },
+                              "field": "rateLimit.local",
+                              "level": "route",
+                              "certainty": "inferred"
+                            }
+                          ]
+                        },
+                        {
+                          "slot": "L0/C0/N0/F3",
+                          "name": "dynamic_modules/simple_mutations",
+                          "type": "type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter",
+                          "runs": "yes",
+                          "state": "enabled",
+                          "level": "route",
+                          "perFilterType": "type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilterPerRoute",
+                          "request": "yes",
+                          "response": "yes",
+                          "extension": {
+                            "certainty": "inferred",
+                            "candidates": [
+                              {
+                                "filterKind": "dynamic_modules"
+                              }
+                            ]
+                          },
+                          "policies": [
                             {
                               "policy": {
                                 "group": "gateway.kgateway.dev",
@@ -361,171 +479,163 @@
                                 "namespace": "kgwctl-proxy",
                                 "name": "orders-transformation"
                               },
-                              "field": "transformation"
+                              "field": "transformation",
+                              "level": "route",
+                              "certainty": "inferred"
                             }
-                          ],
-                          "effectiveChain": {
-                            "filters": [
+                          ]
+                        },
+                        {
+                          "slot": "L0/C0/N0/F4",
+                          "name": "envoy.filters.http.router",
+                          "type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router",
+                          "runs": "yes",
+                          "state": "on",
+                          "request": "yes",
+                          "response": "no",
+                          "extension": {
+                            "certainty": "inferred",
+                            "candidates": [
                               {
-                                "name": "global_disable/ext_auth",
-                                "type": "type.googleapis.com/envoy.extensions.filters.http.set_metadata.v3.Config",
-                                "runs": false,
-                                "state": "off",
-                                "request": "yes",
-                                "response": "no"
-                              },
-                              {
-                                "name": "ext_auth/kgwctl-proxy/authz",
-                                "type": "type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz",
-                                "runs": true,
-                                "state": "enabled",
-                                "level": "route",
-                                "perFilterType": "type.googleapis.com/envoy.config.route.v3.FilterConfig",
-                                "request": "yes",
-                                "response": "yes",
-                                "contributions": [
-                                  {
-                                    "kind": "extension",
-                                    "ref": {
-                                      "group": "gateway.kgateway.dev",
-                                      "kind": "GatewayExtension",
-                                      "namespace": "kgwctl-proxy",
-                                      "name": "authz"
-                                    }
-                                  },
-                                  {
-                                    "kind": "policy",
-                                    "ref": {
-                                      "group": "gateway.kgateway.dev",
-                                      "kind": "TrafficPolicy",
-                                      "namespace": "kgwctl-proxy",
-                                      "name": "orders-extauth"
-                                    },
-                                    "field": "extAuth"
-                                  }
-                                ]
-                              },
-                              {
-                                "name": "ratelimit/local",
-                                "type": "type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit",
-                                "runs": true,
-                                "state": "enabled",
-                                "level": "route",
-                                "perFilterType": "type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit",
-                                "request": "yes",
-                                "response": "yes",
-                                "contributions": [
-                                  {
-                                    "kind": "policy",
-                                    "ref": {
-                                      "group": "gateway.kgateway.dev",
-                                      "kind": "TrafficPolicy",
-                                      "namespace": "kgwctl-proxy",
-                                      "name": "orders-ratelimit"
-                                    },
-                                    "field": "rateLimit.local"
-                                  }
-                                ]
-                              },
-                              {
-                                "name": "dynamic_modules/simple_mutations",
-                                "type": "type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter",
-                                "runs": true,
-                                "state": "enabled",
-                                "level": "route",
-                                "perFilterType": "type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilterPerRoute",
-                                "request": "yes",
-                                "response": "yes",
-                                "contributions": [
-                                  {
-                                    "kind": "policy",
-                                    "ref": {
-                                      "group": "gateway.kgateway.dev",
-                                      "kind": "TrafficPolicy",
-                                      "namespace": "kgwctl-proxy",
-                                      "name": "orders-transformation"
-                                    },
-                                    "field": "transformation"
-                                  }
-                                ]
-                              },
-                              {
-                                "name": "envoy.filters.http.router",
-                                "type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router",
-                                "runs": true,
-                                "state": "on",
-                                "request": "yes",
-                                "response": "no"
+                                "filterKind": "router"
                               }
                             ]
                           }
                         }
                       ],
-                      "origin": {
-                        "certainty": "inferred",
-                        "listener": {
-                          "certainty": "inferred",
-                          "gateway": {
-                            "group": "gateway.networking.k8s.io",
-                            "kind": "Gateway",
-                            "namespace": "kgwctl-proxy",
-                            "name": "proxy"
-                          },
-                          "port": 8080
-                        },
-                        "hostname": "orders.kgwctl.example"
-                      }
-                    },
-                    {
-                      "name": "listener~8080~public_kgwctl_example",
-                      "domains": [
-                        "public.kgwctl.example"
-                      ],
-                      "routes": [
+                      "policies": [
                         {
-                          "name": "listener~8080~public_kgwctl_example-route-0-httproute-public-kgwctl-proxy-0-0-matcher-0",
-                          "match": {
-                            "prefix": "/"
+                          "policy": {
+                            "group": "gateway.kgateway.dev",
+                            "kind": "TrafficPolicy",
+                            "namespace": "kgwctl-proxy",
+                            "name": "orders-extauth"
                           },
-                          "cluster": "kube_kgwctl-proxy_backend_8080",
-                          "typedPerFilterConfig": {
-                            "global_disable/ext_auth": {
-                              "@type": "type.googleapis.com/envoy.config.route.v3.FilterConfig",
-                              "config": {}
-                            }
+                          "field": "extAuth",
+                          "level": "route",
+                          "certainty": "exact"
+                        },
+                        {
+                          "policy": {
+                            "group": "gateway.kgateway.dev",
+                            "kind": "TrafficPolicy",
+                            "namespace": "kgwctl-proxy",
+                            "name": "orders-ratelimit"
                           },
-                          "metadata": {
-                            "merge.TrafficPolicy.gateway.kgateway.dev": {
-                              "extAuth": [
-                                "gateway.kgateway.dev/TrafficPolicy/kgwctl-proxy/public-no-extauth"
-                              ]
-                            }
+                          "field": "rateLimit.local",
+                          "level": "route",
+                          "certainty": "exact"
+                        },
+                        {
+                          "policy": {
+                            "group": "gateway.kgateway.dev",
+                            "kind": "TrafficPolicy",
+                            "namespace": "kgwctl-proxy",
+                            "name": "orders-transformation"
                           },
-                          "origin": {
-                            "certainty": "ambiguous",
+                          "field": "transformation",
+                          "level": "route",
+                          "certainty": "exact"
+                        }
+                      ],
+                      "action": {
+                        "kind": "route"
+                      },
+                      "backend": {
+                        "cluster": "kube_kgwctl-proxy_backend_8080",
+                        "certainty": "inferred",
+                        "candidates": [
+                          {
+                            "backend": {
+                              "kind": "Service",
+                              "namespace": "kgwctl-proxy",
+                              "name": "backend"
+                            },
+                            "port": 8080
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "id": "L0/C0/N0/RC/V2",
+                  "sourcePath": "RD0/V2",
+                  "name": "listener~8080~public_kgwctl_example",
+                  "domains": [
+                    "public.kgwctl.example"
+                  ],
+                  "host": {
+                    "certainty": "inferred",
+                    "candidates": [
+                      "public.kgwctl.example"
+                    ]
+                  },
+                  "port": {
+                    "certainty": "inferred",
+                    "candidates": [
+                      {
+                        "port": 8080
+                      }
+                    ]
+                  },
+                  "routes": [
+                    {
+                      "id": "L0/C0/N0/RC/V2/R0",
+                      "sourcePath": "RD0/V2/R0",
+                      "name": "listener~8080~public_kgwctl_example-route-0-httproute-public-kgwctl-proxy-0-0-matcher-0",
+                      "match": {
+                        "prefix": "/"
+                      },
+                      "origin": {
+                        "certainty": "ambiguous",
+                        "complete": true,
+                        "narrowed": true,
+                        "readings": [
+                          {
+                            "route": {
+                              "group": "gateway.networking.k8s.io",
+                              "kind": "HTTPRoute",
+                              "namespace": "kgwctl-proxy",
+                              "name": "public"
+                            },
+                            "ruleIndex": 0,
+                            "matchIndex": 0,
+                            "certainty": "inferred"
+                          },
+                          {
+                            "route": {
+                              "group": "gateway.networking.k8s.io",
+                              "kind": "HTTPRoute",
+                              "namespace": "proxy",
+                              "name": "public-kgwctl"
+                            },
+                            "ruleIndex": 0,
+                            "matchIndex": 0,
+                            "certainty": "inferred",
+                            "notInCluster": true
+                          }
+                        ]
+                      },
+                      "filters": [
+                        {
+                          "slot": "L0/C0/N0/F0",
+                          "name": "global_disable/ext_auth",
+                          "type": "type.googleapis.com/envoy.extensions.filters.http.set_metadata.v3.Config",
+                          "runs": "yes",
+                          "state": "enabled",
+                          "level": "route",
+                          "perFilterType": "type.googleapis.com/envoy.config.route.v3.FilterConfig",
+                          "request": "yes",
+                          "response": "no",
+                          "extension": {
+                            "certainty": "inferred",
                             "candidates": [
                               {
-                                "route": {
-                                  "group": "gateway.networking.k8s.io",
-                                  "kind": "HTTPRoute",
-                                  "namespace": "kgwctl-proxy",
-                                  "name": "public"
-                                },
-                                "ruleIndex": 0,
-                                "matchIndex": 0
-                              },
-                              {
-                                "route": {
-                                  "group": "gateway.networking.k8s.io",
-                                  "kind": "HTTPRoute",
-                                  "namespace": "proxy",
-                                  "name": "public-kgwctl"
-                                },
-                                "ruleIndex": 0,
-                                "matchIndex": 0
+                                "filterKind": "set_metadata",
+                                "helper": true
                               }
-                            ],
-                            "narrowedByKnown": true
+                            ]
                           },
                           "policies": [
                             {
@@ -535,116 +645,423 @@
                                 "namespace": "kgwctl-proxy",
                                 "name": "public-no-extauth"
                               },
-                              "field": "extAuth"
+                              "field": "extAuth",
+                              "level": "route",
+                              "certainty": "inferred"
                             }
-                          ],
-                          "effectiveChain": {
-                            "filters": [
+                          ]
+                        },
+                        {
+                          "slot": "L0/C0/N0/F1",
+                          "name": "ext_auth/kgwctl-proxy/authz",
+                          "type": "type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz",
+                          "runs": "no",
+                          "state": "off",
+                          "request": "yes",
+                          "response": "yes",
+                          "extension": {
+                            "certainty": "inferred",
+                            "candidates": [
                               {
-                                "name": "global_disable/ext_auth",
-                                "type": "type.googleapis.com/envoy.extensions.filters.http.set_metadata.v3.Config",
-                                "runs": true,
-                                "state": "enabled",
-                                "level": "route",
-                                "perFilterType": "type.googleapis.com/envoy.config.route.v3.FilterConfig",
-                                "request": "yes",
-                                "response": "no",
-                                "contributions": [
-                                  {
-                                    "kind": "policy",
-                                    "ref": {
-                                      "group": "gateway.kgateway.dev",
-                                      "kind": "TrafficPolicy",
-                                      "namespace": "kgwctl-proxy",
-                                      "name": "public-no-extauth"
-                                    },
-                                    "field": "extAuth"
-                                  }
-                                ]
-                              },
+                                "ref": {
+                                  "group": "gateway.kgateway.dev",
+                                  "kind": "GatewayExtension",
+                                  "namespace": "kgwctl-proxy",
+                                  "name": "authz"
+                                },
+                                "filterKind": "ext_authz"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "slot": "L0/C0/N0/F2",
+                          "name": "ratelimit/local",
+                          "type": "type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit",
+                          "runs": "no",
+                          "state": "off",
+                          "request": "yes",
+                          "response": "yes",
+                          "extension": {
+                            "certainty": "inferred",
+                            "candidates": [
                               {
-                                "name": "ext_auth/kgwctl-proxy/authz",
-                                "type": "type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz",
-                                "runs": false,
-                                "state": "off",
-                                "request": "yes",
-                                "response": "yes",
-                                "contributions": [
-                                  {
-                                    "kind": "extension",
-                                    "ref": {
-                                      "group": "gateway.kgateway.dev",
-                                      "kind": "GatewayExtension",
-                                      "namespace": "kgwctl-proxy",
-                                      "name": "authz"
-                                    }
-                                  }
-                                ]
-                              },
+                                "filterKind": "local_ratelimit"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "slot": "L0/C0/N0/F3",
+                          "name": "dynamic_modules/simple_mutations",
+                          "type": "type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter",
+                          "runs": "no",
+                          "state": "off",
+                          "request": "yes",
+                          "response": "yes",
+                          "extension": {
+                            "certainty": "inferred",
+                            "candidates": [
                               {
-                                "name": "ratelimit/local",
-                                "type": "type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit",
-                                "runs": false,
-                                "state": "off",
-                                "request": "yes",
-                                "response": "yes"
-                              },
+                                "filterKind": "dynamic_modules"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "slot": "L0/C0/N0/F4",
+                          "name": "envoy.filters.http.router",
+                          "type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router",
+                          "runs": "yes",
+                          "state": "on",
+                          "request": "yes",
+                          "response": "no",
+                          "extension": {
+                            "certainty": "inferred",
+                            "candidates": [
                               {
-                                "name": "dynamic_modules/simple_mutations",
-                                "type": "type.googleapis.com/envoy.extensions.filters.http.dynamic_modules.v3.DynamicModuleFilter",
-                                "runs": false,
-                                "state": "off",
-                                "request": "yes",
-                                "response": "yes"
-                              },
-                              {
-                                "name": "envoy.filters.http.router",
-                                "type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router",
-                                "runs": true,
-                                "state": "on",
-                                "request": "yes",
-                                "response": "no"
+                                "filterKind": "router"
                               }
                             ]
                           }
                         }
                       ],
-                      "origin": {
-                        "certainty": "inferred",
-                        "listener": {
-                          "certainty": "inferred",
-                          "gateway": {
-                            "group": "gateway.networking.k8s.io",
-                            "kind": "Gateway",
+                      "policies": [
+                        {
+                          "policy": {
+                            "group": "gateway.kgateway.dev",
+                            "kind": "TrafficPolicy",
                             "namespace": "kgwctl-proxy",
-                            "name": "proxy"
+                            "name": "public-no-extauth"
                           },
-                          "port": 8080
-                        },
-                        "hostname": "public.kgwctl.example"
+                          "field": "extAuth",
+                          "level": "route",
+                          "certainty": "exact"
+                        }
+                      ],
+                      "action": {
+                        "kind": "route"
+                      },
+                      "backend": {
+                        "cluster": "kube_kgwctl-proxy_backend_8080",
+                        "certainty": "inferred",
+                        "candidates": [
+                          {
+                            "backend": {
+                              "kind": "Service",
+                              "namespace": "kgwctl-proxy",
+                              "name": "backend"
+                            },
+                            "port": 8080
+                          }
+                        ]
                       }
                     }
                   ]
                 }
-              }
+              ]
             }
-          ],
-          "state": {
-            "status": "active",
-            "lastUpdated": "2026-11-21T09:37:27.219Z"
-          },
-          "origin": {
-            "certainty": "inferred",
-            "gateway": {
-              "group": "gateway.networking.k8s.io",
-              "kind": "Gateway",
-              "namespace": "kgwctl-proxy",
-              "name": "proxy"
-            },
-            "port": 8080
           }
-        }
-      ]
-    }
+        ]
+      },
+      {
+        "id": "L1",
+        "name": "readiness_listener",
+        "address": ":::8082",
+        "static": true,
+        "state": {
+          "status": "active",
+          "lastUpdated": "2026-11-21T09:37:26.203Z"
+        },
+        "filterChains": [
+          {
+            "id": "L1/C0",
+            "networkFilters": [
+              {
+                "id": "L1/C0/N0",
+                "name": "envoy.filters.network.http_connection_manager",
+                "type": "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager"
+              }
+            ],
+            "hcm": {
+              "id": "L1/C0/N0",
+              "routeConfig": {
+                "name": "main_route",
+                "source": "L1/C0/N0/RCI",
+                "state": "found",
+                "kind": "inline"
+              },
+              "httpFilters": [
+                {
+                  "slot": "L1/C0/N0/F0",
+                  "name": "envoy.filters.http.health_check",
+                  "type": "type.googleapis.com/envoy.extensions.filters.http.health_check.v3.HealthCheck"
+                },
+                {
+                  "slot": "L1/C0/N0/F1",
+                  "name": "envoy.filters.http.router",
+                  "type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router"
+                }
+              ],
+              "virtualHosts": [
+                {
+                  "id": "L1/C0/N0/RC/V0",
+                  "sourcePath": "L1/C0/N0/RCI/V0",
+                  "name": "local_service",
+                  "domains": [
+                    "*"
+                  ],
+                  "routes": [
+                    {
+                      "id": "L1/C0/N0/RC/V0/R0",
+                      "sourcePath": "L1/C0/N0/RCI/V0/R0",
+                      "name": "",
+                      "match": {
+                        "path": "/ready",
+                        "headers": [
+                          {
+                            "name": ":method",
+                            "value": "GET",
+                            "kind": "exact"
+                          }
+                        ]
+                      },
+                      "origin": {
+                        "certainty": "unknown",
+                        "readings": []
+                      },
+                      "filters": [
+                        {
+                          "slot": "L1/C0/N0/F0",
+                          "name": "envoy.filters.http.health_check",
+                          "type": "type.googleapis.com/envoy.extensions.filters.http.health_check.v3.HealthCheck",
+                          "runs": "yes",
+                          "state": "on",
+                          "request": "yes",
+                          "response": "yes"
+                        },
+                        {
+                          "slot": "L1/C0/N0/F1",
+                          "name": "envoy.filters.http.router",
+                          "type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router",
+                          "runs": "yes",
+                          "state": "on",
+                          "request": "yes",
+                          "response": "no"
+                        }
+                      ],
+                      "action": {
+                        "kind": "route"
+                      },
+                      "backend": {
+                        "cluster": "admin_port_cluster",
+                        "certainty": "unknown",
+                        "candidates": []
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "id": "L2",
+        "name": "prometheus_listener",
+        "address": ":::9091",
+        "static": true,
+        "state": {
+          "status": "active",
+          "lastUpdated": "2026-11-21T09:37:26.203Z"
+        },
+        "filterChains": [
+          {
+            "id": "L2/C0",
+            "networkFilters": [
+              {
+                "id": "L2/C0/N0",
+                "name": "envoy.filters.network.http_connection_manager",
+                "type": "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager"
+              }
+            ],
+            "hcm": {
+              "id": "L2/C0/N0",
+              "routeConfig": {
+                "name": "prometheus_route",
+                "source": "L2/C0/N0/RCI",
+                "state": "found",
+                "kind": "inline"
+              },
+              "httpFilters": [
+                {
+                  "slot": "L2/C0/N0/F0",
+                  "name": "envoy.filters.http.router",
+                  "type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router"
+                }
+              ],
+              "virtualHosts": [
+                {
+                  "id": "L2/C0/N0/RC/V0",
+                  "sourcePath": "L2/C0/N0/RCI/V0",
+                  "name": "prometheus_host",
+                  "domains": [
+                    "*"
+                  ],
+                  "routes": [
+                    {
+                      "id": "L2/C0/N0/RC/V0/R0",
+                      "sourcePath": "L2/C0/N0/RCI/V0/R0",
+                      "name": "",
+                      "match": {
+                        "path": "/ready",
+                        "headers": [
+                          {
+                            "name": ":method",
+                            "value": "GET",
+                            "kind": "exact"
+                          }
+                        ]
+                      },
+                      "origin": {
+                        "certainty": "unknown",
+                        "readings": []
+                      },
+                      "filters": [
+                        {
+                          "slot": "L2/C0/N0/F0",
+                          "name": "envoy.filters.http.router",
+                          "type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router",
+                          "runs": "yes",
+                          "state": "on",
+                          "request": "yes",
+                          "response": "no"
+                        }
+                      ],
+                      "action": {
+                        "kind": "route"
+                      },
+                      "backend": {
+                        "cluster": "admin_port_cluster",
+                        "certainty": "unknown",
+                        "candidates": []
+                      }
+                    },
+                    {
+                      "id": "L2/C0/N0/RC/V0/R1",
+                      "sourcePath": "L2/C0/N0/RCI/V0/R1",
+                      "name": "",
+                      "match": {
+                        "prefix": "/metrics",
+                        "headers": [
+                          {
+                            "name": ":method",
+                            "value": "GET",
+                            "kind": "exact"
+                          }
+                        ]
+                      },
+                      "origin": {
+                        "certainty": "unknown",
+                        "readings": []
+                      },
+                      "filters": [
+                        {
+                          "slot": "L2/C0/N0/F0",
+                          "name": "envoy.filters.http.router",
+                          "type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router",
+                          "runs": "yes",
+                          "state": "on",
+                          "request": "yes",
+                          "response": "no"
+                        }
+                      ],
+                      "action": {
+                        "kind": "route"
+                      },
+                      "backend": {
+                        "cluster": "admin_port_cluster",
+                        "certainty": "unknown",
+                        "candidates": []
+                      },
+                      "rewrite": {
+                        "prefix": "/stats/prometheus?usedonly"
+                      }
+                    },
+                    {
+                      "id": "L2/C0/N0/RC/V0/R2",
+                      "sourcePath": "L2/C0/N0/RCI/V0/R2",
+                      "name": "",
+                      "match": {
+                        "prefix": "/stats",
+                        "headers": [
+                          {
+                            "name": ":method",
+                            "value": "GET",
+                            "kind": "exact"
+                          }
+                        ]
+                      },
+                      "origin": {
+                        "certainty": "unknown",
+                        "readings": []
+                      },
+                      "filters": [
+                        {
+                          "slot": "L2/C0/N0/F0",
+                          "name": "envoy.filters.http.router",
+                          "type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router",
+                          "runs": "yes",
+                          "state": "on",
+                          "request": "yes",
+                          "response": "no"
+                        }
+                      ],
+                      "action": {
+                        "kind": "route"
+                      },
+                      "backend": {
+                        "cluster": "admin_port_cluster",
+                        "certainty": "unknown",
+                        "candidates": []
+                      },
+                      "rewrite": {
+                        "prefix": "/stats"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "sections": [
+      {
+        "type": "type.googleapis.com/envoy.admin.v3.BootstrapConfigDump",
+        "status": "ignored"
+      },
+      {
+        "type": "type.googleapis.com/envoy.admin.v3.ClustersConfigDump",
+        "status": "ignored"
+      },
+      {
+        "type": "type.googleapis.com/envoy.admin.v3.ListenersConfigDump",
+        "status": "parsed"
+      },
+      {
+        "type": "type.googleapis.com/envoy.admin.v3.ScopedRoutesConfigDump",
+        "status": "ignored"
+      },
+      {
+        "type": "type.googleapis.com/envoy.admin.v3.RoutesConfigDump",
+        "status": "parsed"
+      },
+      {
+        "type": "type.googleapis.com/envoy.admin.v3.SecretsConfigDump",
+        "status": "ignored"
+      }
+    ]
   }
 }

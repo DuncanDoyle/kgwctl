@@ -26,6 +26,10 @@ type Scope struct {
 	AllControllers bool
 	// Selector filters by labels; nil matches everything.
 	Selector labels.Selector
+	// DetectionIncomplete reports that install detection ended before every
+	// input loaded, so an install it did not find may still exist. NewFilter
+	// then gives no "no kgateway install detected" or "not detected" warning.
+	DetectionIncomplete bool
 }
 
 // Filter applies a Scope and the hiding rule of design §6.2 to one load.
@@ -97,6 +101,8 @@ func NewFilter(r *load.Result, s Scope) (*Filter, []string) {
 	switch {
 	case !f.known:
 		warn(true, "ownership unknown (%s)", down)
+	case s.DetectionIncomplete:
+		// Absence is unknown; the caller reports the incomplete detection.
 	case len(installs) == 0:
 		warn(false, "no kgateway install detected")
 	case pinMissing && err == nil:

@@ -1,0 +1,16 @@
+apiVersion: gateway.kgateway.dev/v1alpha1
+kind: BackendConfigPolicy
+metadata:
+  name: egress
+  namespace: team-a
+spec:
+  targetRefs:
+    - group: ""
+      kind: Service
+      name: svc-a
+  tunnel:
+    proxy:
+      name: forward-proxy
+    headers:
+      - name: x-proxy-tenant
+        value: kgwctl-canary-11-tunnel

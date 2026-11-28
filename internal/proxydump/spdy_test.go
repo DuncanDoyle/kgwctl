@@ -33,16 +33,26 @@ type spdyPod struct {
 	// openErrs, when set, answers 200 with a close-delimited body, ends the
 	// data stream, and keeps the error stream open.
 	openErrs bool
-	gone     chan struct{} // closed when the upgraded connection closes
-	done     chan struct{} // closed at test end, so the handler returns
-	mu       sync.Mutex
-	streams  []http.Header
-	reqs     []*http.Request
+	// stall, when set, answers 200 with body and keeps the data stream open.
+	stall bool
+	// handler, when set, answers the data stream's request.
+	handler http.Handler
+	gone    chan struct{} // closed when the upgraded connection closes
+	done    chan struct{} // closed at test end, so the handler returns
+	mu      sync.Mutex
+	streams []http.Header
+	reqs    []*http.Request
 }
 
 func newSPDYPod(t *testing.T, body []byte, fail string) *spdyPod {
 	t.Helper()
 	return startSPDYPod(t, &spdyPod{body: body, fail: fail})
+}
+
+// newSPDYPodWith answers the forwarded request with h.
+func newSPDYPodWith(t *testing.T, h http.Handler) *spdyPod {
+	t.Helper()
+	return startSPDYPod(t, &spdyPod{handler: h})
 }
 
 // startSPDYPod serves p; its fields are set before the server starts.
@@ -109,6 +119,18 @@ func (p *spdyPod) serve(w http.ResponseWriter, r *http.Request) {
 	p.mu.Lock()
 	p.reqs = append(p.reqs, req)
 	p.mu.Unlock()
+	if p.handler != nil {
+		rec := httptest.NewRecorder()
+		p.handler.ServeHTTP(rec, req)
+		_ = rec.Result().Write(data)
+		_ = data.Close()
+		return
+	}
+	if p.stall {
+		_, _ = io.WriteString(data, "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n")
+		_, _ = data.Write(p.body)
+		return // the deferred wait holds the connection, data stream open
+	}
 	if p.lateFail != "" || p.openErrs {
 		_, _ = io.WriteString(data, "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n")
 		_, _ = data.Write(p.body)
@@ -324,4 +346,105 @@ func TestPortForwardOpensNoListener(t *testing.T) {
 	}
 	stop()
 	p.waitGone(t)
+}
+
+// opTargets is each Op's request target from design §6.3.
+var opTargets = []struct {
+	op     Op
+	target string
+}{
+	{OpConfigDump, "/config_dump"},
+	{OpConfigDumpEDS, "/config_dump?include_eds"},
+	{OpStats, "/stats"},
+	{OpServerInfo, "/server_info"},
+	{OpCerts, "/certs"},
+	{OpClusters, "/clusters"},
+}
+
+// requireOneRequest checks p got exactly GET target on the admin port.
+func requireOneRequest(t *testing.T, p *spdyPod, target string) {
+	t.Helper()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.reqs) != 1 {
+		t.Fatalf("got %d requests, want 1", len(p.reqs))
+	}
+	if r := p.reqs[0]; r.Method != http.MethodGet || r.RequestURI != target || r.Proto != "HTTP/1.1" {
+		t.Fatalf("request line = %s %s %s, want GET %s HTTP/1.1", r.Method, r.RequestURI, r.Proto, target)
+	}
+	if len(p.streams) == 0 {
+		t.Fatal("no stream headers recorded")
+	}
+	for _, h := range p.streams {
+		if h.Get(corev1.PortHeader) != "19000" {
+			t.Fatalf("stream headers = %v, want port 19000", p.streams)
+		}
+	}
+}
+
+// TestFetchOpTargets: each Op sends exactly its request line on the admin port.
+func TestFetchOpTargets(t *testing.T) {
+	for _, tc := range opTargets {
+		t.Run(tc.op.String(), func(t *testing.T) {
+			want := []byte("body of " + tc.target)
+			p := newSPDYPod(t, want, "")
+			c, err := FetchOp(t.Context(), NewPortForwarder(p.config()), testPod, tc.op, time.Now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := io.ReadAll(c.Body)
+			_ = c.Body.Close()
+			if err != nil || !bytes.Equal(got, want) {
+				t.Fatalf("body = %q, %v", got, err)
+			}
+			if c.Op != tc.op || c.Pod != testPod {
+				t.Fatalf("capture op %v pod %v, want %v %v", c.Op, c.Pod, tc.op, testPod)
+			}
+			if tc.op.Code().String() != tc.op.String() {
+				t.Fatalf("Code() = %v, want the manifest code named %q", tc.op.Code(), tc.op.String())
+			}
+			p.waitGone(t)
+			requireOneRequest(t, p, tc.target)
+		})
+	}
+}
+
+// TestFetchBareConfigDump: Fetch is the config-dump operation, with no query.
+func TestFetchBareConfigDump(t *testing.T) {
+	p := newSPDYPod(t, []byte(`{"configs":[]}`), "")
+	c, err := Fetch(t.Context(), NewPortForwarder(p.config()), testPod, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = c.Body.Close()
+	if c.Op != OpConfigDump {
+		t.Fatalf("capture op = %v, want %v", c.Op, OpConfigDump)
+	}
+	p.waitGone(t)
+	requireOneRequest(t, p, "/config_dump")
+}
+
+// TestFetchOpRedirect: a redirect is refused for every Op, and its target
+// appears in no error.
+func TestFetchOpRedirect(t *testing.T) {
+	const location = "http://redirect-target.invalid/elsewhere-canary"
+	for _, tc := range opTargets {
+		t.Run(tc.op.String(), func(t *testing.T) {
+			p := newSPDYPodWith(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Location", location)
+				w.WriteHeader(http.StatusFound)
+			}))
+			c, err := FetchOp(t.Context(), NewPortForwarder(p.config()), testPod, tc.op, time.Now)
+			if err == nil {
+				_ = c.Body.Close()
+				t.Fatal("FetchOp followed or accepted a redirect")
+			}
+			if !strings.Contains(err.Error(), "redirect") || strings.Contains(err.Error(), "canary") ||
+				strings.Contains(err.Error(), "redirect-target") {
+				t.Fatalf("err = %v, want a redirect refusal without the Location", err)
+			}
+			p.waitGone(t)
+			requireOneRequest(t, p, tc.target)
+		})
+	}
 }

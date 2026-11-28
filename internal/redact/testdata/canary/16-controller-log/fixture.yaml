@@ -1,0 +1,32 @@
+row: 16
+title: a controller log PEM private key block and an sk- key; a PEM block cut by a cancelled stream
+cases:
+  - name: controller-log
+    type: text
+    input: controller.log
+    canaries:
+      - {value: kgwctl-canary-16-pem, rule: pattern, location: "line:2"}
+      - {value: kgwctl-canary-16-pem2, rule: pattern, location: "line:2"}
+      - {value: kgwctl-canary-16-skkey, rule: pattern, location: "line:6"}
+      - {value: kgwctl-canary-16-escaped, rule: pattern, location: "line:7"}
+      - {value: kgwctl-canary-16-nest, rule: pattern, location: "line:8"}
+      - {value: kgwctl-canary-16-nesttail, rule: pattern, location: "line:8"}
+      - {value: two words}
+      - {value: kgwctl-canary-16-bs, rule: pattern, location: "line:9"}
+      - {value: kgwctl-canary-16-bstail, rule: pattern, location: "line:9"}
+    keep:
+      - "-----BEGIN PRIVATE KEY-----"
+      - "-----END PRIVATE KEY-----"
+      - "translated gateway kgateway-system/gw"
+      - "\"apiKey\":\"[redacted]\""
+      - "exchange failed: {\\\"access_token\\\":\\\"[redacted]\\\"}\"}"
+      - "exchange failed: {\\\"client_secret\\\":\\\"[redacted]\\\"}\"}"
+  - name: cut-stream
+    type: text
+    input: cut.log
+    readError: true
+    canaries:
+      - {value: kgwctl-canary-16-cut, rule: pem-tail, location: "line:2"}
+      - {value: kgwctl-canary-16-partial}
+    keep:
+      - "-----BEGIN RSA PRIVATE KEY-----"

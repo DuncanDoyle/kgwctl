@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kgateway
+  namespace: kgateway-system
+  annotations:
+    deploy.example/owner: platform
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"v1","kind":"Secret","metadata":{"name":"db","namespace":"kgateway-system"},"data":{"password":"a2d3Y3RsLWNhbmFyeS0wMS1kYXRh"},"stringData":{"token":"kgwctl-canary-01-stringdata"}}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kgateway
+  template:
+    metadata:
+      labels:
+        app: kgateway
+    spec:
+      containers:
+        - name: kgateway
+          image: cr.kgateway.dev/kgateway-dev/kgateway:v2.5.1

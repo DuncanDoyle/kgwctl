@@ -1,0 +1,11 @@
+row: 2
+title: a header name in managedFields is dropped with them
+cases:
+  - name: httproute
+    type: object
+    input: httproute.yaml
+    canaries:
+      - value: kgwctl-canary-02-hdr
+        rule: managed-fields
+        location: metadata.managedFields
+    keep: [route-a, team-a]

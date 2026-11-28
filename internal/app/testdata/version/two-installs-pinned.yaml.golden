@@ -18,4 +18,4 @@ item:
     ready: 1
     replicas: 1
 kind: Version
-schemaVersion: kgwctl.kgateway.dev/v1alpha1
+schemaVersion: kgwctl.kgateway.dev/v1alpha2
