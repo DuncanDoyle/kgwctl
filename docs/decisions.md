@@ -294,3 +294,14 @@ Downstream collectors are trusted in-process code. The Sink and the guard protec
 **Decision:** `v0.1.1` builds on xdsview v0.7.2. kgwctl reads `Resolve`'s candidates as they are and passes the chosen narrowings to `Labels` unchanged. `--select exact --rule` still treats an unset index certainty as the reading's own certainty.
 **Alternatives:** Keep the normalisation on v0.7.2 (rejected: it duplicates the library's merge and could drift from it).
 **Consequences:** Text and JSON are unchanged, and the recorded-dump goldens stay the same. The merge rule for index certainty now lives only in xdsview; `notExact` still reads an unset index certainty as the reading's own certainty.
+
+## D-037 — Bundle analysis before full analysis (2026-11-28, between phases) — decided by the owner 2026-11-28 (owner request)
+**Context:** kgwctl cannot analyze a bundle. The bundle holds the `check` report from collection time, and `proxy routes --file` reads one extracted config dump. Some platform teams don't want a UI with cluster-wide read access in production. Snellius could show a bundle in an environment with no access to the cluster, so data flows one way (program edge E16, snellius#74). The Snellius engine reads a `cache.Snapshot` through `cache.Snapshotter`, so its rules can run on a snapshot built from files.
+**Decision:** A new Phase 4c, "Bundle analysis", comes before Phase 5. It adds `kgwctl bundle analyze <archive>`, which runs the Snellius checks and xdsview on a bundle without the cluster. It also adds EndpointSlices and namespace labels to the bundle. The bundle-to-snapshot reader is shared with Snellius; where it lives is decided with Snellius in the Phase 4c design. Phase 5 reuses it for `analyze -f`.
+**Alternatives:** Phase 5 first (rejected: the bundle is what support already receives, and it gives Phase 5 its file-to-snapshot input). A separate UI tool for bundles (rejected: it would copy the Snellius views and rules). Collecting bundles on a schedule (rejected: users can schedule `kgwctl bundle` themselves, and the tooling ships nothing for it).
+**Consequences:**
+- The bundle format becomes a contract with Snellius and is versioned (E16).
+- `bundle analyze` must report coverage from `manifest.json`, so absent, denied or uncollected data is never reported as clean.
+- Checks that need data over time cannot decide from a bundle, and convergence stays `unknown` (E14).
+- An agent analyzer reads the `bundle analyze` JSON. kgwctl ships no agent; logs in a bundle are untrusted input for any agent.
+- Phase numbers 5–7 stay the same.

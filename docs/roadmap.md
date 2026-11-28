@@ -75,10 +75,22 @@ One command that collects what support asks for, so nobody hand-collects it (D-0
 - The xdsview import allowlist follows the new package layout.
 - Close: tag `v0.1.0`, the first release.
 
+### Phase 4c — Bundle analysis
+**Status:** Not started
+**Docs:** `docs/phases/phase-4c/`
+**Waits on:** none to start; where the bundle-to-snapshot reader lives is agreed with Snellius in the design (E16, snellius#74)
+
+Analyze a support bundle without access to the cluster (D-037).
+- `bundle analyze <archive>`: the Snellius checks and xdsview per proxy replica, run on the bundle. Text and versioned JSON.
+- Coverage from `manifest.json`: absent, denied and uncollected data are reported as such, never as clean. Checks that need data over time report "could not check".
+- The `check` report from collection time stays separate from the new findings.
+- The bundle adds EndpointSlices and namespace labels.
+- The JSON is the input for an agent analyzer; kgwctl ships no agent.
+
 ### Phase 5 — Full analysis
 **Status:** Not started
 **Docs:** `docs/phases/phase-5/`
-**Waits on:** none — E3 delivered; the analyzer runs in `check` from Phase 2
+**Waits on:** Phase 4c (file-to-snapshot input, D-037); E3 delivered; the analyzer runs in `check` from Phase 2
 
 - `analyze -f <file>`: validate manifests before applying, reporting new, fixed and unchanged problems against the live cluster.
 
