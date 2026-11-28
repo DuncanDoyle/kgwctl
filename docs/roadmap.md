@@ -1,6 +1,6 @@
 # kgwctl — Roadmap
 
-**Last updated:** 2026-11-27
+**Last updated:** 2026-11-28
 **Program:** [kgateway-tooling `program.md`](https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md) (local checkout: `../kgateway-tooling-claude`)
 
 ## Goal
@@ -62,7 +62,7 @@ One command that collects what support asks for, so nobody hand-collects it (D-0
 - Needs `pods/log` in a new optional Role.
 
 ### Phase 4b — xdsview v0.7.0 migration and first release
-**Status:** Not started (D-031)
+**Status:** Complete 2026-11-28 — `docs/phases/phase-4b/phase-4b-complete.md`; released as `v0.1.0` on xdsview v0.7.1 (D-031)
 **Docs:** `docs/phases/phase-4b/`
 **Waits on:** none — E15 delivered (xdsview `v0.7.0`, kgwctl#15); Snellius `v0.9.0` released (kgwctl#16)
 

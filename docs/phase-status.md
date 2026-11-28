@@ -1,57 +1,38 @@
 # Phase status
 
 ## Phase
-Phase: 4b — xdsview v0.7.0 migration and first release (D-031)
-Base: cd2fbaa
-Author: anthropic (claude-opus-5-5 controller; Claude subagents)
+Phase: 5 — Full analysis
+Base: n/a (recorded at phase start)
+Author: n/a
 Advisory: none
-Docs: docs/phases/phase-4b/
-Status: implementing 4b.1
+Docs: docs/phases/phase-5/
+Status: not started — the owner decides when to start it
 
 ### Queue
-- [x] Q1 Design r5 and implementation plan (2 planned sub-phases); D-032 owner-decided, D-033 to D-035 proposed
-- [x] Q2 Cross-model review of design + plan: 4 Codex rounds (reviews/design-codex.md, -r2 to -r4) + triage; last fixes are wording
-- [x] Q3 Implementation: 4b.1 (migration, payload, `--select` incl. `exact`, seam), 4b.2 (Snellius, version, release script, live check) — phase-4b.1-complete.md, phase-4b.2-complete.md
-- [x] Q4 Live check on kind, goldens reviewed (4b.2.4)
-- [ ] Q5 Phase review (Codex) + triage, fixes: reviews/phase-codex.md, 8 accepted → 4b.3 ← CURRENT
-- [ ] Q6 Close, tag `v0.1.0`
+n/a
 
 ### Exit gates
 - [ ] tests/vet pass (observed)
 - [ ] all queue items done or deferred
-- [x] design+plan cross-model review + triage: reviews/design-codex.md … -r4.md
-- [x] phase cross-model review + triage: reviews/phase-codex.md
+- [ ] design+plan cross-model review + triage
+- [ ] phase cross-model review + triage
 - [ ] decisions.md / design / plan in sync with code
-- [ ] phase-4b-complete.md written, roadmap updated, tracked items closed
+- [ ] phase-5-complete.md written, roadmap updated, tracked items closed
 
 ## Sub-phase
-Sub-phase: 4b.3 — Phase review fixes
-Kind: stabilization
-Base: 5645777
-Brief: docs/phases/phase-4b/phase-4b.3-brief.md
-
-### Allowed work
-bug fixes, missing designed behaviour, tests, docs
-
-### Not allowed
-new features, architecture changes, new dependencies
-
-### Queue
-- [ ] S1 Release script: atomic tag directory (#1), install check with fresh dirs and `GOBIN` (#2) ← CURRENT
-- [ ] S2 Selection and text: index certainty before merge (#3), dedup by outcome (#4), JSON input status for `known` (#5), "recorded at" label (#6), coverage of `model.Ref` (#8)
-- [ ] S3 README sharing warning (#7); design and output docs synced
-- [ ] S4 Gates, live check, Codex review of 5645777..HEAD + triage
+n/a
 
 ## Program
 - Program file: https://github.com/DuncanDoyle/kgateway-tooling/blob/main/program.md (local: `../kgateway-tooling-claude/program.md`)
-- Read 2026-11-27 at kgateway-tooling `3385480`: E15 available in xdsview `v0.7.0` (kgwctl#15); E7 Snellius part and `install.Scope.Excluded` in Snellius `v0.9.0` (kgwctl#16).
-- xdsview D-023 (owner approved 2026-11-26): downstream builds replace the kgateway module with a wrapping module under their own name. The module set passed to `provenance.Compose` must be a seam a downstream build changes through `pkg/cli`. Never select claims by `Claim.Module` or `kgateway.ModuleName`; use `Resolve` and the assertions. Claim IDs mean something only within one `Compose` result.
-- Waiting on: none for 4b. Phase 6 waits on E7 (Snellius part delivered) and E15 (delivered).
+- Consumed in Phase 4b: E15 (xdsview `v0.7.1`, kgwctl#15 and #17) and the Snellius part of E7 (`v0.9.0`, kgwctl#16).
+- xdsview D-023 (owner approved 2026-11-26): downstream builds replace the kgateway module with a wrapping module under their own name. The module set passed to `provenance.Compose` is a seam a downstream build changes through `pkg/cli`. Never select claims by `Claim.Module` or `kgateway.ModuleName`; use `Resolve` and the assertions.
+- Waiting on: none for Phase 5. Phase 6 needs E7 and E15, and both are delivered.
 - Consumers: none
 
 ## Carry-over (deferred to later phases)
 - Phase 4 deferred list: docs/phases/phase-4/phase-4-complete.md "Deferred / open".
-- kgwctl#8: Snellius list-only and namespace-scoped reads; owner to schedule.
+- Phase 4b deferred list: docs/phases/phase-4b/phase-4b-complete.md "Deferred / open".
+- kgwctl#8: Snellius list-only and namespace-scoped reads; the owner schedules it.
 - kgwctl#13 (E14): live xDS convergence diagnostic; slot to be decided.
 - `get`/`describe` for list-only kinds (Phase 2.1 ruling).
 - `--only`, `--exclude`, `--fail-on`, repeatable `-n`, controller logs (D-015).
@@ -63,5 +44,6 @@ new features, architecture changes, new dependencies
 - 2026-11-06 Phase 1 closed: docs/phases/phase-1/phase-1-complete.md.
 - 2026-11-20 Phase 2 closed: docs/phases/phase-2/phase-2-complete.md.
 - 2026-11-21 Phase 3 closed: docs/phases/phase-3/phase-3-complete.md.
-- 2026-11-27 Phase 4 closed: docs/phases/phase-4/phase-4-complete.md. Gates at 5ab78b9: `make test` (race, envtest) exit 0, 17 packages; `make lint` and `go mod tidy -diff` clean. Owner try-out on kind passed.
+- 2026-11-27 Phase 4 closed: docs/phases/phase-4/phase-4-complete.md.
+- 2026-11-28 Phase 4b closed: docs/phases/phase-4b/phase-4b-complete.md. Gates at d5ffd66: `make test` (race, envtest) exit 0 on 18 packages; `make lint`, `go mod tidy -diff` and `goldens-check` clean; `routes` live check passed. Released as `v0.1.0`.
 - Live cluster: kind `kgwctl-live` (kgateway v2.5.1), admin kubeconfig `hack/live/out/admin.kubeconfig`, context `kind-kgwctl-live`. Stop the other kind clusters on colima before a live check.
