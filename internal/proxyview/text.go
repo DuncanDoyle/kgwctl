@@ -71,13 +71,13 @@ func (v View) labels() func(render.Row) []string {
 }
 
 // routeLabel is a route row's label as provenance.Labels prints it, but a
-// single reading shows the index certainty of effective, as selection and JSON do (DD-4).
+// single reading also shows whether it is incomplete.
 func (v View) routeLabel(id model.ID) []string {
 	res := provenance.Resolve[provenance.RouteSource](v.Index, id)
 	if len(res.Candidates) != 1 {
 		return provenance.Labels(v.Index, nil)(render.Row{Subject: id, Route: id})
 	}
-	r := effective(res)[0]
+	r := res.Candidates[0]
 	s := readingText(r)
 	if r.IndexCertainty == model.Inferred {
 		s += " (partly from name)"
@@ -146,7 +146,7 @@ func (v View) selectionText(b *bytes.Buffer) {
 		id         model.ID
 		rc, name   string
 		unres, inf bool
-		marked     bool   // a reading's effective index certainty is inferred
+		marked     bool   // a reading's index certainty is inferred
 		detail     string // the outcome's text after the name
 	}
 	// outcome is what one use of a source shows; equal outcomes print once.
@@ -183,7 +183,7 @@ func (v View) selectionText(b *bytes.Buffer) {
 			res := provenance.Resolve[provenance.RouteSource](v.Index, r.ID)
 			o.certainty, o.readings = res.Certainty, readingsKey(res)
 			o.note = !e.inf && v.oneCandidate(r.ID)
-			e.marked = e.inf && slices.ContainsFunc(effective(res), func(r provenance.RouteSource) bool { return r.IndexCertainty == model.Inferred })
+			e.marked = e.inf && slices.ContainsFunc(res.Candidates, func(r provenance.RouteSource) bool { return r.IndexCertainty == model.Inferred })
 		}
 		// A merged inferred line keeps the marker if any use has it (DD-4).
 		if j, ok := seen[o]; ok {
@@ -276,7 +276,7 @@ func (v View) ambiguousText(route model.ID, indices bool) string {
 func readingsKey(res provenance.Resolution[provenance.RouteSource]) string {
 	var keys []string
 	top := topCertainty(res)
-	for _, r := range effective(res) {
+	for _, r := range res.Candidates {
 		keys = append(keys, fmt.Sprintf("%#v", reading(r, top)))
 	}
 	slices.Sort(keys)

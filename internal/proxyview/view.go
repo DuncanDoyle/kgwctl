@@ -64,7 +64,7 @@ func notExact(ix *provenance.Index, routes []model.ID, rule bool) []model.ID {
 		ok := res.Certainty == model.Exact && len(res.Candidates) == 1
 		if ok && rule {
 			// Unset means equal to the reading's certainty: exact.
-			r := effective(res)[0]
+			r := res.Candidates[0]
 			ok = (r.IndexCertainty == model.Unknown || r.IndexCertainty == model.Exact) && r.RuleIndex >= 0 && r.MatchIndex >= 0
 		}
 		if !ok {
@@ -74,53 +74,14 @@ func notExact(ix *provenance.Index, routes []model.ID, rule bool) []model.ID {
 	return out
 }
 
-// effective returns res's readings, each with its IndexCertainty replaced by
-// indexCertainty. Selection, text and JSON all read these (DD-4).
-func effective(res provenance.Resolution[provenance.RouteSource]) []provenance.RouteSource {
-	top := topCertainty(res)
-	out := slices.Clone(res.Candidates)
-	for i, r := range out {
-		out[i].IndexCertainty = indexCertainty(res.Claims, r, top)
-	}
-	return out
-}
-
-// indexCertainty is the index certainty of reading r over the claims at
-// certainty c: the highest, where unset means the claim's own certainty. It
-// stays unset only when that highest value comes from unset claims alone, so
-// an explicit marker survives; Resolve's merge prefers unset on a tie (DD-4).
-func indexCertainty(claims []provenance.Claim, r provenance.RouteSource, c model.Certainty) model.Certainty {
-	ic, explicit := model.Unknown, false
-	for _, cl := range claims {
-		a, ok := cl.Assertion.(provenance.RouteSource)
-		if !ok || cl.Certainty != c || !sameReading(a, r) {
-			continue
-		}
-		e, set := a.IndexCertainty, a.IndexCertainty != model.Unknown
-		if !set {
-			e = cl.Certainty
-		}
-		switch {
-		case e > ic:
-			ic, explicit = e, set
-		case e == ic:
-			explicit = explicit || set
-		}
-	}
-	if ic == c && !explicit {
-		return model.Unknown
-	}
-	return ic
-}
-
 // chooseKnown returns the narrowings of sel whose kept claims name one
-// reading, compared as provenance.Resolve merges them, that matches q, each
-// normalised (DD-4, DD-6). It is krp's rule over kgateway.Select's result.
+// reading, compared as provenance.Resolve merges them, that matches q (DD-6).
+// It is krp's rule over kgateway.Select's result.
 func chooseKnown(q kgateway.Query, sel kgateway.Selection) []provenance.Narrowing {
 	var out []provenance.Narrowing
 	for _, n := range sel.Narrowed {
 		if rs := readings(n.Kept); len(rs) == 1 && matches(q, rs[0]) {
-			out = append(out, normalise(n))
+			out = append(out, n)
 		}
 	}
 	return out
@@ -171,7 +132,7 @@ type View struct {
 	Index          *provenance.Index
 	Narrowed       []provenance.Narrowing // what Known narrowed: Select's under --route, else Narrow's
 	Selected       *kgateway.Selection    // nil without --route
-	Chosen         []provenance.Narrowing // normalised narrowings of the routes --select known chose (DD-6)
+	Chosen         []provenance.Narrowing // narrowings of the routes --select known chose (DD-6)
 	Inferred       []model.ID             // Select's routes --select exact left unmatched: a reading below exact
 	Strategy       Strategy
 	Selection      Selection
@@ -285,33 +246,6 @@ func checkShape(body []byte) error {
 		return ErrNotConfigDump
 	}
 	return nil
-}
-
-// normalise returns n with its kept claims merged into one, as
-// provenance.Resolve merges agreeing readings: Incomplete if any is,
-// Exhaustive only if all are, and the index certainty of effective (DD-4, DD-6).
-func normalise(n provenance.Narrowing) provenance.Narrowing {
-	if len(n.Kept) == 0 {
-		return n
-	}
-	c := n.Kept[0]
-	merged, ok := c.Assertion.(provenance.RouteSource)
-	if !ok {
-		return provenance.Narrowing{Route: n.Route, Kept: []provenance.Claim{c}}
-	}
-	top := model.Unknown
-	for _, k := range n.Kept {
-		top = max(top, k.Certainty)
-	}
-	for _, k := range n.Kept[1:] {
-		if r, ok := k.Assertion.(provenance.RouteSource); ok {
-			merged.Incomplete = merged.Incomplete || r.Incomplete
-			merged.Exhaustive = merged.Exhaustive && r.Exhaustive
-		}
-	}
-	merged.IndexCertainty = indexCertainty(n.Kept, merged, top)
-	c.Assertion = merged
-	return provenance.Narrowing{Route: n.Route, Kept: []provenance.Claim{c}}
 }
 
 // readings returns the distinct readings of claims, compared as
